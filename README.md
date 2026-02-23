@@ -61,6 +61,31 @@ npm run worker -- --run
   - `APP_BASE_URL=https://your-app.vercel.app`
   - Google OAuth callback: `https://your-app.vercel.app/api/auth/callback/google`
 
+### Import `.env` directly to Vercel
+
+1. Install and authenticate Vercel CLI:
+
+```bash
+npm i -g vercel
+vercel login
+vercel link
+```
+
+2. Import env vars from local file:
+
+```bash
+# Production
+npm run vercel:env:import -- .env production
+
+# Preview
+npm run vercel:env:import -- .env preview
+
+# Development
+npm run vercel:env:import -- .env development
+```
+
+This script replaces existing keys in the target environment and re-adds them from your local `.env`.
+
 ## API
 
 - `POST /api/onboarding/start`

@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "worker": "tsx src/workers/deployWorker.ts"
+    "worker": "tsx src/workers/deployWorker.ts",
+    "vercel:env:import": "node scripts/vercel-import-env.mjs"
   },
   "dependencies": {
     "bullmq": "^5.58.0",
