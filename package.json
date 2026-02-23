@@ -1,0 +1,30 @@
+{
+  "name": "oneclick",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "worker": "tsx src/workers/deployWorker.ts"
+  },
+  "dependencies": {
+    "bullmq": "^5.58.0",
+    "dotenv": "^17.3.1",
+    "next": "^15.2.4",
+    "next-auth": "^5.0.0-beta.25",
+    "pg": "^8.13.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
+    "@types/react": "^19.0.4",
+    "@types/react-dom": "^19.0.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
