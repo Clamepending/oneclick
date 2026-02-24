@@ -7,6 +7,10 @@ type ContainerItem = {
   image: string;
   status: string;
   ports: string;
+  size?: string;
+  cpuPercent?: string;
+  memUsage?: string;
+  memPercent?: string;
   ownerUserId?: string | null;
   ownerBotName?: string | null;
   ownerDeploymentId?: string | null;
@@ -349,6 +353,13 @@ export default function AdminPage() {
                         </p>
                         <p className="muted" style={{ marginBottom: 0 }}>
                           Ports: <code>{container.ports || "none"}</code>
+                        </p>
+                        <p className="muted" style={{ marginBottom: 0 }}>
+                          Resource usage: CPU <code>{container.cpuPercent?.trim() || "n/a"}</code> | Memory{" "}
+                          <code>{container.memUsage?.trim() || "n/a"}</code> (<code>{container.memPercent?.trim() || "n/a"}</code>)
+                        </p>
+                        <p className="muted" style={{ marginBottom: 0 }}>
+                          Writable layer: <code>{container.size?.trim() || "n/a"}</code>
                         </p>
                         <p className="muted" style={{ marginBottom: 0 }}>
                           Owner: <code>{container.ownerUserId?.trim() || "unknown"}</code>

@@ -6,6 +6,10 @@ export type VmContainer = {
   image: string;
   status: string;
   ports: string;
+  size: string;
+  cpuPercent: string;
+  memUsage: string;
+  memPercent: string;
 };
 
 export type VmStats = {
@@ -129,17 +133,43 @@ function parseStats(raw: string): VmStats {
 }
 
 function parseContainers(raw: string): VmContainer[] {
+  const metricsByName = new Map<
+    string,
+    {
+      cpuPercent: string;
+      memUsage: string;
+      memPercent: string;
+    }
+  >();
+
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split("\t");
+    if (parts.length < 8) continue;
+    metricsByName.set(parts[0] ?? "", {
+      cpuPercent: parts[5] ?? "",
+      memUsage: parts[6] ?? "",
+      memPercent: parts[7] ?? "",
+    });
+  }
+
   return raw
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => {
       const parts = line.split("\t");
+      const metrics = metricsByName.get(parts[0] ?? "");
       return {
         name: parts[0] ?? "",
         image: parts[1] ?? "",
         status: parts[2] ?? "",
         ports: parts[3] ?? "",
+        size: parts[4] ?? "",
+        cpuPercent: metrics?.cpuPercent ?? "",
+        memUsage: metrics?.memUsage ?? "",
+        memPercent: metrics?.memPercent ?? "",
       };
     });
 }
@@ -168,8 +198,12 @@ export async function fetchHostOverview(host: Host): Promise<HostOverview> {
     "echo \"disk_use_percent=$(df -Pk / | awk 'NR==2 {print $5}')\"",
   ].join(" && ");
 
-  const containersCmd =
-    "docker ps --format '{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}' || true";
+  const containersCmd = [
+    "set -e",
+    "docker ps --size --format '{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}\\t{{.Size}}' > /tmp/oneclick-admin-ps.txt",
+    "docker stats --no-stream --format '{{.Name}}\\t{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.MemPerc}}' > /tmp/oneclick-admin-stats.txt || true",
+    "awk 'NR==FNR {cpu[$1]=$2; memUsage[$1]=$3\" \"$4\" \"$5; memPct[$1]=$6; next} {name=$1; printf \"%s\\t%s\\t%s\\n\", $0, cpu[name], memUsage[name], memPct[name]}' /tmp/oneclick-admin-stats.txt /tmp/oneclick-admin-ps.txt",
+  ].join(" && ");
 
   try {
     const [statsResult, containersResult] = await Promise.all([
