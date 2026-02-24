@@ -2,10 +2,12 @@ import Link from "next/link";
 import { auth, signIn } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
 import { BotDashboard } from "@/components/deployment/BotDashboard";
+import { buildBotDashboardUrl } from "@/lib/bots/botDashboardUrl";
 
 type DeploymentSummary = {
   id: string;
   bot_name: string | null;
+  runtime_slug: string | null;
   status: "queued" | "starting" | "ready" | "failed";
   host_name: string | null;
   runtime_id: string | null;
@@ -51,22 +53,26 @@ export default async function HomePage() {
       await ensureSchema();
       const result = await pool.query<DeploymentSummary>(
         `SELECT
-           id,
-           bot_name,
-           status,
-           host_name,
-           runtime_id,
-           deploy_provider,
-           CASE WHEN COALESCE(openai_api_key, '') <> '' THEN TRUE ELSE FALSE END AS has_openai_api_key,
-           CASE WHEN COALESCE(anthropic_api_key, '') <> '' THEN TRUE ELSE FALSE END AS has_anthropic_api_key,
-           CASE WHEN COALESCE(openrouter_api_key, '') <> '' THEN TRUE ELSE FALSE END AS has_openrouter_api_key,
-           CASE WHEN COALESCE(telegram_bot_token, '') <> '' THEN TRUE ELSE FALSE END AS has_telegram_bot_token,
-           ready_url,
-           error,
-           updated_at
-         FROM deployments
-         WHERE user_id = $1
-         ORDER BY updated_at DESC
+           d.id,
+           d.bot_name,
+           bi.runtime_slug,
+           d.status,
+           d.host_name,
+           d.runtime_id,
+           d.deploy_provider,
+           CASE WHEN COALESCE(d.openai_api_key, '') <> '' THEN TRUE ELSE FALSE END AS has_openai_api_key,
+           CASE WHEN COALESCE(d.anthropic_api_key, '') <> '' THEN TRUE ELSE FALSE END AS has_anthropic_api_key,
+           CASE WHEN COALESCE(d.openrouter_api_key, '') <> '' THEN TRUE ELSE FALSE END AS has_openrouter_api_key,
+           CASE WHEN COALESCE(d.telegram_bot_token, '') <> '' THEN TRUE ELSE FALSE END AS has_telegram_bot_token,
+           d.ready_url,
+           d.error,
+           d.updated_at
+         FROM deployments d
+         LEFT JOIN bot_identities bi
+           ON bi.owner_user_id = d.user_id
+          AND bi.bot_name_normalized = lower(regexp_replace(trim(COALESCE(d.bot_name, '')), '\s+', ' ', 'g'))
+         WHERE d.user_id = $1
+         ORDER BY d.updated_at DESC
          LIMIT 25`,
         [session.user.email],
       );
@@ -99,6 +105,8 @@ export default async function HomePage() {
             deployments={deployments.map((deployment) => ({
               id: deployment.id,
               botName: deployment.bot_name,
+              runtimeSlug: deployment.runtime_slug,
+              botDashboardUrl: buildBotDashboardUrl(deployment.runtime_slug),
               status: deployment.status,
               hostName: deployment.host_name,
               runtimeId: deployment.runtime_id,

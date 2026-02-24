@@ -2,11 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { DeploymentActions } from "@/components/deployment/DeploymentActions";
 
 type DeploymentSummary = {
   id: string;
   botName: string | null;
+  runtimeSlug?: string | null;
+  botDashboardUrl?: string | null;
   status: "queued" | "starting" | "ready" | "failed";
   hostName: string | null;
   runtimeId: string | null;
@@ -37,6 +40,7 @@ function getStatusMeta(status: DeploymentSummary["status"]) {
 }
 
 export function BotDashboard({ deployments }: Props) {
+  const router = useRouter();
   const groups = useMemo<BotGroup[]>(() => {
     const byBot = new Map<string, DeploymentSummary[]>();
     for (const deployment of deployments) {
@@ -103,7 +107,13 @@ export function BotDashboard({ deployments }: Props) {
             <button
               key={group.name}
               type="button"
-              onClick={() => setSelectedBotName(group.name)}
+              onClick={() => {
+                if (preview.botDashboardUrl) {
+                  router.push(preview.botDashboardUrl);
+                  return;
+                }
+                setSelectedBotName(group.name);
+              }}
               style={{
                 textAlign: "left",
                 border: "1px solid #243041",
@@ -122,6 +132,18 @@ export function BotDashboard({ deployments }: Props) {
               <p className="muted" style={{ margin: 0, fontSize: 13 }}>
                 {group.deployments.length} deployment{group.deployments.length === 1 ? "" : "s"}
               </p>
+              {preview.botDashboardUrl ? (
+                <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+                  Bot page:{" "}
+                  <Link
+                    href={preview.botDashboardUrl}
+                    onClick={(event) => event.stopPropagation()}
+                    style={{ textDecoration: "underline", color: "#9fc2ff" }}
+                  >
+                    {preview.botDashboardUrl}
+                  </Link>
+                </p>
+              ) : null}
               <span
                 style={{
                   width: "fit-content",
@@ -162,6 +184,13 @@ export function BotDashboard({ deployments }: Props) {
             {latestDeployment ? (
               <p className="muted" style={{ margin: 0 }}>
                 Latest update: <code>{new Date(latestDeployment.updatedAt).toLocaleString()}</code>
+              </p>
+            ) : null}
+            {latestDeployment?.botDashboardUrl ? (
+              <p style={{ margin: 0 }}>
+                <Link className="button secondary" href={latestDeployment.botDashboardUrl}>
+                  Open bot page
+                </Link>
               </p>
             ) : null}
           </div>

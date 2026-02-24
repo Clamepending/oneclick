@@ -122,6 +122,7 @@ For Vercel + SSH deployment (one shared VM, one container per user):
 - set `DEPLOY_SSH_PRIVATE_KEY` (escaped newlines)
 - set `HOST_POOL_JSON` to your droplet (for example `ssh://root@64.225.46.105`)
 - set `RUNTIME_BASE_DOMAIN` (for example `oneclickagent.net`) to enable `https://<user>.yourdomain` URLs
+- optional: set `BOT_DASHBOARD_BASE_DOMAIN` to enable bot dashboard URLs at `https://<bot-slug>.yourdomain` (routes to `/bots/:slug`)
 - optional: set `CADDY_EMAIL` for certificate issuer contact
 - do not set `REDIS_URL` to localhost; either provide a real remote Redis or leave `REDIS_URL` unset
 - each new deploy for a user destroys that user’s previous container
