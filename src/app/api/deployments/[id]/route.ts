@@ -23,6 +23,15 @@ async function checkRuntimeHealth(readyUrl: string) {
   }
 }
 
+function isStaleStartingDeployment(item: { status: string; runtime_id: string | null; updated_at: string }) {
+  if (item.status !== "starting") return false;
+  if (item.runtime_id?.trim()) return false;
+  const updatedAtMs = Date.parse(item.updated_at);
+  if (!Number.isFinite(updatedAtMs)) return false;
+  const staleAfterMs = Number(process.env.DEPLOY_STALE_STARTING_TIMEOUT_MS ?? "900000");
+  return Date.now() - updatedAtMs > staleAfterMs;
+}
+
 export async function GET(
   _request: Request,
   context: { params: Promise<{ id: string }> },
@@ -62,6 +71,27 @@ export async function GET(
   const item = result.rows[0];
   if (!item) {
     return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
+  }
+
+  if (isStaleStartingDeployment(item)) {
+    const staleMessage =
+      "Deployment timed out while starting (runtime metadata was not finalized). Please redeploy.";
+    await pool.query(
+      `UPDATE deployments
+       SET status = 'failed',
+           error = $1,
+           updated_at = NOW()
+       WHERE id = $2`,
+      [staleMessage, item.id],
+    );
+    await pool.query(
+      `INSERT INTO deployment_events (deployment_id, status, message)
+       VALUES ($1, 'failed', $2)`,
+      [item.id, staleMessage],
+    );
+    item.status = "failed";
+    item.error = staleMessage;
+    item.updated_at = new Date().toISOString();
   }
 
   const health =

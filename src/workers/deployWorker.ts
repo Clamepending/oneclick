@@ -217,18 +217,25 @@ export async function processDeploymentJob(job: DeploymentJob) {
     subsidyProxyToken,
     subsidyProxyBaseUrl,
   });
+  await pool.query(
+    `UPDATE deployments
+     SET ready_url = $1,
+         runtime_id = $2,
+         deploy_provider = $3,
+         updated_at = NOW()
+     WHERE id = $4`,
+    [runtime.readyUrl, runtime.runtimeId, runtime.deployProvider, job.deploymentId],
+  );
+  await appendEvent(job.deploymentId, "starting", "Runtime launched; persisted runtime metadata");
   await appendEvent(job.deploymentId, "starting", "Waiting for runtime health check");
   await waitForRuntimeReady(runtime.readyUrl);
 
   await pool.query(
     `UPDATE deployments
      SET status = 'ready',
-         ready_url = $1,
-         runtime_id = $2,
-         deploy_provider = $3,
          updated_at = NOW()
-     WHERE id = $4`,
-    [runtime.readyUrl, runtime.runtimeId, runtime.deployProvider, job.deploymentId],
+     WHERE id = $1`,
+    [job.deploymentId],
   );
   await appendEvent(job.deploymentId, "ready", "Runtime is ready");
   if (selectedOpenAiKey || selectedAnthropicKey || selectedOpenRouterKey) {
