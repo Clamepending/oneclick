@@ -42,12 +42,18 @@ export async function GET(
     host_name: string | null;
     runtime_id: string | null;
     deploy_provider: string | null;
+    openai_api_key: string | null;
+    anthropic_api_key: string | null;
+    openrouter_api_key: string | null;
+    telegram_bot_token: string | null;
     ready_url: string | null;
     error: string | null;
     created_at: string;
     updated_at: string;
   }>(
-    `SELECT id, bot_name, status, host_name, runtime_id, deploy_provider, ready_url, error, created_at, updated_at
+    `SELECT id, bot_name, status, host_name, runtime_id, deploy_provider,
+            openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token,
+            ready_url, error, created_at, updated_at
      FROM deployments
      WHERE id = $1 AND user_id = $2`,
     [id, session.user.email],
@@ -70,6 +76,12 @@ export async function GET(
     hostName: item.host_name,
     runtimeId: item.runtime_id,
     deployProvider: item.deploy_provider,
+    settings: {
+      hasOpenaiApiKey: Boolean(item.openai_api_key?.trim()),
+      hasAnthropicApiKey: Boolean(item.anthropic_api_key?.trim()),
+      hasOpenrouterApiKey: Boolean(item.openrouter_api_key?.trim()),
+      hasTelegramBotToken: Boolean(item.telegram_bot_token?.trim()),
+    },
     readyUrl: item.ready_url,
     error: item.error,
     createdAt: item.created_at,

@@ -14,8 +14,9 @@ type LaunchInput = {
   userId: string;
   runtimeSlugSource?: string | null;
   telegramBotToken?: string | null;
-  modelProvider?: string | null;
-  modelApiKey?: string | null;
+  openaiApiKey?: string | null;
+  anthropicApiKey?: string | null;
+  openrouterApiKey?: string | null;
   subsidyProxyBaseUrl?: string | null;
   subsidyProxyToken?: string | null;
   host: Host;
@@ -244,8 +245,9 @@ async function launchViaDigitalOcean(input: LaunchInput) {
   const runtimeName = buildRuntimeName(input);
   const dropletName = runtimeName;
   const telegramBotToken = input.telegramBotToken?.trim() || "";
-  const modelProvider = input.modelProvider?.trim().toLowerCase() || "";
-  const modelApiKey = input.modelApiKey?.trim() || "";
+  const openaiApiKey = input.openaiApiKey?.trim() || "";
+  const anthropicApiKey = input.anthropicApiKey?.trim() || "";
+  const openrouterApiKey = input.openrouterApiKey?.trim() || "";
   const subsidyProxyBaseUrl = input.subsidyProxyBaseUrl?.trim() || "";
   const subsidyProxyToken = input.subsidyProxyToken?.trim() || "";
 
@@ -257,14 +259,13 @@ async function launchViaDigitalOcean(input: LaunchInput) {
   const telegramEnvArgs = telegramBotToken
     ? `  -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)} \\\n`
     : "";
-  const modelEnvArgs =
-    modelProvider === "openai" && modelApiKey
-      ? `  -e OPENAI_API_KEY=${shellQuote(modelApiKey)} \\\n`
-      : modelProvider === "anthropic" && modelApiKey
-        ? `  -e ANTHROPIC_API_KEY=${shellQuote(modelApiKey)} \\\n`
-        : "";
+  const modelEnvArgs = [
+    openaiApiKey ? `  -e OPENAI_API_KEY=${shellQuote(openaiApiKey)} \\\n` : "",
+    anthropicApiKey ? `  -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)} \\\n` : "",
+    openrouterApiKey ? `  -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)} \\\n` : "",
+  ].join("");
   const subsidyEnvArgs =
-    !modelApiKey && subsidyProxyBaseUrl && subsidyProxyToken
+    !openaiApiKey && !anthropicApiKey && !openrouterApiKey && subsidyProxyBaseUrl && subsidyProxyToken
       ? `  -e OPENAI_API_KEY=${shellQuote(subsidyProxyToken)} \\\n  -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} \\\n  -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)} \\\n`
       : "";
 
@@ -394,8 +395,9 @@ async function launchViaSsh(input: LaunchInput) {
   const gatewayToken = getGatewayToken();
   const hostPort = buildAssignedPort(input.deploymentId);
   const telegramBotToken = input.telegramBotToken?.trim() || "";
-  const modelProvider = input.modelProvider?.trim().toLowerCase() || "";
-  const modelApiKey = input.modelApiKey?.trim() || "";
+  const openaiApiKey = input.openaiApiKey?.trim() || "";
+  const anthropicApiKey = input.anthropicApiKey?.trim() || "";
+  const openrouterApiKey = input.openrouterApiKey?.trim() || "";
   const subsidyProxyBaseUrl = input.subsidyProxyBaseUrl?.trim() || "";
   const subsidyProxyToken = input.subsidyProxyToken?.trim() || "";
 
@@ -423,7 +425,7 @@ async function launchViaSsh(input: LaunchInput) {
           `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.trustedProxies '["172.16.0.0/12"]'`,
         ]
       : []),
-    `docker run -d --name "${containerName}" --restart unless-stopped -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace"${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${modelProvider === "openai" && modelApiKey ? ` -e OPENAI_API_KEY=${shellQuote(modelApiKey)}` : ""}${modelProvider === "anthropic" && modelApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(modelApiKey)}` : ""}${!modelApiKey && subsidyProxyBaseUrl && subsidyProxyToken ? ` -e OPENAI_API_KEY=${shellQuote(subsidyProxyToken)} -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)}` : ""} -p "${hostPort}:${containerPort}" "${image}" ${startCommand}`,
+    `docker run -d --name "${containerName}" --restart unless-stopped -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace"${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""}${!openaiApiKey && !anthropicApiKey && !openrouterApiKey && subsidyProxyBaseUrl && subsidyProxyToken ? ` -e OPENAI_API_KEY=${shellQuote(subsidyProxyToken)} -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)}` : ""} -p "${hostPort}:${containerPort}" "${image}" ${startCommand}`,
   ].join(" && ");
 
   await runSshCommand(sshTarget, remoteScript);

@@ -8,6 +8,11 @@ export type Deployment = {
   hostName: string | null;
   runtimeId: string | null;
   deployProvider: string | null;
+  subsidyProxyToken: string | null;
+  openaiApiKey: string | null;
+  anthropicApiKey: string | null;
+  openrouterApiKey: string | null;
+  telegramBotToken: string | null;
   readyUrl: string | null;
   error: string | null;
   createdAt: string;

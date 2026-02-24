@@ -216,8 +216,13 @@ export async function POST(request: Request) {
   }
 
   const deploymentId = newDeploymentId();
-  const onboarding = await pool.query<{ bot_name: string | null }>(
-    `SELECT bot_name
+  const onboarding = await pool.query<{
+    bot_name: string | null;
+    model_provider: string | null;
+    model_api_key: string | null;
+    telegram_bot_token: string | null;
+  }>(
+    `SELECT bot_name, model_provider, model_api_key, telegram_bot_token
      FROM onboarding_sessions
      WHERE user_id = $1
      LIMIT 1`,
@@ -225,15 +230,20 @@ export async function POST(request: Request) {
   );
   const fallbackBotName = onboarding.rows[0]?.bot_name?.trim() || "MyAssistant";
   const botName = parsedPayload.botName ?? fallbackBotName;
+  const modelProvider = onboarding.rows[0]?.model_provider?.trim() || "";
+  const modelApiKey = onboarding.rows[0]?.model_api_key?.trim() || "";
+  const openaiApiKey = modelProvider === "openai" ? modelApiKey : null;
+  const anthropicApiKey = modelProvider === "anthropic" ? modelApiKey : null;
+  const telegramBotToken = onboarding.rows[0]?.telegram_bot_token?.trim() || null;
   const reservation = await reserveBotIdentity(session.user.email, botName);
   if (!reservation.ok) {
     return NextResponse.json({ ok: false, error: reservation.error }, { status: 409 });
   }
 
   await pool.query(
-    `INSERT INTO deployments (id, user_id, bot_name, status)
-     VALUES ($1, $2, $3, 'queued')`,
-    [deploymentId, session.user.email, botName],
+    `INSERT INTO deployments (id, user_id, bot_name, status, openai_api_key, anthropic_api_key, telegram_bot_token)
+     VALUES ($1, $2, $3, 'queued', $4, $5, $6)`,
+    [deploymentId, session.user.email, botName, openaiApiKey, anthropicApiKey, telegramBotToken],
   );
 
   await pool.query(

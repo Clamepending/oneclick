@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ProgressTimeline } from "@/components/deployment/ProgressTimeline";
 import { DeploymentActions } from "@/components/deployment/DeploymentActions";
+import { DeploymentSettingsCard } from "@/components/deployment/DeploymentSettingsCard";
 
 type DeploymentResponse = {
   id: string;
@@ -19,6 +20,12 @@ type DeploymentResponse = {
   health?: {
     ok: boolean;
     status: number | null;
+  } | null;
+  settings?: {
+    hasOpenaiApiKey: boolean;
+    hasAnthropicApiKey: boolean;
+    hasOpenrouterApiKey: boolean;
+    hasTelegramBotToken: boolean;
   } | null;
 };
 
@@ -173,6 +180,15 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
             deploymentId={deployment.id}
             status={deployment.status}
             botName={deployment.botName}
+          />
+        ) : null}
+        {deployment ? (
+          <DeploymentSettingsCard
+            deploymentId={deployment.id}
+            hasOpenaiApiKey={Boolean(deployment.settings?.hasOpenaiApiKey)}
+            hasAnthropicApiKey={Boolean(deployment.settings?.hasAnthropicApiKey)}
+            hasOpenrouterApiKey={Boolean(deployment.settings?.hasOpenrouterApiKey)}
+            hasTelegramBotToken={Boolean(deployment.settings?.hasTelegramBotToken)}
           />
         ) : null}
         {deployment?.status === "failed" ? (

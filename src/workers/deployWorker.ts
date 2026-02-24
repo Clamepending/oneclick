@@ -126,8 +126,14 @@ export async function processDeploymentJob(job: DeploymentJob) {
   );
   await appendEvent(job.deploymentId, "starting", `Assigned host ${host.name}`);
 
-  const deploymentBot = await pool.query<{ bot_name: string | null }>(
-    `SELECT bot_name
+  const deploymentRow = await pool.query<{
+    bot_name: string | null;
+    openai_api_key: string | null;
+    anthropic_api_key: string | null;
+    openrouter_api_key: string | null;
+    telegram_bot_token: string | null;
+  }>(
+    `SELECT bot_name, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token
      FROM deployments
      WHERE id = $1
      LIMIT 1`,
@@ -147,15 +153,27 @@ export async function processDeploymentJob(job: DeploymentJob) {
     [job.userId],
   );
   const runtimeSlugSource =
-    deploymentBot.rows[0]?.bot_name?.trim() || onboarding.rows[0]?.bot_name?.trim() || null;
+    deploymentRow.rows[0]?.bot_name?.trim() || onboarding.rows[0]?.bot_name?.trim() || null;
   const selectedChannel = onboarding.rows[0]?.channel?.trim() || "none";
-  const selectedModelProvider = onboarding.rows[0]?.model_provider?.trim() || null;
-  const selectedModelApiKey = onboarding.rows[0]?.model_api_key?.trim() || null;
-  const useSubsidyProxy = !selectedModelApiKey;
+  const onboardingModelProvider = onboarding.rows[0]?.model_provider?.trim() || "";
+  const onboardingModelApiKey = onboarding.rows[0]?.model_api_key?.trim() || "";
+  const deploymentOpenAiKey = deploymentRow.rows[0]?.openai_api_key?.trim() || null;
+  const deploymentAnthropicKey = deploymentRow.rows[0]?.anthropic_api_key?.trim() || null;
+  const deploymentOpenRouterKey = deploymentRow.rows[0]?.openrouter_api_key?.trim() || null;
+  const selectedOpenAiKey =
+    deploymentOpenAiKey || (onboardingModelProvider === "openai" ? onboardingModelApiKey : null);
+  const selectedAnthropicKey =
+    deploymentAnthropicKey || (onboardingModelProvider === "anthropic" ? onboardingModelApiKey : null);
+  const selectedOpenRouterKey = deploymentOpenRouterKey;
+  const useSubsidyProxy = !selectedOpenAiKey && !selectedAnthropicKey && !selectedOpenRouterKey;
   const subsidyProxyToken = useSubsidyProxy ? randomUUID().replace(/-/g, "") : null;
   const onboardingTelegramBotToken = onboarding.rows[0]?.telegram_bot_token?.trim() || null;
+  const deploymentTelegramBotToken = deploymentRow.rows[0]?.telegram_bot_token?.trim() || null;
   const telegramBotToken =
-    onboardingTelegramBotToken || process.env.OPENCLAW_TELEGRAM_BOT_TOKEN?.trim() || null;
+    deploymentTelegramBotToken ||
+    onboardingTelegramBotToken ||
+    process.env.OPENCLAW_TELEGRAM_BOT_TOKEN?.trim() ||
+    null;
   const appBaseUrl = process.env.APP_BASE_URL?.trim() || "http://localhost:3000";
   const subsidyProxyBaseUrl = subsidyProxyToken
     ? `${appBaseUrl}/api/subsidy/openai/${job.deploymentId}/v1`
@@ -192,9 +210,10 @@ export async function processDeploymentJob(job: DeploymentJob) {
     userId: job.userId,
     runtimeSlugSource,
     host,
-    telegramBotToken: selectedChannel === "telegram" ? telegramBotToken : null,
-    modelProvider: selectedModelProvider,
-    modelApiKey: selectedModelApiKey,
+    telegramBotToken: selectedChannel === "telegram" || Boolean(deploymentTelegramBotToken) ? telegramBotToken : null,
+    openaiApiKey: selectedOpenAiKey,
+    anthropicApiKey: selectedAnthropicKey,
+    openrouterApiKey: selectedOpenRouterKey,
     subsidyProxyToken,
     subsidyProxyBaseUrl,
   });
@@ -212,8 +231,8 @@ export async function processDeploymentJob(job: DeploymentJob) {
     [runtime.readyUrl, runtime.runtimeId, runtime.deployProvider, job.deploymentId],
   );
   await appendEvent(job.deploymentId, "ready", "Runtime is ready");
-  if (selectedModelApiKey) {
-    await appendEvent(job.deploymentId, "ready", "Configured model API key from onboarding.");
+  if (selectedOpenAiKey || selectedAnthropicKey || selectedOpenRouterKey) {
+    await appendEvent(job.deploymentId, "ready", "Configured runtime API credentials from deployment settings.");
   }
 }
 
