@@ -1,13 +1,7 @@
 import { randomUUID } from "crypto";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { Client } from "ssh2";
 import { getOpenClawImage, getOpenClawPort, getOpenClawStartCommand } from "@/lib/provisioner/openclawBundle";
 import type { Host } from "@/lib/provisioner/hostScheduler";
-
-const execFileAsync = promisify(execFile);
 
 type LaunchInput = {
   deploymentId: string;
@@ -38,30 +32,67 @@ function parseSshTarget(dockerHost: string) {
   return dockerHost.replace("ssh://", "");
 }
 
-function buildSshArgs(sshTarget: string) {
-  const args = ["-o", "BatchMode=yes"];
-  const knownHosts = process.env.DEPLOY_SSH_KNOWN_HOSTS?.trim();
+function parseUserAndHost(sshTarget: string) {
+  const [user, host] = sshTarget.includes("@")
+    ? sshTarget.split("@")
+    : ["root", sshTarget];
+  return { user, host };
+}
+
+function runtimeIdFromSsh(sshTarget: string, containerName: string) {
+  return `ssh:${sshTarget}|${containerName}`;
+}
+
+function parseSshRuntimeId(runtimeId: string) {
+  if (!runtimeId.startsWith("ssh:")) return null;
+  const body = runtimeId.slice(4);
+  const split = body.split("|");
+  if (split.length !== 2) return null;
+  return { sshTarget: split[0], containerName: split[1] };
+}
+
+async function runSshCommand(sshTarget: string, command: string) {
+  const { user, host } = parseUserAndHost(sshTarget);
   const privateKeyRaw = process.env.DEPLOY_SSH_PRIVATE_KEY?.trim();
-  let keyPath: string | null = null;
-
-  if (knownHosts) {
-    const knownHostsPath = join(tmpdir(), "oneclick-known-hosts");
-    writeFileSync(knownHostsPath, `${knownHosts}\n`, { mode: 0o600 });
-    args.push("-o", `UserKnownHostsFile=${knownHostsPath}`);
-    args.push("-o", "StrictHostKeyChecking=yes");
-  } else {
-    args.push("-o", "StrictHostKeyChecking=no");
+  if (!privateKeyRaw) {
+    throw new Error("DEPLOY_SSH_PRIVATE_KEY is required for DEPLOY_PROVIDER=ssh.");
   }
+  const privateKey = privateKeyRaw.replace(/\\n/g, "\n");
 
-  if (privateKeyRaw) {
-    keyPath = join(tmpdir(), `oneclick-key-${Date.now()}`);
-    const keyMaterial = privateKeyRaw.replace(/\\n/g, "\n");
-    writeFileSync(keyPath, `${keyMaterial}\n`, { mode: 0o600 });
-    args.push("-i", keyPath);
-  }
+  await new Promise<void>((resolve, reject) => {
+    const conn = new Client();
+    conn
+      .on("ready", () => {
+        conn.exec(command, (execErr, stream) => {
+          if (execErr) {
+            conn.end();
+            reject(execErr);
+            return;
+          }
 
-  args.push(sshTarget);
-  return { args, keyPath };
+          let stderr = "";
+          stream.stderr.on("data", (data: Buffer) => {
+            stderr += data.toString("utf8");
+          });
+
+          stream.on("close", (code: number | null) => {
+            conn.end();
+            if (code === 0) {
+              resolve();
+            } else {
+              reject(new Error(stderr || `SSH command failed with exit code ${code ?? "unknown"}`));
+            }
+          });
+        });
+      })
+      .on("error", (error) => reject(error))
+      .connect({
+        host,
+        username: user,
+        privateKey,
+        readyTimeout: Number(process.env.OPENCLAW_SSH_TIMEOUT_MS ?? "120000"),
+      });
+  });
 }
 
 function toReadyUrl(host: Host, hostPort: number, deploymentId: string) {
@@ -230,19 +261,10 @@ async function launchViaSsh(input: LaunchInput) {
     `  "${image}" sh -lc '${startCommand.replace(/'/g, `'\"'\"'`)}'`,
   ].join(" && ");
 
-  const { args, keyPath } = buildSshArgs(sshTarget);
-  try {
-    await execFileAsync("ssh", [...args, remoteScript], {
-      timeout: Number(process.env.OPENCLAW_SSH_TIMEOUT_MS ?? "120000"),
-    });
-  } finally {
-    if (keyPath) {
-      rmSync(keyPath, { force: true });
-    }
-  }
+  await runSshCommand(sshTarget, remoteScript);
 
   return {
-    runtimeId: randomUUID(),
+    runtimeId: runtimeIdFromSsh(sshTarget, containerName),
     deployProvider: "ssh",
     image,
     port: containerPort,
@@ -306,5 +328,16 @@ export async function destroyUserRuntime(input: DestroyInput) {
     await destroyDigitalOceanRuntime(input.runtimeId);
     return;
   }
-  // For other providers in this v1, destroy is currently a no-op.
+  if (provider === "ssh") {
+    const parsed = parseSshRuntimeId(input.runtimeId);
+    if (!parsed) {
+      throw new Error("Invalid ssh runtime id format.");
+    }
+    await runSshCommand(
+      parsed.sshTarget,
+      `docker rm -f "${parsed.containerName}" >/dev/null 2>&1 || true`,
+    );
+    return;
+  }
+  // For mock provider, destroy is a no-op.
 }

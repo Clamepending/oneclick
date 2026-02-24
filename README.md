@@ -111,12 +111,13 @@ Requirements on each host:
 - SSH access from deploy worker runtime.
 - Port range `OPENCLAW_HOST_PORT_BASE` to `OPENCLAW_HOST_PORT_BASE + OPENCLAW_HOST_PORT_SPAN` open.
 
-For Vercel + SSH deployment:
+For Vercel + SSH deployment (one shared VM, one container per user):
 
 - set `DEPLOY_PROVIDER=ssh`
 - set `DEPLOY_SSH_PRIVATE_KEY` (escaped newlines)
-- if using strict host checks, set `DEPLOY_SSH_KNOWN_HOSTS`
+- set `HOST_POOL_JSON` to your droplet (for example `ssh://root@64.225.46.105`)
 - do not set `REDIS_URL` to localhost; either provide a real remote Redis or leave `REDIS_URL` unset
+- each new deploy for a user destroys that user’s previous container
 
 ## Real container deployment via DigitalOcean API (Vercel-friendly)
 
