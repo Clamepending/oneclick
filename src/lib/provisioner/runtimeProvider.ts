@@ -58,39 +58,67 @@ async function runSshCommand(sshTarget: string, command: string) {
     throw new Error("DEPLOY_SSH_PRIVATE_KEY is required for DEPLOY_PROVIDER=ssh.");
   }
   const privateKey = privateKeyRaw.replace(/\\n/g, "\n");
+  const timeoutMs = Number(process.env.OPENCLAW_SSH_TIMEOUT_MS ?? "120000");
 
   await new Promise<void>((resolve, reject) => {
+    let settled = false;
     const conn = new Client();
+    let timer: NodeJS.Timeout | null = null;
+
+    const clearTimer = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
+
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimer();
+      conn.end();
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    };
+
     conn
       .on("ready", () => {
+        timer = setTimeout(() => {
+          finish(new Error(`SSH command timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+
         conn.exec(command, (execErr, stream) => {
           if (execErr) {
-            conn.end();
-            reject(execErr);
+            finish(execErr);
             return;
           }
 
           let stderr = "";
+          stream.on("data", () => {
+            // Consume stdout to avoid backpressure on long-running remote commands.
+          });
           stream.stderr.on("data", (data: Buffer) => {
             stderr += data.toString("utf8");
           });
 
           stream.on("close", (code: number | null) => {
-            conn.end();
             if (code === 0) {
-              resolve();
+              finish();
             } else {
-              reject(new Error(stderr || `SSH command failed with exit code ${code ?? "unknown"}`));
+              finish(new Error(stderr || `SSH command failed with exit code ${code ?? "unknown"}`));
             }
           });
         });
       })
-      .on("error", (error) => reject(error))
+      .on("error", (error) => finish(error))
       .connect({
         host,
         username: user,
         privateKey,
-        readyTimeout: Number(process.env.OPENCLAW_SSH_TIMEOUT_MS ?? "120000"),
+        readyTimeout: timeoutMs,
       });
   });
 }
