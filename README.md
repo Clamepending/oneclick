@@ -72,6 +72,8 @@ npm run worker -- --run
 - On Vercel, set:
   - `AUTH_URL=https://your-app.vercel.app`
   - `APP_BASE_URL=https://your-app.vercel.app`
+  - `AUTH_COOKIE_DOMAIN=.yourdomain.com` (optional, but recommended when app + bot dashboards use sibling subdomains)
+  - `BOT_AUTH_LOGIN_BASE_URL=https://app.yourdomain.com` (optional canonical login host for bot subdomains)
   - Google OAuth callback: `https://your-app.vercel.app/api/auth/callback/google`
 
 ### Import `.env` directly to Vercel
@@ -123,11 +125,38 @@ For Vercel + SSH deployment (one shared VM, one container per user):
 - set `HOST_POOL_JSON` to your droplet (for example `ssh://root@64.225.46.105`)
 - set `RUNTIME_BASE_DOMAIN` (for example `oneclickagent.net`) to enable `https://<user>.yourdomain` URLs
 - optional: set `BOT_DASHBOARD_BASE_DOMAIN` to enable bot dashboard URLs at `https://<bot-slug>.yourdomain` (routes to `/bots/:slug`)
+- optional but recommended for shared auth sessions across `app.yourdomain` + `bot.yourdomain`: set `AUTH_COOKIE_DOMAIN=.yourdomain`
+- optional: set `BOT_AUTH_LOGIN_BASE_URL` to your canonical app host (for example `https://app.yourdomain`) so unauthenticated bot subdomain visits always go through one login origin
 - optional: set `CADDY_EMAIL` for certificate issuer contact
 - do not set `REDIS_URL` to localhost; either provide a real remote Redis or leave `REDIS_URL` unset
 - each new deploy for a user destroys that user’s previous container
 - if using `RUNTIME_BASE_DOMAIN`, open droplet ports `80/443` and point wildcard DNS (`*.yourdomain`) to droplet IP
 - deployment step: after launch, enter the customer’s own OpenAI or Anthropic API key in OpenClaw (never use your personal key in customer deployments)
+
+### Wildcard DNS quick setup
+
+If you want bot dashboards on `botname.oneclickagent.net`, use a dedicated dashboard base domain and add wildcard DNS:
+
+1. Pick domains so runtime and dashboard traffic do not conflict:
+   - App/login host: `app.oneclickagent.net` (points to Vercel app)
+   - Bot dashboard host wildcard: `*.oneclickagent.net` (also points to Vercel app)
+   - Runtime host wildcard: use a different base domain such as `*.runtime.oneclickagent.net` (points to your runtime host/proxy)
+2. Add DNS records:
+   - `app` CNAME -> your Vercel target (or A/ALIAS depending provider)
+   - `*` CNAME -> same Vercel target (for bot dashboard subdomains)
+   - `*.runtime` A/CNAME -> your runtime ingress host
+3. In Vercel project domains:
+   - add `app.oneclickagent.net`
+   - add `*.oneclickagent.net`
+4. Set environment variables:
+   - `APP_BASE_URL=https://app.oneclickagent.net`
+   - `AUTH_URL=https://app.oneclickagent.net`
+   - `BOT_DASHBOARD_BASE_DOMAIN=oneclickagent.net`
+   - `BOT_AUTH_LOGIN_BASE_URL=https://app.oneclickagent.net`
+   - `AUTH_COOKIE_DOMAIN=.oneclickagent.net`
+   - `RUNTIME_BASE_DOMAIN=runtime.oneclickagent.net`
+5. Update Google OAuth callback URL:
+   - `https://app.oneclickagent.net/api/auth/callback/google`
 
 ## Real container deployment via DigitalOcean API (Vercel-friendly)
 
