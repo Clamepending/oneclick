@@ -279,6 +279,7 @@ async function launchViaSsh(input: LaunchInput) {
 
   const remoteScript = [
     `set -e`,
+    `>&2 echo "oneclick-debug image=${image} container=${containerName} hostPort=${hostPort} containerPort=${containerPort}"`,
     `mkdir -p "${userDir}" "${workspaceDir}"`,
     `docker pull "${image}"`,
     `docker rm -f "${containerName}" >/dev/null 2>&1 || true`,
