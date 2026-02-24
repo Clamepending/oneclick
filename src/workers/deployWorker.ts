@@ -158,16 +158,21 @@ async function waitForRuntimeReady(input: {
   deployProvider: string | null;
   runtimeId: string;
 }) {
-  const startupTimeoutMs = Number(process.env.OPENCLAW_STARTUP_TIMEOUT_MS ?? "120000");
+  const defaultStartupTimeoutMs = Number(readTrimmedEnv("OPENCLAW_STARTUP_TIMEOUT_MS") || "120000");
   const pollIntervalMs = 3000;
   const parsedEcsRuntime = input.deployProvider === "ecs" ? parseEcsRuntimeId(input.runtimeId) : null;
   if (parsedEcsRuntime) {
+    const startupTimeoutMs = Number(
+      readTrimmedEnv("ECS_STARTUP_TIMEOUT_MS") || readTrimmedEnv("OPENCLAW_STARTUP_TIMEOUT_MS") || "300000",
+    );
     const region = readTrimmedEnv("AWS_REGION");
     if (!region) {
       throw new Error("AWS_REGION is required for ECS runtime health checks.");
     }
     const ecsClient = new ECSClient(buildAwsConfigWithTrimmedCreds(region));
     const deadline = Date.now() + startupTimeoutMs;
+    let lastServiceStatus = "unknown";
+    let lastEventMessage = "";
     while (Date.now() < deadline) {
       const result = await ecsClient.send(
         new DescribeServicesCommand({
@@ -176,13 +181,20 @@ async function waitForRuntimeReady(input: {
         }),
       );
       const service = result.services?.[0];
+      if (service?.status) lastServiceStatus = service.status;
+      const latestEvent = service?.events?.[0]?.message?.trim() || "";
+      if (latestEvent) lastEventMessage = latestEvent;
       if (service && service.status === "ACTIVE" && (service.runningCount ?? 0) > 0) {
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
     }
+    const extra = [
+      `status=${lastServiceStatus}`,
+      lastEventMessage ? `lastEvent=${lastEventMessage}` : "",
+    ].filter(Boolean).join(" | ");
     throw new Error(
-      `ECS service ${parsedEcsRuntime.serviceName} did not report a running task within ${startupTimeoutMs}ms`,
+      `ECS service ${parsedEcsRuntime.serviceName} did not report a running task within ${startupTimeoutMs}ms${extra ? ` (${extra})` : ""}`,
     );
   }
 
@@ -194,7 +206,7 @@ async function waitForRuntimeReady(input: {
   const host = url.hostname;
   const port = Number(url.port || (url.protocol === "https:" ? "443" : "80"));
   const parsedSshRuntime = input.deployProvider === "ssh" ? parseSshRuntimeId(input.runtimeId) : null;
-  const deadline = Date.now() + startupTimeoutMs;
+  const deadline = Date.now() + defaultStartupTimeoutMs;
 
   while (Date.now() < deadline) {
     try {
@@ -210,10 +222,12 @@ async function waitForRuntimeReady(input: {
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
 
-  throw new Error(`Runtime failed port check at ${input.readyUrl} within ${startupTimeoutMs}ms`);
+  throw new Error(`Runtime failed port check at ${input.readyUrl} within ${defaultStartupTimeoutMs}ms`);
 }
 
 export async function processDeploymentJob(job: DeploymentJob) {
+  const startedAt = Date.now();
+  console.info(`[deploy:${job.deploymentId}] starting job for user ${job.userId}`);
   await ensureSchema();
   await appendEvent(job.deploymentId, "starting", "Scheduling runtime host");
   const provider = readTrimmedEnv("DEPLOY_PROVIDER") || "mock";
@@ -380,12 +394,19 @@ export async function processDeploymentJob(job: DeploymentJob) {
     [runtime.readyUrl, runtime.runtimeId, runtime.deployProvider, job.deploymentId],
   );
   await appendEvent(job.deploymentId, "starting", "Runtime launched; persisted runtime metadata");
+  console.info(
+    `[deploy:${job.deploymentId}] runtime launched provider=${runtime.deployProvider} runtimeId=${runtime.runtimeId}`,
+  );
   await appendEvent(job.deploymentId, "starting", "Waiting for runtime health check");
+  const healthCheckStartedAt = Date.now();
   await waitForRuntimeReady({
     readyUrl: runtime.readyUrl,
     deployProvider: runtime.deployProvider,
     runtimeId: runtime.runtimeId,
   });
+  console.info(
+    `[deploy:${job.deploymentId}] runtime health check passed in ${Date.now() - healthCheckStartedAt}ms`,
+  );
 
   await pool.query(
     `UPDATE deployments
@@ -395,6 +416,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
     [job.deploymentId],
   );
   await appendEvent(job.deploymentId, "ready", "Runtime is ready");
+  console.info(`[deploy:${job.deploymentId}] ready in ${Date.now() - startedAt}ms`);
   if (selectedOpenAiKey || selectedAnthropicKey || selectedOpenRouterKey) {
     await appendEvent(job.deploymentId, "ready", "Configured runtime API credentials from deployment settings.");
   }
@@ -402,6 +424,37 @@ export async function processDeploymentJob(job: DeploymentJob) {
 
 export async function markDeploymentFailed(deploymentId: string, error: unknown) {
   const message = error instanceof Error ? error.message : "Unexpected deployment failure";
+  console.warn(`[deploy:${deploymentId}] failed: ${message}`);
+
+  const deployment = await pool.query<{
+    runtime_id: string | null;
+    deploy_provider: string | null;
+    status: string;
+  }>(
+    `SELECT runtime_id, deploy_provider, status
+     FROM deployments
+     WHERE id = $1
+     LIMIT 1`,
+    [deploymentId],
+  );
+
+  const row = deployment.rows[0];
+  if (row?.runtime_id && (row.deploy_provider ?? "").trim() === "ecs") {
+    try {
+      console.info(`[deploy:${deploymentId}] cleaning up failed ECS runtime ${row.runtime_id}`);
+      await destroyUserRuntime({
+        runtimeId: row.runtime_id,
+        deployProvider: row.deploy_provider,
+      });
+      await appendEvent(deploymentId, "failed", "Cleaned up failed ECS runtime.");
+    } catch (cleanupError) {
+      const cleanupMessage =
+        cleanupError instanceof Error ? cleanupError.message : "Unknown ECS cleanup failure";
+      console.warn(`[deploy:${deploymentId}] ECS cleanup failed: ${cleanupMessage}`);
+      await appendEvent(deploymentId, "failed", `ECS cleanup failed: ${cleanupMessage}`);
+    }
+  }
+
   await pool.query(
     `UPDATE deployments SET status = 'failed', error = $1, updated_at = NOW() WHERE id = $2`,
     [message, deploymentId],
