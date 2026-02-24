@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ProgressTimeline } from "@/components/deployment/ProgressTimeline";
+import { DeploymentActions } from "@/components/deployment/DeploymentActions";
 
 type DeploymentResponse = {
   id: string;
@@ -157,6 +158,7 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
             </a>
           </p>
         ) : null}
+        {deployment ? <DeploymentActions deploymentId={deployment.id} status={deployment.status} /> : null}
         {deployment?.status === "failed" ? (
           <p style={{ color: "#ff8e8e" }}>{deployment.error ?? "Deployment failed."}</p>
         ) : null}

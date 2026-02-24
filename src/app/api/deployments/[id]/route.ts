@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
+import { destroyUserRuntime } from "@/lib/provisioner/runtimeProvider";
 
 async function checkRuntimeHealth(readyUrl: string) {
   try {
@@ -73,4 +74,58 @@ export async function GET(
     updatedAt: item.updated_at,
     health,
   });
+}
+
+export async function DELETE(
+  _request: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  const session = await auth();
+  if (!session?.user?.email) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { id } = await context.params;
+  await ensureSchema();
+
+  const result = await pool.query<{
+    id: string;
+    status: string;
+    runtime_id: string | null;
+    deploy_provider: string | null;
+  }>(
+    `SELECT id, status, runtime_id, deploy_provider
+     FROM deployments
+     WHERE id = $1 AND user_id = $2`,
+    [id, session.user.email],
+  );
+
+  const deployment = result.rows[0];
+  if (!deployment) {
+    return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
+  }
+
+  if (deployment.status === "queued" || deployment.status === "starting") {
+    return NextResponse.json(
+      { ok: false, error: "Cannot delete a deployment that is still in progress." },
+      { status: 409 },
+    );
+  }
+
+  try {
+    if (deployment.runtime_id) {
+      await destroyUserRuntime({
+        runtimeId: deployment.runtime_id,
+        deployProvider: deployment.deploy_provider,
+      });
+    }
+
+    await pool.query(`DELETE FROM deployment_events WHERE deployment_id = $1`, [id]);
+    await pool.query(`DELETE FROM deployments WHERE id = $1 AND user_id = $2`, [id, session.user.email]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to delete deployment";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true });
 }

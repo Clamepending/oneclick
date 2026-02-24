@@ -24,6 +24,23 @@ function sanitizeSegment(value: string) {
   return value.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 48) || "default";
 }
 
+function sanitizeNamePart(value: string, maxLength: number) {
+  const sanitized = value
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return sanitized.slice(0, maxLength) || "default";
+}
+
+function buildRuntimeName(input: { runtimeSlugSource?: string | null; userId: string; deploymentId: string }) {
+  const botPart = sanitizeNamePart(input.runtimeSlugSource?.trim() || "bot", 20);
+  const userPart = sanitizeNamePart(input.userId, 24);
+  const deploymentPart = sanitizeNamePart(input.deploymentId, 10);
+  const joined = `oneclick-${botPart}-${userPart}-${deploymentPart}`;
+  return joined.slice(0, 63);
+}
+
 function sanitizeDnsLabel(value: string) {
   return value
     .toLowerCase()
@@ -223,13 +240,14 @@ async function launchViaDigitalOcean(input: LaunchInput) {
   const osImage = process.env.DO_IMAGE ?? "ubuntu-24-04-x64";
   const safeDeployment = sanitizeSegment(input.deploymentId);
   const safeUser = sanitizeSegment(input.userId);
-  const dropletName = `oneclick-${safeDeployment}`.slice(0, 63);
+  const runtimeName = buildRuntimeName(input);
+  const dropletName = runtimeName;
 
   const configBase = process.env.OPENCLAW_CONFIG_MOUNT_BASE ?? "/var/lib/oneclick/openclaw";
   const workspaceSuffix = process.env.OPENCLAW_WORKSPACE_SUFFIX ?? "workspace";
   const userDir = `${configBase}/${safeUser}/${safeDeployment}`;
   const workspaceDir = `${userDir}/${workspaceSuffix}`;
-  const containerName = `oneclick-${safeDeployment}`;
+  const containerName = runtimeName;
 
   // Cloud-init script bootstraps Docker and launches the OpenClaw container.
   const userDataScript = `#!/bin/bash
@@ -351,7 +369,7 @@ async function launchViaSsh(input: LaunchInput) {
 
   const safeUser = sanitizeSegment(input.userId);
   const safeDeployment = sanitizeSegment(input.deploymentId);
-  const containerName = `oneclick-${safeDeployment}`;
+  const containerName = buildRuntimeName(input);
   const configBase = process.env.OPENCLAW_CONFIG_MOUNT_BASE ?? "/var/lib/oneclick/openclaw";
   const workspaceSuffix = process.env.OPENCLAW_WORKSPACE_SUFFIX ?? "workspace";
   const userDir = `${configBase}/${safeUser}/${safeDeployment}`;

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { auth, signIn } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
+import { DeploymentActions } from "@/components/deployment/DeploymentActions";
 
 type DeploymentSummary = {
   id: string;
@@ -139,6 +140,7 @@ export default async function HomePage() {
                     </a>
                   ) : null}
                 </div>
+                <DeploymentActions deploymentId={deployment.id} status={deployment.status} compact />
               </div>
             );
           })}
