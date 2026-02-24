@@ -43,6 +43,7 @@ Runtime deployment mode:
 
 - `DEPLOY_PROVIDER=mock` (default placeholder runtime URL)
 - `DEPLOY_PROVIDER=ssh` (real SSH host deployment using Docker)
+- `DEPLOY_PROVIDER=digitalocean` (create Droplet via API from Vercel)
 - `DEPLOY_SSH_PRIVATE_KEY` can contain a PEM private key with `\\n` newlines.
 - `DEPLOY_SSH_KNOWN_HOSTS` is optional but recommended for strict host verification.
 
@@ -116,6 +117,23 @@ For Vercel + SSH deployment:
 - set `DEPLOY_SSH_PRIVATE_KEY` (escaped newlines)
 - if using strict host checks, set `DEPLOY_SSH_KNOWN_HOSTS`
 - do not set `REDIS_URL` to localhost; either provide a real remote Redis or leave `REDIS_URL` unset
+
+## Real container deployment via DigitalOcean API (Vercel-friendly)
+
+Set:
+
+- `DEPLOY_PROVIDER=digitalocean`
+- `DO_API_TOKEN` (DigitalOcean personal access token)
+- optional sizing/region:
+  - `DO_REGION` (default `nyc1`)
+  - `DO_SIZE` (default `s-1vcpu-2gb`)
+  - `DO_IMAGE` (default `ubuntu-24-04-x64`)
+  - `DO_API_TIMEOUT_MS` (default `15000`)
+
+Notes:
+
+- This mode does not require `ssh` binary on Vercel.
+- It creates a Droplet and launches the OpenClaw image via cloud-init.
 
 ## API
 
