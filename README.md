@@ -8,7 +8,7 @@ Minimal v1 implementation of a managed-first one-click deploy flow.
 - 3-step onboarding
 - Async deployment creation (`queued -> starting -> ready|failed`)
 - Progress polling page
-- Shared-host model with one OpenClaw container per user (provider adapter ready)
+- Shared-host model with one OpenClaw container per user
 - Basic in-memory rate limiting
 
 ## Not included in v1
@@ -38,6 +38,11 @@ Critical keys:
 Optional for background queue mode:
 
 - `REDIS_URL` (required only if using separate worker process)
+
+Runtime deployment mode:
+
+- `DEPLOY_PROVIDER=mock` (default placeholder runtime URL)
+- `DEPLOY_PROVIDER=ssh` (real SSH host deployment using Docker)
 
 ## Run
 
@@ -85,6 +90,23 @@ npm run vercel:env:import -- .env development
 ```
 
 This script replaces existing keys in the target environment and re-adds them from your local `.env`.
+
+## Real container deployment via SSH hosts
+
+Set:
+
+- `DEPLOY_PROVIDER=ssh`
+- `HOST_POOL_JSON` entries with SSH target:
+
+```json
+[{"name":"host-a","dockerHost":"ssh://ubuntu@1.2.3.4","publicBaseUrl":"http://1.2.3.4"}]
+```
+
+Requirements on each host:
+
+- Docker installed and user has permission to run Docker.
+- SSH access from deploy worker runtime.
+- Port range `OPENCLAW_HOST_PORT_BASE` to `OPENCLAW_HOST_PORT_BASE + OPENCLAW_HOST_PORT_SPAN` open.
 
 ## API
 

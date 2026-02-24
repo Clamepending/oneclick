@@ -61,7 +61,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
   const runtime = await launchUserContainer({
     deploymentId: job.deploymentId,
     userId: job.userId,
-    hostName: host.name,
+    host,
   });
 
   await pool.query(

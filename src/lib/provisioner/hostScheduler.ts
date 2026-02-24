@@ -1,6 +1,7 @@
-type Host = {
+export type Host = {
   name: string;
   dockerHost: string;
+  publicBaseUrl?: string;
 };
 
 function getHostPool(): Host[] {
@@ -13,6 +14,11 @@ function getHostPool(): Host[] {
   } catch {
     return [];
   }
+}
+
+export function getHostByName(name: string): Host | null {
+  const pool = getHostPool();
+  return pool.find((host) => host.name === name) ?? null;
 }
 
 export async function selectHost(activeByHost: Map<string, number>): Promise<Host> {
