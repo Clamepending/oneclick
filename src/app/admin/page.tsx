@@ -275,6 +275,8 @@ export default function AdminPage() {
     return (data?.recentDeployments ?? []).filter((item) => item.status === "failed").length;
   }, [data]);
 
+  const isEcsMode = (data?.deployProvider ?? "").trim() === "ecs";
+
   return (
     <main className="container">
       <div className="card">
@@ -292,52 +294,6 @@ export default function AdminPage() {
         {loading ? <p className="muted">Loading admin metrics...</p> : null}
         {error ? <p style={{ color: "#ff8e8e" }}>{error}</p> : null}
       </div>
-
-      <section className="card" style={{ marginTop: 14 }}>
-        <h2 style={{ marginTop: 0 }}>Recent deployments</h2>
-        <p className="muted">Latest deployment records across all users (works for ECS and SSH modes).</p>
-        {!data?.recentDeployments?.length ? (
-          <p className="muted">No deployments found yet.</p>
-        ) : (
-          <div style={{ display: "grid", gap: 8 }}>
-            {data.recentDeployments.map((item) => {
-              const isReplaced = (item.error ?? "").toLowerCase().includes("replaced by newer deployment");
-              const canOpen = item.status === "ready" && Boolean(item.ready_url);
-              return (
-                <div className="card" key={item.id}>
-                  <p className="muted" style={{ marginBottom: 0 }}>
-                    Bot: <code>{item.bot_name?.trim() || "Unnamed bot"}</code> • User: <code>{item.user_id}</code>
-                  </p>
-                  <p className="muted" style={{ marginBottom: 0 }}>
-                    Deployment: <code>{item.id}</code>
-                  </p>
-                  <p className="muted" style={{ marginBottom: 0 }}>
-                    Status: <code>{item.status}</code> • Provider: <code>{item.deploy_provider?.trim() || "unknown"}</code>
-                  </p>
-                  <p className="muted" style={{ marginBottom: 0 }}>
-                    Runtime: <code>{item.runtime_id?.trim() || "none"}</code>
-                  </p>
-                  <p className="muted" style={{ marginBottom: 0 }}>
-                    Updated: <code>{new Date(item.updated_at).toLocaleString()}</code>
-                  </p>
-                  {item.error ? (
-                    <p className="muted" style={{ marginBottom: 0, color: isReplaced ? "#ffd166" : "#ff8e8e" }}>
-                      Error: <code>{item.error}</code>
-                    </p>
-                  ) : null}
-                  {canOpen ? (
-                    <div className="row" style={{ marginTop: 10 }}>
-                      <a className="button secondary" href={item.ready_url!} target="_blank" rel="noreferrer">
-                        Open runtime
-                      </a>
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
 
       <section className="card" style={{ marginTop: 14 }}>
         <h2 style={{ marginTop: 0 }}>Subsidy usage</h2>
@@ -383,7 +339,17 @@ export default function AdminPage() {
         )}
       </section>
 
-      {data?.hosts?.map((item) => (
+      {isEcsMode && data?.hostPoolConfigured && (data.hosts?.length ?? 0) > 0 ? (
+        <section className="card" style={{ marginTop: 14 }}>
+          <h2 style={{ marginTop: 0 }}>Legacy SSH Host Pool</h2>
+          <p className="muted">
+            <code>HOST_POOL_JSON</code> is still configured (for example <code>{data.hosts[0]?.host.name}</code>), but the app is currently running in{" "}
+            <code>ecs</code> mode. These host cards are hidden to reduce confusion.
+          </p>
+        </section>
+      ) : null}
+
+      {!isEcsMode && data?.hosts?.map((item) => (
         <section className="card" key={item.host.name} style={{ marginTop: 14 }}>
           <h2 style={{ marginTop: 0 }}>{item.host.name}</h2>
           <p className="muted">
@@ -517,6 +483,52 @@ export default function AdminPage() {
           )}
         </section>
       ))}
+
+      <section className="card" style={{ marginTop: 14 }}>
+        <h2 style={{ marginTop: 0 }}>Recent deployments</h2>
+        <p className="muted">Latest deployment records across all users (works for ECS and SSH modes).</p>
+        {!data?.recentDeployments?.length ? (
+          <p className="muted">No deployments found yet.</p>
+        ) : (
+          <div style={{ display: "grid", gap: 8 }}>
+            {data.recentDeployments.map((item) => {
+              const isReplaced = (item.error ?? "").toLowerCase().includes("replaced by newer deployment");
+              const canOpen = item.status === "ready" && Boolean(item.ready_url);
+              return (
+                <div className="card" key={item.id}>
+                  <p className="muted" style={{ marginBottom: 0 }}>
+                    Bot: <code>{item.bot_name?.trim() || "Unnamed bot"}</code> • User: <code>{item.user_id}</code>
+                  </p>
+                  <p className="muted" style={{ marginBottom: 0 }}>
+                    Deployment: <code>{item.id}</code>
+                  </p>
+                  <p className="muted" style={{ marginBottom: 0 }}>
+                    Status: <code>{item.status}</code> • Provider: <code>{item.deploy_provider?.trim() || "unknown"}</code>
+                  </p>
+                  <p className="muted" style={{ marginBottom: 0 }}>
+                    Runtime: <code>{item.runtime_id?.trim() || "none"}</code>
+                  </p>
+                  <p className="muted" style={{ marginBottom: 0 }}>
+                    Updated: <code>{new Date(item.updated_at).toLocaleString()}</code>
+                  </p>
+                  {item.error ? (
+                    <p className="muted" style={{ marginBottom: 0, color: isReplaced ? "#ffd166" : "#ff8e8e" }}>
+                      Error: <code>{item.error}</code>
+                    </p>
+                  ) : null}
+                  {canOpen ? (
+                    <div className="row" style={{ marginTop: 10 }}>
+                      <a className="button secondary" href={item.ready_url!} target="_blank" rel="noreferrer">
+                        Open runtime
+                      </a>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </main>
   );
 }
