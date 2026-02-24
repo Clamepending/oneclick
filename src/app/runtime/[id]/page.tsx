@@ -124,21 +124,22 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
 
   const provider = (deployment.deploy_provider ?? "").trim();
   if (provider === "ecs" && deployment.runtime_id) {
+    let resolved: string | null = null;
     try {
-      const resolved = await resolveEcsPublicUrl({ runtimeId: deployment.runtime_id, deploymentId: id });
-      if (resolved) {
-        redirect(resolved);
-      }
-      return renderPlaceholder(
-        id,
-        deployment.status === "failed"
-          ? deployment.error || "Deployment failed before runtime became reachable."
-          : "ECS task is still starting. Try again in a moment.",
-      );
+      resolved = await resolveEcsPublicUrl({ runtimeId: deployment.runtime_id, deploymentId: id });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unexpected runtime resolution error.";
       return renderPlaceholder(id, message);
     }
+    if (resolved) {
+      redirect(resolved);
+    }
+    return renderPlaceholder(
+      id,
+      deployment.status === "failed"
+        ? deployment.error || "Deployment failed before runtime became reachable."
+        : "ECS task is still starting. Try again in a moment.",
+    );
   }
 
   const readyUrl = deployment.ready_url?.trim();
