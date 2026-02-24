@@ -88,12 +88,12 @@ export function BotDashboard({ deployments }: Props) {
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "minmax(220px, 1fr) minmax(0, 2fr)",
-        gap: 14,
+        gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+        gap: 16,
         alignItems: "start",
       }}
     >
-      <div style={{ display: "grid", gap: 10 }}>
+      <div style={{ display: "grid", gap: 10, alignContent: "start" }}>
         {groups.map((group) => {
           const preview = group.deployments[0];
           const statusMeta = getStatusMeta(preview.status);
@@ -114,6 +114,8 @@ export function BotDashboard({ deployments }: Props) {
                 cursor: "pointer",
                 display: "grid",
                 gap: 6,
+                transition: "border-color 120ms ease, transform 120ms ease",
+                borderColor: isActive ? "#3c5b86" : "#243041",
               }}
             >
               <strong>{group.name}</strong>
@@ -130,6 +132,7 @@ export function BotDashboard({ deployments }: Props) {
                   borderRadius: 999,
                   color: statusMeta.color,
                   background: statusMeta.bg,
+                  whiteSpace: "nowrap",
                 }}
               >
                 {statusMeta.label}
@@ -190,19 +193,26 @@ export function BotDashboard({ deployments }: Props) {
                       borderRadius: 999,
                       color: statusMeta.color,
                       background: statusMeta.bg,
+                      whiteSpace: "nowrap",
                     }}
                   >
                     {statusMeta.label}
                   </span>
                 </div>
-                <p className="muted" style={{ margin: 0 }}>
-                  Provider: <code>{deployment.deployProvider ?? "pending"}</code> • Runtime:{" "}
-                  <code>{deployment.runtimeId ?? "pending"}</code>
-                </p>
-                <p className="muted" style={{ margin: 0 }}>
-                  Host: <code>{deployment.hostName ?? "pending"}</code> • Updated:{" "}
-                  <code>{new Date(deployment.updatedAt).toLocaleString()}</code>
-                </p>
+                <div style={{ display: "grid", gap: 6 }}>
+                  <p className="muted" style={{ margin: 0 }}>
+                    Provider: <code>{deployment.deployProvider ?? "pending"}</code>
+                  </p>
+                  <p className="muted" style={{ margin: 0 }}>
+                    Runtime: <code>{deployment.runtimeId ?? "pending"}</code>
+                  </p>
+                  <p className="muted" style={{ margin: 0 }}>
+                    Host: <code>{deployment.hostName ?? "pending"}</code>
+                  </p>
+                  <p className="muted" style={{ margin: 0 }}>
+                    Updated: <code>{new Date(deployment.updatedAt).toLocaleString()}</code>
+                  </p>
+                </div>
                 <p className="muted" style={{ margin: 0 }}>
                   Settings: OpenAI <code>{deployment.hasOpenaiApiKey ? "set" : "not set"}</code> • Anthropic{" "}
                   <code>{deployment.hasAnthropicApiKey ? "set" : "not set"}</code> • OpenRouter{" "}

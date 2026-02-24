@@ -19,11 +19,11 @@ export function ChannelStep({
 }: Props) {
   return (
     <div className="card">
-      <h2>Add your model API key</h2>
+      <h2 style={{ margin: 0 }}>Add your model API key</h2>
       <p className="muted">
         Pick your provider and paste a key now so the runtime is ready to use immediately after deploy.
       </p>
-      <div className="row">
+      <div className="row" style={{ gap: 8 }}>
         <button
           className={`button ${provider === "openai" ? "" : "secondary"}`}
           onClick={() => onProviderChange("openai")}
@@ -39,21 +39,21 @@ export function ChannelStep({
           Anthropic
         </button>
       </div>
-      <label className="muted" htmlFor="provider-api-key" style={{ display: "block", marginTop: 12 }}>
-        API key
-      </label>
-      <input
-        id="provider-api-key"
-        className="input"
-        type="password"
-        placeholder={provider === "openai" ? "sk-..." : "sk-ant-..."}
-        value={apiKey}
-        onChange={(event) => onApiKeyChange(event.target.value)}
-        autoComplete="off"
-      />
-      <p className="muted" style={{ marginBottom: 0 }}>
-        Leave blank to skip for now.
-      </p>
+      <div style={{ display: "grid", gap: 8 }}>
+        <label className="muted" htmlFor="provider-api-key" style={{ display: "block" }}>
+          API key
+        </label>
+        <input
+          id="provider-api-key"
+          className="input"
+          type="password"
+          placeholder={provider === "openai" ? "sk-..." : "sk-ant-..."}
+          value={apiKey}
+          onChange={(event) => onApiKeyChange(event.target.value)}
+          autoComplete="off"
+        />
+        <p className="muted">Leave blank to skip for now.</p>
+      </div>
       <hr style={{ border: 0, borderTop: "1px solid #2f3c52", margin: "16px 0" }} />
       <h3 style={{ margin: "0 0 8px" }}>Connect Telegram bot (optional)</h3>
       <p className="muted" style={{ marginTop: 0 }}>
@@ -62,18 +62,20 @@ export function ChannelStep({
         </a>{" "}
         to create your bot, then paste the token below.
       </p>
-      <label className="muted" htmlFor="telegram-bot-token" style={{ display: "block", marginTop: 12 }}>
-        Telegram bot token
-      </label>
-      <input
-        id="telegram-bot-token"
-        className="input"
-        type="password"
-        placeholder="123456789:AA..."
-        value={telegramBotToken}
-        onChange={(event) => onTelegramBotTokenChange(event.target.value)}
-        autoComplete="off"
-      />
+      <div style={{ display: "grid", gap: 8 }}>
+        <label className="muted" htmlFor="telegram-bot-token" style={{ display: "block" }}>
+          Telegram bot token
+        </label>
+        <input
+          id="telegram-bot-token"
+          className="input"
+          type="password"
+          placeholder="123456789:AA..."
+          value={telegramBotToken}
+          onChange={(event) => onTelegramBotTokenChange(event.target.value)}
+          autoComplete="off"
+        />
+      </div>
     </div>
   );
 }

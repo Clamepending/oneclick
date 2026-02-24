@@ -9,6 +9,7 @@ body {
   font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   background: #0b0d12;
   color: #f5f7fa;
+  line-height: 1.45;
 }
 
 .topbar {
@@ -39,6 +40,16 @@ a {
   text-decoration: none;
 }
 
+h1,
+h2,
+h3 {
+  line-height: 1.2;
+}
+
+p {
+  margin: 0;
+}
+
 .container {
   max-width: 840px;
   margin: 0 auto;
@@ -50,20 +61,37 @@ a {
   border: 1px solid #243041;
   border-radius: 14px;
   padding: 20px;
+  display: grid;
+  gap: 12px;
 }
 
 .button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 0;
   border-radius: 10px;
   background: #3b82f6;
   color: #fff;
   font-weight: 600;
+  line-height: 1;
+  min-height: 40px;
   padding: 10px 16px;
   cursor: pointer;
+  transition: transform 120ms ease, filter 120ms ease;
+}
+
+.button:hover {
+  filter: brightness(1.06);
+}
+
+.button:active {
+  transform: translateY(1px);
 }
 
 .button.secondary {
   background: #222b3b;
+  color: #d7e0ee;
 }
 
 .input {
@@ -73,6 +101,13 @@ a {
   border: 1px solid #2f3c52;
   background: #0f1521;
   color: #fff;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.input:focus {
+  outline: none;
+  border-color: #4c78c8;
+  box-shadow: 0 0 0 3px rgba(76, 120, 200, 0.2);
 }
 
 .muted {
@@ -83,4 +118,5 @@ a {
   display: flex;
   gap: 12px;
   align-items: center;
+  flex-wrap: wrap;
 }

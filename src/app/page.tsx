@@ -79,7 +79,10 @@ export default async function HomePage() {
   return (
     <main className="container">
       <div className="card">
-        <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+        <div
+          className="row"
+          style={{ justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}
+        >
           <h1 style={{ margin: 0 }}>Your deployment dashboard</h1>
           <Link className="button" href="/onboarding">
             Start new deployment
@@ -110,7 +113,7 @@ export default async function HomePage() {
             }))}
           />
         ) : null}
-        <div className="row">
+        <div className="row" style={{ justifyContent: "flex-end" }}>
           <Link className="button secondary" href="/admin">
             Admin
           </Link>
