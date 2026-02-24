@@ -15,6 +15,11 @@ type LaunchInput = {
   host: Host;
 };
 
+type DestroyInput = {
+  runtimeId: string;
+  deployProvider: string | null;
+};
+
 function sanitizeSegment(value: string) {
   return value.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 48) || "default";
 }
@@ -184,6 +189,7 @@ docker run -d --name "${containerName}" --restart unless-stopped \\
   const readyUrl = `http://${publicIp}:${containerPort}`;
   return {
     runtimeId: String(dropletId),
+    deployProvider: "digitalocean",
     image,
     port: containerPort,
     hostPort: containerPort,
@@ -237,6 +243,7 @@ async function launchViaSsh(input: LaunchInput) {
 
   return {
     runtimeId: randomUUID(),
+    deployProvider: "ssh",
     image,
     port: containerPort,
     hostPort,
@@ -262,6 +269,7 @@ export async function launchUserContainer(input: LaunchInput) {
   const startCommand = getOpenClawStartCommand();
   return {
     runtimeId: randomUUID(),
+    deployProvider: "mock",
     image,
     port,
     hostPort: null,
@@ -269,4 +277,34 @@ export async function launchUserContainer(input: LaunchInput) {
     hostName: input.host.name,
     readyUrl: `${process.env.APP_BASE_URL ?? "http://localhost:3000"}/runtime/${input.deploymentId}`,
   };
+}
+
+async function destroyDigitalOceanRuntime(runtimeId: string) {
+  const token = process.env.DO_API_TOKEN?.trim();
+  if (!token) {
+    throw new Error("DO_API_TOKEN is required to destroy DigitalOcean runtime.");
+  }
+
+  const response = await fetch(`https://api.digitalocean.com/v2/droplets/${runtimeId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    signal: AbortSignal.timeout(Number(process.env.DO_API_TIMEOUT_MS ?? "15000")),
+  });
+
+  if (response.status === 404) return;
+  if (response.status !== 204) {
+    const details = await response.text();
+    throw new Error(`DigitalOcean destroy droplet failed (${response.status}): ${details}`);
+  }
+}
+
+export async function destroyUserRuntime(input: DestroyInput) {
+  const provider = input.deployProvider ?? "";
+  if (provider === "digitalocean") {
+    await destroyDigitalOceanRuntime(input.runtimeId);
+    return;
+  }
+  // For other providers in this v1, destroy is currently a no-op.
 }

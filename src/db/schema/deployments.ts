@@ -5,6 +5,8 @@ export type Deployment = {
   userId: string;
   status: DeploymentStatus;
   hostName: string | null;
+  runtimeId: string | null;
+  deployProvider: string | null;
   readyUrl: string | null;
   error: string | null;
   createdAt: string;

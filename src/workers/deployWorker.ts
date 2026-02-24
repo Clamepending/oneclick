@@ -3,7 +3,7 @@ import { Queue, Worker } from "bullmq";
 import { randomUUID } from "crypto";
 import { ensureSchema, pool } from "@/lib/db";
 import { selectHost } from "@/lib/provisioner/hostScheduler";
-import { launchUserContainer } from "@/lib/provisioner/runtimeProvider";
+import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runtimeProvider";
 
 type DeploymentJob = {
   deploymentId: string;
@@ -40,6 +40,39 @@ export async function processDeploymentJob(job: DeploymentJob) {
   await ensureSchema();
   await appendEvent(job.deploymentId, "starting", "Scheduling runtime host");
 
+  // Enforce one runtime per user by destroying previous ready runtimes.
+  const previousDeployments = await pool.query<{
+    id: string;
+    runtime_id: string | null;
+    deploy_provider: string | null;
+  }>(
+    `SELECT id, runtime_id, deploy_provider
+     FROM deployments
+     WHERE user_id = $1
+       AND id <> $2
+       AND status = 'ready'
+       AND runtime_id IS NOT NULL`,
+    [job.userId, job.deploymentId],
+  );
+
+  for (const previous of previousDeployments.rows) {
+    if (!previous.runtime_id) continue;
+    await destroyUserRuntime({
+      runtimeId: previous.runtime_id,
+      deployProvider: previous.deploy_provider,
+    });
+
+    await pool.query(
+      `UPDATE deployments
+       SET status = 'failed',
+           error = 'Replaced by newer deployment',
+           updated_at = NOW()
+       WHERE id = $1`,
+      [previous.id],
+    );
+    await appendEvent(previous.id, "failed", "Replaced by newer deployment");
+  }
+
   const activeByHost = new Map<string, number>();
   const activeRows = await pool.query<{ host_name: string; active_count: string }>(
     `SELECT host_name, COUNT(*)::text as active_count
@@ -66,9 +99,13 @@ export async function processDeploymentJob(job: DeploymentJob) {
 
   await pool.query(
     `UPDATE deployments
-     SET status = 'ready', ready_url = $1, updated_at = NOW()
-     WHERE id = $2`,
-    [runtime.readyUrl, job.deploymentId],
+     SET status = 'ready',
+         ready_url = $1,
+         runtime_id = $2,
+         deploy_provider = $3,
+         updated_at = NOW()
+     WHERE id = $4`,
+    [runtime.readyUrl, runtime.runtimeId, runtime.deployProvider, job.deploymentId],
   );
   await appendEvent(job.deploymentId, "ready", "Runtime is ready");
 }

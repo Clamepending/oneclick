@@ -32,12 +32,17 @@ export async function ensureSchema() {
       user_id TEXT NOT NULL,
       status TEXT NOT NULL,
       host_name TEXT,
+      runtime_id TEXT,
+      deploy_provider TEXT,
       ready_url TEXT,
       error TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS runtime_id TEXT;`);
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS deploy_provider TEXT;`);
 
   await pool.query(`
     CREATE INDEX IF NOT EXISTS deployments_user_id_idx ON deployments (user_id);
