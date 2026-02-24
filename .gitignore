@@ -6,4 +6,4 @@ dist
 coverage
 .vercel
 .env*.local
-
+.env.production
