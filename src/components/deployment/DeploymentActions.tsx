@@ -7,9 +7,10 @@ type Props = {
   deploymentId: string;
   status?: "queued" | "starting" | "ready" | "failed";
   compact?: boolean;
+  botName?: string | null;
 };
 
-export function DeploymentActions({ deploymentId, status, compact = false }: Props) {
+export function DeploymentActions({ deploymentId, status, compact = false, botName }: Props) {
   const router = useRouter();
   const [error, setError] = useState("");
   const [isRedeploying, setIsRedeploying] = useState(false);
@@ -21,7 +22,11 @@ export function DeploymentActions({ deploymentId, status, compact = false }: Pro
     setError("");
     setIsRedeploying(true);
     try {
-      const response = await fetch("/api/deployments", { method: "POST" });
+      const response = await fetch("/api/deployments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ botName: botName ?? undefined }),
+      });
       const payload = (await response.json()) as { id?: string; error?: string };
       if (!response.ok || !payload.id) {
         throw new Error(payload.error || "Failed to redeploy");

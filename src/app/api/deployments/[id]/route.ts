@@ -37,6 +37,7 @@ export async function GET(
 
   const result = await pool.query<{
     id: string;
+    bot_name: string | null;
     status: string;
     host_name: string | null;
     runtime_id: string | null;
@@ -46,7 +47,7 @@ export async function GET(
     created_at: string;
     updated_at: string;
   }>(
-    `SELECT id, status, host_name, runtime_id, deploy_provider, ready_url, error, created_at, updated_at
+    `SELECT id, bot_name, status, host_name, runtime_id, deploy_provider, ready_url, error, created_at, updated_at
      FROM deployments
      WHERE id = $1 AND user_id = $2`,
     [id, session.user.email],
@@ -64,6 +65,7 @@ export async function GET(
 
   return NextResponse.json({
     id: item.id,
+    botName: item.bot_name,
     status: item.status,
     hostName: item.host_name,
     runtimeId: item.runtime_id,

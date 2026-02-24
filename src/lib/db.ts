@@ -38,6 +38,7 @@ export async function ensureSchema() {
     CREATE TABLE IF NOT EXISTS deployments (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
+      bot_name TEXT,
       status TEXT NOT NULL,
       host_name TEXT,
       runtime_id TEXT,
@@ -51,6 +52,7 @@ export async function ensureSchema() {
 
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS runtime_id TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS deploy_provider TEXT;`);
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS bot_name TEXT;`);
 
   await pool.query(`
     CREATE INDEX IF NOT EXISTS deployments_user_id_idx ON deployments (user_id);

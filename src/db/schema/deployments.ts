@@ -3,6 +3,7 @@ export type DeploymentStatus = "queued" | "starting" | "ready" | "failed";
 export type Deployment = {
   id: string;
   userId: string;
+  botName: string | null;
   status: DeploymentStatus;
   hostName: string | null;
   runtimeId: string | null;

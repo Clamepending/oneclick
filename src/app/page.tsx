@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { auth, signIn } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
-import { DeploymentActions } from "@/components/deployment/DeploymentActions";
+import { BotDashboard } from "@/components/deployment/BotDashboard";
 
 type DeploymentSummary = {
   id: string;
+  bot_name: string | null;
   status: "queued" | "starting" | "ready" | "failed";
   host_name: string | null;
   runtime_id: string | null;
@@ -13,13 +14,6 @@ type DeploymentSummary = {
   error: string | null;
   updated_at: string;
 };
-
-function getStatusMeta(status: DeploymentSummary["status"]) {
-  if (status === "ready") return { label: "READY", color: "#1f9d55", bg: "rgba(31,157,85,0.18)" };
-  if (status === "failed") return { label: "FAILED", color: "#ff6b6b", bg: "rgba(255,107,107,0.2)" };
-  if (status === "starting") return { label: "STARTING", color: "#f5c542", bg: "rgba(245,197,66,0.2)" };
-  return { label: "QUEUED", color: "#7ea7ff", bg: "rgba(126,167,255,0.2)" };
-}
 
 export default async function HomePage() {
   const session = await auth();
@@ -52,7 +46,7 @@ export default async function HomePage() {
     try {
       await ensureSchema();
       const result = await pool.query<DeploymentSummary>(
-        `SELECT id, status, host_name, runtime_id, deploy_provider, ready_url, error, updated_at
+        `SELECT id, bot_name, status, host_name, runtime_id, deploy_provider, ready_url, error, updated_at
          FROM deployments
          WHERE user_id = $1
          ORDER BY updated_at DESC
@@ -80,71 +74,21 @@ export default async function HomePage() {
             Deployment details are temporarily unavailable. You can still start a new deployment.
           </p>
         ) : null}
-        {!deploymentLookupFailed && deployments.length === 0 ? (
-          <p className="muted" style={{ marginBottom: 0 }}>
-            No deployments yet. Start your first one to create a container.
-          </p>
+        {!deploymentLookupFailed ? (
+          <BotDashboard
+            deployments={deployments.map((deployment) => ({
+              id: deployment.id,
+              botName: deployment.bot_name,
+              status: deployment.status,
+              hostName: deployment.host_name,
+              runtimeId: deployment.runtime_id,
+              deployProvider: deployment.deploy_provider,
+              readyUrl: deployment.ready_url,
+              error: deployment.error,
+              updatedAt: deployment.updated_at,
+            }))}
+          />
         ) : null}
-        <div style={{ display: "grid", gap: 12 }}>
-          {deployments.map((deployment) => {
-            const statusMeta = getStatusMeta(deployment.status);
-
-            return (
-              <div
-                key={deployment.id}
-                style={{
-                  display: "grid",
-                  gap: 8,
-                  border: "1px solid #243041",
-                  borderRadius: 12,
-                  padding: 14,
-                  background: "#0f1521",
-                }}
-              >
-                <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-                  <p className="muted" style={{ margin: 0 }}>
-                    <code>{deployment.id}</code>
-                  </p>
-                  <span
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 700,
-                      letterSpacing: 0.4,
-                      padding: "6px 10px",
-                      borderRadius: 999,
-                      color: statusMeta.color,
-                      background: statusMeta.bg,
-                    }}
-                  >
-                    {statusMeta.label}
-                  </span>
-                </div>
-                <p className="muted" style={{ margin: 0 }}>
-                  Provider: <code>{deployment.deploy_provider ?? "pending"}</code> • Runtime:{" "}
-                  <code>{deployment.runtime_id ?? "pending"}</code>
-                </p>
-                <p className="muted" style={{ margin: 0 }}>
-                  Host: <code>{deployment.host_name ?? "pending"}</code> • Updated:{" "}
-                  <code>{new Date(deployment.updated_at).toLocaleString()}</code>
-                </p>
-                {deployment.status === "failed" && deployment.error ? (
-                  <p style={{ color: "#ff8e8e", margin: 0 }}>{deployment.error}</p>
-                ) : null}
-                <div className="row">
-                  <Link className="button secondary" href={`/deployments/${deployment.id}`}>
-                    View details
-                  </Link>
-                  {deployment.status === "ready" && deployment.ready_url ? (
-                    <a className="button" href={deployment.ready_url} target="_blank" rel="noreferrer">
-                      Open OpenClaw
-                    </a>
-                  ) : null}
-                </div>
-                <DeploymentActions deploymentId={deployment.id} status={deployment.status} compact />
-              </div>
-            );
-          })}
-        </div>
         <div className="row">
           <Link className="button secondary" href="/admin">
             Admin

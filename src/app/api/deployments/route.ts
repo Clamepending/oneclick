@@ -38,10 +38,36 @@ function startInProcessDeployment(deploymentId: string, userId: string) {
   }, 0);
 }
 
+async function readRequestedBotName(request: Request) {
+  const contentType = request.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    return { ok: true as const, botName: null as string | null };
+  }
+
+  const payload = (await request.json().catch(() => null)) as { botName?: unknown } | null;
+  if (!payload || payload.botName === undefined) {
+    return { ok: true as const, botName: null as string | null };
+  }
+  if (typeof payload.botName !== "string") {
+    return { ok: false as const, error: "botName must be a string" };
+  }
+
+  const botName = payload.botName.trim();
+  if (!botName || botName.length > 80) {
+    return { ok: false as const, error: "botName must be 1-80 characters" };
+  }
+  return { ok: true as const, botName };
+}
+
 export async function POST(request: Request) {
   const session = await auth();
   if (!session?.user?.email) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  const parsedPayload = await readRequestedBotName(request);
+  if (!parsedPayload.ok) {
+    return NextResponse.json({ ok: false, error: parsedPayload.error }, { status: 400 });
   }
 
   const ip = getClientIp(request);
@@ -71,10 +97,20 @@ export async function POST(request: Request) {
   }
 
   const deploymentId = newDeploymentId();
+  const onboarding = await pool.query<{ bot_name: string | null }>(
+    `SELECT bot_name
+     FROM onboarding_sessions
+     WHERE user_id = $1
+     LIMIT 1`,
+    [session.user.email],
+  );
+  const fallbackBotName = onboarding.rows[0]?.bot_name?.trim() || "My Assistant";
+  const botName = parsedPayload.botName ?? fallbackBotName;
+
   await pool.query(
-    `INSERT INTO deployments (id, user_id, status)
-     VALUES ($1, $2, 'queued')`,
-    [deploymentId, session.user.email],
+    `INSERT INTO deployments (id, user_id, bot_name, status)
+     VALUES ($1, $2, $3, 'queued')`,
+    [deploymentId, session.user.email, botName],
   );
 
   await pool.query(

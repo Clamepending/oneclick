@@ -126,6 +126,13 @@ export async function processDeploymentJob(job: DeploymentJob) {
   );
   await appendEvent(job.deploymentId, "starting", `Assigned host ${host.name}`);
 
+  const deploymentBot = await pool.query<{ bot_name: string | null }>(
+    `SELECT bot_name
+     FROM deployments
+     WHERE id = $1
+     LIMIT 1`,
+    [job.deploymentId],
+  );
   const onboarding = await pool.query<{ bot_name: string | null }>(
     `SELECT bot_name
      FROM onboarding_sessions
@@ -133,7 +140,8 @@ export async function processDeploymentJob(job: DeploymentJob) {
      LIMIT 1`,
     [job.userId],
   );
-  const runtimeSlugSource = onboarding.rows[0]?.bot_name?.trim() || null;
+  const runtimeSlugSource =
+    deploymentBot.rows[0]?.bot_name?.trim() || onboarding.rows[0]?.bot_name?.trim() || null;
   if (runtimeSlugSource) {
     await appendEvent(job.deploymentId, "starting", `Using runtime subdomain slug "${runtimeSlugSource}"`);
   }

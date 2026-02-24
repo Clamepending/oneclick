@@ -7,6 +7,7 @@ import { DeploymentActions } from "@/components/deployment/DeploymentActions";
 
 type DeploymentResponse = {
   id: string;
+  botName?: string | null;
   status: "queued" | "starting" | "ready" | "failed";
   hostName?: string | null;
   runtimeId?: string | null;
@@ -122,6 +123,9 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
         {deployment ? (
           <div style={{ display: "grid", gap: 6 }}>
             <p className="muted">
+              Bot: <code>{deployment.botName ?? "Unnamed bot"}</code>
+            </p>
+            <p className="muted">
               Deployment ID: <code>{deployment.id}</code>
             </p>
             <p className="muted">
@@ -158,7 +162,13 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
             </a>
           </p>
         ) : null}
-        {deployment ? <DeploymentActions deploymentId={deployment.id} status={deployment.status} /> : null}
+        {deployment ? (
+          <DeploymentActions
+            deploymentId={deployment.id}
+            status={deployment.status}
+            botName={deployment.botName}
+          />
+        ) : null}
         {deployment?.status === "failed" ? (
           <p style={{ color: "#ff8e8e" }}>{deployment.error ?? "Deployment failed."}</p>
         ) : null}
