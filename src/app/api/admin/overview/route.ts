@@ -23,13 +23,28 @@ export async function GET() {
 
   await ensureSchema();
   const hosts = listHosts();
-  if (hosts.length === 0) {
-    return NextResponse.json({ ok: false, error: "HOST_POOL_JSON is missing or invalid." }, { status: 500 });
-  }
 
-  const [overview, subsidyUsage] = await Promise.all([
-    Promise.all(hosts.map((host) => fetchHostOverview(host))),
+  const [overview, subsidyUsage, recentDeployments] = await Promise.all([
+    hosts.length > 0 ? Promise.all(hosts.map((host) => fetchHostOverview(host))) : Promise.resolve([]),
     fetchSubsidyUsageOverview(),
+    pool.query<{
+      id: string;
+      user_id: string;
+      bot_name: string | null;
+      status: string;
+      deploy_provider: string | null;
+      runtime_id: string | null;
+      ready_url: string | null;
+      error: string | null;
+      created_at: string;
+      updated_at: string;
+    }>(
+      `SELECT
+         id, user_id, bot_name, status, deploy_provider, runtime_id, ready_url, error, created_at, updated_at
+       FROM deployments
+       ORDER BY updated_at DESC
+       LIMIT 50`,
+    ),
   ]);
 
   const containerNames = Array.from(
@@ -131,7 +146,10 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     generatedAt: new Date().toISOString(),
+    hostPoolConfigured: hosts.length > 0,
+    deployProvider: (process.env.DEPLOY_PROVIDER ?? "").trim() || "mock",
     hosts: hostsWithOwnership,
     subsidyUsage,
+    recentDeployments: recentDeployments.rows,
   });
 }

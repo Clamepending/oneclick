@@ -40,7 +40,21 @@ type HostItem = {
 type OverviewResponse = {
   ok: boolean;
   generatedAt: string;
+  hostPoolConfigured?: boolean;
+  deployProvider?: string;
   hosts: HostItem[];
+  recentDeployments?: Array<{
+    id: string;
+    user_id: string;
+    bot_name: string | null;
+    status: string;
+    deploy_provider: string | null;
+    runtime_id: string | null;
+    ready_url: string | null;
+    error: string | null;
+    created_at: string;
+    updated_at: string;
+  }>;
   subsidyUsage?: {
     totalRequests: number;
     requests24h: number;
@@ -253,16 +267,77 @@ export default function AdminPage() {
     return data.hosts.reduce((sum, host) => sum + host.containers.length, 0);
   }, [data]);
 
+  const readyDeployments = useMemo(() => {
+    return (data?.recentDeployments ?? []).filter((item) => item.status === "ready").length;
+  }, [data]);
+
+  const failedDeployments = useMemo(() => {
+    return (data?.recentDeployments ?? []).filter((item) => item.status === "failed").length;
+  }, [data]);
+
   return (
     <main className="container">
       <div className="card">
         <h1>Admin dashboard</h1>
-        <p className="muted">VM health and runtime containers across your host pool.</p>
+        <p className="muted">
+          Runtime operations overview. Current deploy provider: <code>{data?.deployProvider ?? "unknown"}</code>
+          {data?.hostPoolConfigured === false ? " (host pool not configured; ECS-only mode)" : ""}
+        </p>
         {data?.generatedAt ? <p className="muted">Last refresh: {new Date(data.generatedAt).toLocaleString()}</p> : null}
         <p className="muted">Total running containers: {totalContainers}</p>
+        <p className="muted">
+          Recent deployments: <code>{data?.recentDeployments?.length ?? 0}</code> • Ready: <code>{readyDeployments}</code> • Failed:{" "}
+          <code>{failedDeployments}</code>
+        </p>
         {loading ? <p className="muted">Loading admin metrics...</p> : null}
         {error ? <p style={{ color: "#ff8e8e" }}>{error}</p> : null}
       </div>
+
+      <section className="card" style={{ marginTop: 14 }}>
+        <h2 style={{ marginTop: 0 }}>Recent deployments</h2>
+        <p className="muted">Latest deployment records across all users (works for ECS and SSH modes).</p>
+        {!data?.recentDeployments?.length ? (
+          <p className="muted">No deployments found yet.</p>
+        ) : (
+          <div style={{ display: "grid", gap: 8 }}>
+            {data.recentDeployments.map((item) => {
+              const isReplaced = (item.error ?? "").toLowerCase().includes("replaced by newer deployment");
+              const canOpen = item.status === "ready" && Boolean(item.ready_url);
+              return (
+                <div className="card" key={item.id}>
+                  <p className="muted" style={{ marginBottom: 0 }}>
+                    Bot: <code>{item.bot_name?.trim() || "Unnamed bot"}</code> • User: <code>{item.user_id}</code>
+                  </p>
+                  <p className="muted" style={{ marginBottom: 0 }}>
+                    Deployment: <code>{item.id}</code>
+                  </p>
+                  <p className="muted" style={{ marginBottom: 0 }}>
+                    Status: <code>{item.status}</code> • Provider: <code>{item.deploy_provider?.trim() || "unknown"}</code>
+                  </p>
+                  <p className="muted" style={{ marginBottom: 0 }}>
+                    Runtime: <code>{item.runtime_id?.trim() || "none"}</code>
+                  </p>
+                  <p className="muted" style={{ marginBottom: 0 }}>
+                    Updated: <code>{new Date(item.updated_at).toLocaleString()}</code>
+                  </p>
+                  {item.error ? (
+                    <p className="muted" style={{ marginBottom: 0, color: isReplaced ? "#ffd166" : "#ff8e8e" }}>
+                      Error: <code>{item.error}</code>
+                    </p>
+                  ) : null}
+                  {canOpen ? (
+                    <div className="row" style={{ marginTop: 10 }}>
+                      <a className="button secondary" href={item.ready_url!} target="_blank" rel="noreferrer">
+                        Open runtime
+                      </a>
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       <section className="card" style={{ marginTop: 14 }}>
         <h2 style={{ marginTop: 0 }}>Subsidy usage</h2>
