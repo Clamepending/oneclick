@@ -6,10 +6,19 @@ import { NameStep } from "@/components/onboarding/NameStep";
 import { ChannelStep } from "@/components/onboarding/ChannelStep";
 import { PlanStep } from "@/components/onboarding/PlanStep";
 
+function generateDefaultBotName() {
+  const adjectives = ["Swift", "Bright", "Nova", "Clever", "Calm", "Bold", "Blue", "Sunny"];
+  const nouns = ["Fox", "Otter", "Panda", "Raven", "Lynx", "Falcon", "Whale", "Koala"];
+  const adjective = adjectives[Math.floor(Math.random() * adjectives.length)];
+  const noun = nouns[Math.floor(Math.random() * nouns.length)];
+  const suffix = String(Math.floor(Math.random() * 900 + 100));
+  return `${adjective}${noun}${suffix}`;
+}
+
 export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState(1);
-  const [botName, setBotName] = useState("MyAssistant");
+  const [botName, setBotName] = useState(() => generateDefaultBotName());
   const [provider, setProvider] = useState<"openai" | "anthropic">("openai");
   const [apiKey, setApiKey] = useState("");
   const [telegramBotToken, setTelegramBotToken] = useState("");
