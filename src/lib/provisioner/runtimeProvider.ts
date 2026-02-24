@@ -255,7 +255,11 @@ ${allowInsecureControlUi ? `docker run --rm \\
 docker run --rm \\
   -v "${userDir}:/home/node/.openclaw" \\
   -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
-  "${image}" config set gateway.controlUi.dangerouslyDisableDeviceAuth true` : ""}
+  "${image}" config set gateway.controlUi.dangerouslyDisableDeviceAuth true
+docker run --rm \\
+  -v "${userDir}:/home/node/.openclaw" \\
+  -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
+  "${image}" config set gateway.trustedProxies '["172.16.0.0/12"]'` : ""}
 docker run -d --name "${containerName}" --restart unless-stopped \\
   -v "${userDir}:/home/node/.openclaw" \\
   -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
@@ -365,6 +369,7 @@ async function launchViaSsh(input: LaunchInput) {
       ? [
           `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.controlUi.allowInsecureAuth true`,
           `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.controlUi.dangerouslyDisableDeviceAuth true`,
+          `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.trustedProxies '["172.16.0.0/12"]'`,
         ]
       : []),
     `docker run -d --name "${containerName}" --restart unless-stopped -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" -p "${hostPort}:${containerPort}" "${image}" ${startCommand}`,
