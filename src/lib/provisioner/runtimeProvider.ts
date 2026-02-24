@@ -11,6 +11,7 @@ import type { Host } from "@/lib/provisioner/hostScheduler";
 type LaunchInput = {
   deploymentId: string;
   userId: string;
+  runtimeSlugSource?: string | null;
   host: Host;
 };
 
@@ -36,18 +37,21 @@ function getRuntimeBaseDomain() {
   return process.env.RUNTIME_BASE_DOMAIN?.trim().toLowerCase() ?? "";
 }
 
-function buildUserSubdomain(userId: string) {
+function buildRuntimeSubdomain(runtimeSlugSource: string | null | undefined, userId: string) {
+  const preferred = sanitizeDnsLabel(runtimeSlugSource ?? "");
+  if (preferred) return preferred;
+
   const localPart = userId.split("@")[0] ?? userId;
-  const label = sanitizeDnsLabel(localPart);
-  if (label) return label;
-  const fallback = sanitizeDnsLabel(userId).slice(0, 12);
-  return fallback || "runtime-user";
+  const fallback = sanitizeDnsLabel(localPart);
+  if (fallback) return fallback;
+
+  return sanitizeDnsLabel(userId).slice(0, 12) || "runtime-user";
 }
 
-function buildRuntimeUrlFromDomain(userId: string) {
+function buildRuntimeUrlFromDomain(runtimeSlugSource: string | null | undefined, userId: string) {
   const baseDomain = getRuntimeBaseDomain();
   if (!baseDomain) return null;
-  const subdomain = buildUserSubdomain(userId);
+  const subdomain = buildRuntimeSubdomain(runtimeSlugSource, userId);
   return {
     fqdn: `${subdomain}.${baseDomain}`,
     readyUrl: `https://${subdomain}.${baseDomain}`,
@@ -367,7 +371,7 @@ async function launchViaSsh(input: LaunchInput) {
   ].join(" && ");
 
   await runSshCommand(sshTarget, remoteScript);
-  const runtimeDomain = buildRuntimeUrlFromDomain(input.userId);
+  const runtimeDomain = buildRuntimeUrlFromDomain(input.runtimeSlugSource, input.userId);
   if (runtimeDomain) {
     await ensureCaddyRoute(sshTarget, runtimeDomain.fqdn, hostPort);
   }

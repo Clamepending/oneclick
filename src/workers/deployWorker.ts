@@ -126,9 +126,22 @@ export async function processDeploymentJob(job: DeploymentJob) {
   );
   await appendEvent(job.deploymentId, "starting", `Assigned host ${host.name}`);
 
+  const onboarding = await pool.query<{ bot_name: string | null }>(
+    `SELECT bot_name
+     FROM onboarding_sessions
+     WHERE user_id = $1
+     LIMIT 1`,
+    [job.userId],
+  );
+  const runtimeSlugSource = onboarding.rows[0]?.bot_name?.trim() || null;
+  if (runtimeSlugSource) {
+    await appendEvent(job.deploymentId, "starting", `Using runtime subdomain slug "${runtimeSlugSource}"`);
+  }
+
   const runtime = await launchUserContainer({
     deploymentId: job.deploymentId,
     userId: job.userId,
+    runtimeSlugSource,
     host,
   });
   await appendEvent(job.deploymentId, "starting", "Waiting for runtime health check");

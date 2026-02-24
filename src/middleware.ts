@@ -19,7 +19,7 @@ export default auth((req) => {
   }
 
   if (req.auth && req.nextUrl.pathname === "/login") {
-    return NextResponse.redirect(new URL("/onboarding", req.url));
+    return NextResponse.redirect(new URL("/", req.url));
   }
 
   return NextResponse.next();
