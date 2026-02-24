@@ -36,6 +36,29 @@ async function appendEvent(deploymentId: string, status: string, message: string
   );
 }
 
+async function waitForRuntimeReady(readyUrl: string) {
+  const startupTimeoutMs = Number(process.env.OPENCLAW_STARTUP_TIMEOUT_MS ?? "120000");
+  const pollIntervalMs = 3000;
+  const healthPath = process.env.OPENCLAW_HEALTH_PATH ?? "/health";
+  const healthUrl = new URL(healthPath, readyUrl).toString();
+  const deadline = Date.now() + startupTimeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(healthUrl, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(3000),
+      });
+      if (response.ok) return;
+    } catch {
+      // Runtime may still be booting; keep polling until timeout.
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  throw new Error(`Runtime failed health check at ${healthUrl} within ${startupTimeoutMs}ms`);
+}
+
 export async function processDeploymentJob(job: DeploymentJob) {
   await ensureSchema();
   await appendEvent(job.deploymentId, "starting", "Scheduling runtime host");
@@ -96,6 +119,8 @@ export async function processDeploymentJob(job: DeploymentJob) {
     userId: job.userId,
     host,
   });
+  await appendEvent(job.deploymentId, "starting", "Waiting for runtime health check");
+  await waitForRuntimeReady(runtime.readyUrl);
 
   await pool.query(
     `UPDATE deployments
