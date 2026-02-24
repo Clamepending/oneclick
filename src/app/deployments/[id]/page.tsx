@@ -7,8 +7,17 @@ import { ProgressTimeline } from "@/components/deployment/ProgressTimeline";
 type DeploymentResponse = {
   id: string;
   status: "queued" | "starting" | "ready" | "failed";
+  hostName?: string | null;
+  runtimeId?: string | null;
+  deployProvider?: string | null;
   readyUrl?: string | null;
   error?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  health?: {
+    ok: boolean;
+    status: number | null;
+  } | null;
 };
 
 type EventResponse = {
@@ -76,11 +85,41 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
   return (
     <main className="container">
       <div className="card">
-        <h1>{statusTitle}</h1>
+        <h1>Deployment dashboard</h1>
+        <p className="muted" style={{ marginTop: -6 }}>
+          {statusTitle}
+        </p>
         {deployment ? (
-          <p className="muted">
-            Deployment ID: <code>{deployment.id}</code>
-          </p>
+          <div style={{ display: "grid", gap: 6 }}>
+            <p className="muted">
+              Deployment ID: <code>{deployment.id}</code>
+            </p>
+            <p className="muted">
+              Provider: <code>{deployment.deployProvider ?? "unknown"}</code>
+            </p>
+            <p className="muted">
+              Runtime ID: <code>{deployment.runtimeId ?? "pending"}</code>
+            </p>
+            <p className="muted">
+              Host: <code>{deployment.hostName ?? "pending"}</code>
+            </p>
+            {deployment.health ? (
+              <p className="muted">
+                Health:{" "}
+                <code>
+                  {deployment.health.ok
+                    ? `healthy (${deployment.health.status ?? "ok"})`
+                    : `unhealthy (${deployment.health.status ?? "no response"})`}
+                </code>
+              </p>
+            ) : null}
+            <p className="muted">
+              Updated:{" "}
+              <code>
+                {deployment.updatedAt ? new Date(deployment.updatedAt).toLocaleString() : "pending"}
+              </code>
+            </p>
+          </div>
         ) : null}
         {deployment?.status === "ready" && deployment.readyUrl ? (
           <p>
