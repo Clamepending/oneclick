@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
+import { buildRuntimeSubdomain, normalizeBotName } from "@/lib/provisioner/runtimeSlug";
 import { applyMemoryRateLimit } from "@/lib/security/rateLimit";
 import {
   enqueueDeploymentJob,
@@ -8,6 +9,13 @@ import {
   newDeploymentId,
   processDeploymentJob,
 } from "@/workers/deployWorker";
+
+type BotIdentityRow = {
+  owner_user_id: string;
+  bot_name: string;
+  bot_name_normalized: string;
+  runtime_slug: string;
+};
 
 function getClientIp(request: Request) {
   const forwarded = request.headers.get("x-forwarded-for");
@@ -59,6 +67,117 @@ async function readRequestedBotName(request: Request) {
   return { ok: true as const, botName };
 }
 
+function buildRuntimeUrlPreview(runtimeSlug: string) {
+  const baseDomain = process.env.RUNTIME_BASE_DOMAIN?.trim().toLowerCase() ?? "";
+  if (!baseDomain) return null;
+  return `https://${runtimeSlug}.${baseDomain}`;
+}
+
+function uniqueViolation(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  return "code" in error && (error as { code?: string }).code === "23505";
+}
+
+function getBotIdentityConflictMessage(
+  rows: BotIdentityRow[],
+  ownerUserId: string,
+  botNameNormalized: string,
+  runtimeSlug: string,
+) {
+  const nameTakenByAnother = rows.find(
+    (row) => row.bot_name_normalized === botNameNormalized && row.owner_user_id !== ownerUserId,
+  );
+  if (nameTakenByAnother) {
+    return "This bot name is already taken. Choose a different bot name.";
+  }
+
+  const slugTakenByAnother = rows.find(
+    (row) => row.runtime_slug === runtimeSlug && row.owner_user_id !== ownerUserId,
+  );
+  if (slugTakenByAnother) {
+    const previewUrl = buildRuntimeUrlPreview(runtimeSlug);
+    if (previewUrl) {
+      return `This bot name conflicts with an existing runtime URL (${previewUrl}). Choose a different bot name.`;
+    }
+    return `This bot name conflicts with an existing runtime slug "${runtimeSlug}". Choose a different bot name.`;
+  }
+
+  const slugTakenBySameUser = rows.find(
+    (row) =>
+      row.runtime_slug === runtimeSlug &&
+      row.owner_user_id === ownerUserId &&
+      row.bot_name_normalized !== botNameNormalized,
+  );
+  if (slugTakenBySameUser) {
+    const previewUrl = buildRuntimeUrlPreview(runtimeSlug);
+    if (previewUrl) {
+      return `You already have a bot name that uses ${previewUrl}. Choose a different bot name to avoid URL conflicts.`;
+    }
+    return `You already have a bot name that uses runtime slug "${runtimeSlug}". Choose a different bot name.`;
+  }
+
+  return null;
+}
+
+async function reserveBotIdentity(ownerUserId: string, botName: string) {
+  const botNameNormalized = normalizeBotName(botName);
+  if (!botNameNormalized) {
+    return { ok: false as const, error: "botName must be 1-80 characters" };
+  }
+  const runtimeSlug = buildRuntimeSubdomain(botName, ownerUserId);
+  const query = `SELECT owner_user_id, bot_name, bot_name_normalized, runtime_slug
+                 FROM bot_identities
+                 WHERE bot_name_normalized = $1 OR runtime_slug = $2`;
+
+  const existingBefore = await pool.query<BotIdentityRow>(query, [botNameNormalized, runtimeSlug]);
+  const beforeConflict = getBotIdentityConflictMessage(
+    existingBefore.rows,
+    ownerUserId,
+    botNameNormalized,
+    runtimeSlug,
+  );
+  if (beforeConflict) {
+    return { ok: false as const, error: beforeConflict };
+  }
+
+  const alreadyOwned = existingBefore.rows.find(
+    (row) => row.owner_user_id === ownerUserId && row.bot_name_normalized === botNameNormalized,
+  );
+  if (alreadyOwned) {
+    await pool.query(
+      `UPDATE bot_identities
+       SET bot_name = $1,
+           updated_at = NOW()
+       WHERE owner_user_id = $2
+         AND bot_name_normalized = $3`,
+      [botName, ownerUserId, botNameNormalized],
+    );
+    return { ok: true as const };
+  }
+
+  try {
+    await pool.query(
+      `INSERT INTO bot_identities (owner_user_id, bot_name, bot_name_normalized, runtime_slug)
+       VALUES ($1, $2, $3, $4)`,
+      [ownerUserId, botName, botNameNormalized, runtimeSlug],
+    );
+    return { ok: true as const };
+  } catch (error) {
+    if (!uniqueViolation(error)) throw error;
+    const existingAfter = await pool.query<BotIdentityRow>(query, [botNameNormalized, runtimeSlug]);
+    const afterConflict = getBotIdentityConflictMessage(
+      existingAfter.rows,
+      ownerUserId,
+      botNameNormalized,
+      runtimeSlug,
+    );
+    if (afterConflict) {
+      return { ok: false as const, error: afterConflict };
+    }
+    throw error;
+  }
+}
+
 export async function POST(request: Request) {
   const session = await auth();
   if (!session?.user?.email) {
@@ -106,6 +225,10 @@ export async function POST(request: Request) {
   );
   const fallbackBotName = onboarding.rows[0]?.bot_name?.trim() || "My Assistant";
   const botName = parsedPayload.botName ?? fallbackBotName;
+  const reservation = await reserveBotIdentity(session.user.email, botName);
+  if (!reservation.ok) {
+    return NextResponse.json({ ok: false, error: reservation.error }, { status: 409 });
+  }
 
   await pool.query(
     `INSERT INTO deployments (id, user_id, bot_name, status)

@@ -8,8 +8,8 @@ type Props = {
 export function ChannelStep({ value, onChange }: Props) {
   return (
     <div className="card">
-      <h2>Connect your phone (optional)</h2>
-      <p className="muted">Skip for now and finish setup quickly.</p>
+      <h2>Connect your phone (recommended)</h2>
+      <p className="muted">Text /newbot to @BotFather to create a new bot. Then send /start to the bot to get the token. Then paste the token here.</p>
       <div className="row">
         <button
           className={`button ${value === "telegram" ? "" : "secondary"}`}

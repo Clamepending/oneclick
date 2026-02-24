@@ -6,6 +6,7 @@ import {
   getOpenClawStartCommand,
   shouldAllowInsecureControlUi,
 } from "@/lib/provisioner/openclawBundle";
+import { buildRuntimeSubdomain } from "@/lib/provisioner/runtimeSlug";
 import type { Host } from "@/lib/provisioner/hostScheduler";
 
 type LaunchInput = {
@@ -46,28 +47,8 @@ function buildRuntimeName(input: { runtimeSlugSource?: string | null; userId: st
   return joined.slice(0, 63);
 }
 
-function sanitizeDnsLabel(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 50);
-}
-
 function getRuntimeBaseDomain() {
   return process.env.RUNTIME_BASE_DOMAIN?.trim().toLowerCase() ?? "";
-}
-
-function buildRuntimeSubdomain(runtimeSlugSource: string | null | undefined, userId: string) {
-  const preferred = sanitizeDnsLabel(runtimeSlugSource ?? "");
-  if (preferred) return preferred;
-
-  const localPart = userId.split("@")[0] ?? userId;
-  const fallback = sanitizeDnsLabel(localPart);
-  if (fallback) return fallback;
-
-  return sanitizeDnsLabel(userId).slice(0, 12) || "runtime-user";
 }
 
 function buildRuntimeUrlFromDomain(runtimeSlugSource: string | null | undefined, userId: string) {

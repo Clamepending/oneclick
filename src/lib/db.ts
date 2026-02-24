@@ -72,6 +72,23 @@ export async function ensureSchema() {
     CREATE INDEX IF NOT EXISTS deployment_events_deployment_id_idx
     ON deployment_events (deployment_id, created_at);
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bot_identities (
+      id BIGSERIAL PRIMARY KEY,
+      owner_user_id TEXT NOT NULL,
+      bot_name TEXT NOT NULL,
+      bot_name_normalized TEXT NOT NULL UNIQUE,
+      runtime_slug TEXT NOT NULL UNIQUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS bot_identities_owner_user_id_idx
+    ON bot_identities (owner_user_id);
+  `);
     initialized = true;
   } catch (error) {
     initialized = false;
