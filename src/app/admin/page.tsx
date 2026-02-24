@@ -7,6 +7,9 @@ type ContainerItem = {
   image: string;
   status: string;
   ports: string;
+  ownerUserId?: string | null;
+  ownerBotName?: string | null;
+  ownerDeploymentId?: string | null;
 };
 
 type HostItem = {
@@ -280,6 +283,13 @@ export default function AdminPage() {
                         </p>
                         <p className="muted" style={{ marginBottom: 0 }}>
                           Ports: <code>{container.ports || "none"}</code>
+                        </p>
+                        <p className="muted" style={{ marginBottom: 0 }}>
+                          Owner: <code>{container.ownerUserId?.trim() || "unknown"}</code>
+                        </p>
+                        <p className="muted" style={{ marginBottom: 0 }}>
+                          Bot: <code>{container.ownerBotName?.trim() || "unknown"}</code> • Deployment:{" "}
+                          <code>{container.ownerDeploymentId?.trim() || "unknown"}</code>
                         </p>
                       </div>
                     ))}
