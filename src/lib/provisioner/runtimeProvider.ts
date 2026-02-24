@@ -182,6 +182,10 @@ mkdir -p "${userDir}" "${workspaceDir}"
 chown -R 1000:1000 "${userDir}" "${workspaceDir}" || true
 docker pull "${image}"
 docker rm -f "${containerName}" >/dev/null 2>&1 || true
+docker run --rm \\
+  -v "${userDir}:/home/node/.openclaw" \\
+  -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
+  "${image}" config set gateway.bind lan
 docker run -d --name "${containerName}" --restart unless-stopped \\
   -v "${userDir}:/home/node/.openclaw" \\
   -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
@@ -285,6 +289,7 @@ async function launchViaSsh(input: LaunchInput) {
     `chown -R 1000:1000 "${userDir}" "${workspaceDir}" || true`,
     `docker pull "${image}"`,
     `docker rm -f "${containerName}" >/dev/null 2>&1 || true`,
+    `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.bind lan`,
     `docker run -d --name "${containerName}" --restart unless-stopped -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" -p "${hostPort}:${containerPort}" "${image}" ${startCommand}`,
   ].join(" && ");
 
