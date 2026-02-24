@@ -11,6 +11,10 @@ type DeploymentSummary = {
   hostName: string | null;
   runtimeId: string | null;
   deployProvider: string | null;
+  hasOpenaiApiKey: boolean;
+  hasAnthropicApiKey: boolean;
+  hasOpenrouterApiKey: boolean;
+  hasTelegramBotToken: boolean;
   readyUrl: string | null;
   error: string | null;
   updatedAt: string;
@@ -198,6 +202,12 @@ export function BotDashboard({ deployments }: Props) {
                 <p className="muted" style={{ margin: 0 }}>
                   Host: <code>{deployment.hostName ?? "pending"}</code> • Updated:{" "}
                   <code>{new Date(deployment.updatedAt).toLocaleString()}</code>
+                </p>
+                <p className="muted" style={{ margin: 0 }}>
+                  Settings: OpenAI <code>{deployment.hasOpenaiApiKey ? "set" : "not set"}</code> • Anthropic{" "}
+                  <code>{deployment.hasAnthropicApiKey ? "set" : "not set"}</code> • OpenRouter{" "}
+                  <code>{deployment.hasOpenrouterApiKey ? "set" : "not set"}</code> • Telegram{" "}
+                  <code>{deployment.hasTelegramBotToken ? "set" : "not set"}</code>
                 </p>
                 {deployment.status === "failed" && deployment.error ? (
                   <p style={{ color: "#ff8e8e", margin: 0 }}>{deployment.error}</p>

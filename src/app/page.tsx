@@ -10,6 +10,10 @@ type DeploymentSummary = {
   host_name: string | null;
   runtime_id: string | null;
   deploy_provider: string | null;
+  has_openai_api_key: boolean;
+  has_anthropic_api_key: boolean;
+  has_openrouter_api_key: boolean;
+  has_telegram_bot_token: boolean;
   ready_url: string | null;
   error: string | null;
   updated_at: string;
@@ -46,7 +50,20 @@ export default async function HomePage() {
     try {
       await ensureSchema();
       const result = await pool.query<DeploymentSummary>(
-        `SELECT id, bot_name, status, host_name, runtime_id, deploy_provider, ready_url, error, updated_at
+        `SELECT
+           id,
+           bot_name,
+           status,
+           host_name,
+           runtime_id,
+           deploy_provider,
+           CASE WHEN COALESCE(openai_api_key, '') <> '' THEN TRUE ELSE FALSE END AS has_openai_api_key,
+           CASE WHEN COALESCE(anthropic_api_key, '') <> '' THEN TRUE ELSE FALSE END AS has_anthropic_api_key,
+           CASE WHEN COALESCE(openrouter_api_key, '') <> '' THEN TRUE ELSE FALSE END AS has_openrouter_api_key,
+           CASE WHEN COALESCE(telegram_bot_token, '') <> '' THEN TRUE ELSE FALSE END AS has_telegram_bot_token,
+           ready_url,
+           error,
+           updated_at
          FROM deployments
          WHERE user_id = $1
          ORDER BY updated_at DESC
@@ -83,6 +100,10 @@ export default async function HomePage() {
               hostName: deployment.host_name,
               runtimeId: deployment.runtime_id,
               deployProvider: deployment.deploy_provider,
+              hasOpenaiApiKey: deployment.has_openai_api_key,
+              hasAnthropicApiKey: deployment.has_anthropic_api_key,
+              hasOpenrouterApiKey: deployment.has_openrouter_api_key,
+              hasTelegramBotToken: deployment.has_telegram_bot_token,
               readyUrl: deployment.ready_url,
               error: deployment.error,
               updatedAt: deployment.updated_at,
