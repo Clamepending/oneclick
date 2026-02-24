@@ -2,6 +2,7 @@ import "dotenv/config";
 import { Queue, Worker } from "bullmq";
 import { randomUUID } from "crypto";
 import net from "node:net";
+import os from "node:os";
 import { Client } from "ssh2";
 import { DescribeServicesCommand, ECSClient, type ECSClientConfig } from "@aws-sdk/client-ecs";
 import { ensureSchema, pool } from "@/lib/db";
@@ -14,6 +15,7 @@ type DeploymentJob = {
 };
 
 const queueName = "deployment-jobs";
+const workerHeartbeatKey = "oneclick:deploy-worker:heartbeat";
 
 function getQueueConnection() {
   const redisUrl = process.env.REDIS_URL;
@@ -59,6 +61,14 @@ function readTrimmedEnv(name: string) {
   const raw = process.env[name];
   if (!raw) return "";
   return raw.trim().replace(/^"(.*)"$/, "$1").replace(/\\n/g, "").trim();
+}
+
+function readIntEnv(name: string, fallback: number) {
+  const raw = readTrimmedEnv(name);
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.floor(parsed);
 }
 
 function buildAwsConfigWithTrimmedCreds(region: string): ECSClientConfig {
@@ -479,6 +489,45 @@ export function startDeploymentWorker() {
 
   worker.on("error", (error) => {
     console.error("Deployment worker error:", error);
+  });
+
+  const heartbeatTtlSeconds = Math.max(30, readIntEnv("DEPLOY_WORKER_HEARTBEAT_TTL_SECONDS", 90));
+  const heartbeatIntervalMs = Math.max(10_000, readIntEnv("DEPLOY_WORKER_HEARTBEAT_INTERVAL_MS", 20_000));
+  const workerStartedAt = new Date().toISOString();
+
+  const writeHeartbeat = async (state: string) => {
+    try {
+      const client = await worker.client;
+      const payload = JSON.stringify({
+        ts: new Date().toISOString(),
+        state,
+        pid: process.pid,
+        host: os.hostname(),
+        startedAt: workerStartedAt,
+      });
+      await client.set(workerHeartbeatKey, payload, "EX", heartbeatTtlSeconds);
+    } catch (error) {
+      console.warn("Deployment worker heartbeat write failed:", error);
+    }
+  };
+
+  void writeHeartbeat("starting");
+  const heartbeatTimer = setInterval(() => {
+    void writeHeartbeat("idle");
+  }, heartbeatIntervalMs);
+  heartbeatTimer.unref();
+
+  worker.on("ready", () => {
+    void writeHeartbeat("ready");
+  });
+  worker.on("active", () => {
+    void writeHeartbeat("active");
+  });
+  worker.on("completed", () => {
+    void writeHeartbeat("completed");
+  });
+  worker.on("failed", () => {
+    void writeHeartbeat("failed");
   });
 
   return worker;
