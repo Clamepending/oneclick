@@ -133,8 +133,14 @@ export async function processDeploymentJob(job: DeploymentJob) {
      LIMIT 1`,
     [job.deploymentId],
   );
-  const onboarding = await pool.query<{ bot_name: string | null; channel: string | null }>(
-    `SELECT bot_name, channel
+  const onboarding = await pool.query<{
+    bot_name: string | null;
+    channel: string | null;
+    telegram_bot_token: string | null;
+    model_provider: string | null;
+    model_api_key: string | null;
+  }>(
+    `SELECT bot_name, channel, telegram_bot_token, model_provider, model_api_key
      FROM onboarding_sessions
      WHERE user_id = $1
      LIMIT 1`,
@@ -143,7 +149,11 @@ export async function processDeploymentJob(job: DeploymentJob) {
   const runtimeSlugSource =
     deploymentBot.rows[0]?.bot_name?.trim() || onboarding.rows[0]?.bot_name?.trim() || null;
   const selectedChannel = onboarding.rows[0]?.channel?.trim() || "none";
-  const telegramBotToken = process.env.OPENCLAW_TELEGRAM_BOT_TOKEN?.trim() || null;
+  const selectedModelProvider = onboarding.rows[0]?.model_provider?.trim() || null;
+  const selectedModelApiKey = onboarding.rows[0]?.model_api_key?.trim() || null;
+  const onboardingTelegramBotToken = onboarding.rows[0]?.telegram_bot_token?.trim() || null;
+  const telegramBotToken =
+    onboardingTelegramBotToken || process.env.OPENCLAW_TELEGRAM_BOT_TOKEN?.trim() || null;
   if (runtimeSlugSource) {
     await appendEvent(job.deploymentId, "starting", `Using runtime subdomain slug "${runtimeSlugSource}"`);
   }
@@ -155,7 +165,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
     );
     if (!telegramBotToken) {
       throw new Error(
-        "Telegram was selected, but OPENCLAW_TELEGRAM_BOT_TOKEN is not configured on the server.",
+        "Telegram was selected, but no Telegram bot token is configured. Paste one during onboarding or set OPENCLAW_TELEGRAM_BOT_TOKEN on the server.",
       );
     }
   }
@@ -166,6 +176,8 @@ export async function processDeploymentJob(job: DeploymentJob) {
     runtimeSlugSource,
     host,
     telegramBotToken: selectedChannel === "telegram" ? telegramBotToken : null,
+    modelProvider: selectedModelProvider,
+    modelApiKey: selectedModelApiKey,
   });
   await appendEvent(job.deploymentId, "starting", "Waiting for runtime health check");
   await waitForRuntimeReady(runtime.readyUrl);
@@ -181,11 +193,9 @@ export async function processDeploymentJob(job: DeploymentJob) {
     [runtime.readyUrl, runtime.runtimeId, runtime.deployProvider, job.deploymentId],
   );
   await appendEvent(job.deploymentId, "ready", "Runtime is ready");
-  await appendEvent(
-    job.deploymentId,
-    "ready",
-    "Next step: enter the customer's OpenAI or Anthropic API key inside OpenClaw.",
-  );
+  if (selectedModelApiKey) {
+    await appendEvent(job.deploymentId, "ready", "Configured model API key from onboarding.");
+  }
 }
 
 export async function markDeploymentFailed(deploymentId: string, error: unknown) {

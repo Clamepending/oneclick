@@ -7,6 +7,7 @@ const stepPayload = z.object({
   step: z.number().min(1).max(3),
   botName: z.string().trim().min(1).max(80).optional(),
   channel: z.enum(["none", "telegram"]).optional(),
+  telegramBotToken: z.string().trim().min(1).max(200).nullable().optional(),
   modelProvider: z.enum(["openai", "anthropic"]).nullable().optional(),
   modelApiKey: z.string().trim().min(1).max(200).nullable().optional(),
   plan: z.enum(["free"]).optional(),
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: "Invalid payload" }, { status: 400 });
     }
 
-    const { step, botName, channel, modelProvider, modelApiKey, plan } = parsed.data;
+    const { step, botName, channel, telegramBotToken, modelProvider, modelApiKey, plan } = parsed.data;
     await ensureSchema();
 
     await pool.query(
@@ -38,14 +39,24 @@ export async function POST(request: Request) {
       `UPDATE onboarding_sessions
        SET bot_name = COALESCE($1, bot_name),
            channel = COALESCE($2, channel),
-           model_provider = $3,
-           model_api_key = $4,
-           plan = COALESCE($5, plan),
-           current_step = GREATEST(current_step, $6),
-           completed = CASE WHEN $6 >= 3 THEN TRUE ELSE completed END,
+           telegram_bot_token = $3,
+           model_provider = $4,
+           model_api_key = $5,
+           plan = COALESCE($6, plan),
+           current_step = GREATEST(current_step, $7),
+           completed = CASE WHEN $7 >= 3 THEN TRUE ELSE completed END,
            updated_at = NOW()
-       WHERE user_id = $7`,
-      [botName ?? null, channel ?? null, modelProvider ?? null, modelApiKey ?? null, plan ?? null, step, session.user.email],
+       WHERE user_id = $8`,
+      [
+        botName ?? null,
+        channel ?? null,
+        telegramBotToken ?? null,
+        modelProvider ?? null,
+        modelApiKey ?? null,
+        plan ?? null,
+        step,
+        session.user.email,
+      ],
     );
 
     return NextResponse.json({ ok: true });

@@ -14,6 +14,8 @@ type LaunchInput = {
   userId: string;
   runtimeSlugSource?: string | null;
   telegramBotToken?: string | null;
+  modelProvider?: string | null;
+  modelApiKey?: string | null;
   host: Host;
 };
 
@@ -240,6 +242,8 @@ async function launchViaDigitalOcean(input: LaunchInput) {
   const runtimeName = buildRuntimeName(input);
   const dropletName = runtimeName;
   const telegramBotToken = input.telegramBotToken?.trim() || "";
+  const modelProvider = input.modelProvider?.trim().toLowerCase() || "";
+  const modelApiKey = input.modelApiKey?.trim() || "";
 
   const configBase = process.env.OPENCLAW_CONFIG_MOUNT_BASE ?? "/var/lib/oneclick/openclaw";
   const workspaceSuffix = process.env.OPENCLAW_WORKSPACE_SUFFIX ?? "workspace";
@@ -249,6 +253,12 @@ async function launchViaDigitalOcean(input: LaunchInput) {
   const telegramEnvArgs = telegramBotToken
     ? `  -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)} \\\n`
     : "";
+  const modelEnvArgs =
+    modelProvider === "openai" && modelApiKey
+      ? `  -e OPENAI_API_KEY=${shellQuote(modelApiKey)} \\\n`
+      : modelProvider === "anthropic" && modelApiKey
+        ? `  -e ANTHROPIC_API_KEY=${shellQuote(modelApiKey)} \\\n`
+        : "";
 
   // Cloud-init script bootstraps Docker and launches the OpenClaw container.
   const userDataScript = `#!/bin/bash
@@ -287,6 +297,7 @@ docker run -d --name "${containerName}" --restart unless-stopped \\
   -v "${userDir}:/home/node/.openclaw" \\
   -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
 ${telegramEnvArgs}
+${modelEnvArgs}
   -p "${containerPort}:${containerPort}" \\
   "${image}" ${startCommand}
 `;
@@ -374,6 +385,8 @@ async function launchViaSsh(input: LaunchInput) {
   const gatewayToken = getGatewayToken();
   const hostPort = buildAssignedPort(input.deploymentId);
   const telegramBotToken = input.telegramBotToken?.trim() || "";
+  const modelProvider = input.modelProvider?.trim().toLowerCase() || "";
+  const modelApiKey = input.modelApiKey?.trim() || "";
 
   const safeUser = sanitizeSegment(input.userId);
   const safeDeployment = sanitizeSegment(input.deploymentId);
@@ -399,7 +412,7 @@ async function launchViaSsh(input: LaunchInput) {
           `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.trustedProxies '["172.16.0.0/12"]'`,
         ]
       : []),
-    `docker run -d --name "${containerName}" --restart unless-stopped -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace"${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""} -p "${hostPort}:${containerPort}" "${image}" ${startCommand}`,
+    `docker run -d --name "${containerName}" --restart unless-stopped -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace"${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${modelProvider === "openai" && modelApiKey ? ` -e OPENAI_API_KEY=${shellQuote(modelApiKey)}` : ""}${modelProvider === "anthropic" && modelApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(modelApiKey)}` : ""} -p "${hostPort}:${containerPort}" "${image}" ${startCommand}`,
   ].join(" && ");
 
   await runSshCommand(sshTarget, remoteScript);

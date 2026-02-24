@@ -12,6 +12,7 @@ export default function OnboardingPage() {
   const [botName, setBotName] = useState("MyAssistant");
   const [provider, setProvider] = useState<"openai" | "anthropic">("openai");
   const [apiKey, setApiKey] = useState("");
+  const [telegramBotToken, setTelegramBotToken] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -49,6 +50,8 @@ export default function OnboardingPage() {
       body: JSON.stringify({
         step: nextStep,
         botName,
+        channel: telegramBotToken.trim() ? "telegram" : "none",
+        telegramBotToken: telegramBotToken.trim() || null,
         modelProvider: apiKey.trim() ? provider : null,
         modelApiKey: apiKey.trim() || null,
         plan: "free",
@@ -98,8 +101,10 @@ export default function OnboardingPage() {
         <ChannelStep
           provider={provider}
           apiKey={apiKey}
+          telegramBotToken={telegramBotToken}
           onProviderChange={setProvider}
           onApiKeyChange={setApiKey}
+          onTelegramBotTokenChange={setTelegramBotToken}
         />
       )}
       {step === 3 && <PlanStep onDeploy={handleDeploy} loading={loading} hasApiKey={Boolean(apiKey.trim())} />}

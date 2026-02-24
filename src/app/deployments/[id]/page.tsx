@@ -163,8 +163,8 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
               </a>
             </p>
             <p className="muted" style={{ margin: 0 }}>
-              After opening OpenClaw, enter your customer&apos;s OpenAI or Anthropic API key for inference (never
-              use a personal key).
+              If you skipped API key setup during onboarding, add your customer&apos;s OpenAI or Anthropic key in
+              runtime settings (never use a personal key).
             </p>
           </div>
         ) : null}

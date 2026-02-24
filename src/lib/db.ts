@@ -27,6 +27,8 @@ export async function ensureSchema() {
       user_id TEXT PRIMARY KEY,
       bot_name TEXT NOT NULL DEFAULT '',
       channel TEXT,
+      model_provider TEXT,
+      model_api_key TEXT,
       plan TEXT NOT NULL DEFAULT 'free',
       current_step INT NOT NULL DEFAULT 1,
       completed BOOLEAN NOT NULL DEFAULT FALSE,
@@ -53,6 +55,9 @@ export async function ensureSchema() {
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS runtime_id TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS deploy_provider TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS bot_name TEXT;`);
+  await pool.query(`ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS model_provider TEXT;`);
+  await pool.query(`ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS model_api_key TEXT;`);
+  await pool.query(`ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS telegram_bot_token TEXT;`);
 
   await pool.query(`
     CREATE INDEX IF NOT EXISTS deployments_user_id_idx ON deployments (user_id);
