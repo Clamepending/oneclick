@@ -31,7 +31,12 @@ export default function OnboardingPage() {
         plan: "free",
       }),
     });
-    if (!response.ok) throw new Error("Unable to save progress");
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as
+        | { error?: string }
+        | null;
+      throw new Error(body?.error ?? "Unable to save progress");
+    }
   }
 
   async function handleNext() {
@@ -39,8 +44,9 @@ export default function OnboardingPage() {
     try {
       await saveStep(step);
       setStep((s) => Math.min(3, s + 1));
-    } catch {
-      setError("Could not save this step. Please try again.");
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Could not save this step. Please try again.";
+      setError(message);
     }
   }
 
