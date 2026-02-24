@@ -43,6 +43,10 @@ function parseUserAndHost(sshTarget: string) {
   return { user, host };
 }
 
+function shellQuote(value: string) {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
 async function runSshCommandWithOutput(sshTarget: string, command: string) {
   const { user, host } = parseUserAndHost(sshTarget);
   const privateKeyRaw = process.env.DEPLOY_SSH_PRIVATE_KEY?.trim();
@@ -108,6 +112,10 @@ async function runSshCommandWithOutput(sshTarget: string, command: string) {
         readyTimeout: timeoutMs,
       });
   });
+}
+
+async function runSshCommand(sshTarget: string, command: string) {
+  await runSshCommandWithOutput(sshTarget, command);
 }
 
 function parseStats(raw: string): VmStats {
@@ -226,4 +234,19 @@ export async function fetchHostOverview(host: Host): Promise<HostOverview> {
       error: message,
     };
   }
+}
+
+export async function deleteContainerOnHost(host: Host, containerName: string) {
+  const sshTarget = parseSshTarget(host.dockerHost);
+  if (!sshTarget) {
+    throw new Error("Host does not use ssh:// dockerHost, cannot delete container.");
+  }
+  const normalizedName = containerName.trim();
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(normalizedName)) {
+    throw new Error("Invalid container name.");
+  }
+  await runSshCommand(
+    sshTarget,
+    `docker rm -f ${shellQuote(normalizedName)} >/dev/null 2>&1 || true`,
+  );
 }

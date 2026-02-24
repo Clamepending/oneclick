@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type ContainerItem = {
   name: string;
@@ -166,25 +166,38 @@ export default function AdminPage() {
   const [data, setData] = useState<OverviewResponse | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [activeDeleteKey, setActiveDeleteKey] = useState<string | null>(null);
+
+  const loadOverview = useCallback(async (signal?: AbortSignal) => {
+    const response = await fetch("/api/admin/overview", { cache: "no-store", signal });
+    const body = (await response.json().catch(() => null)) as OverviewResponse | null;
+    if (!response.ok || !body?.ok) {
+      throw new Error(body?.error ?? "Failed to load admin overview");
+    }
+    return body;
+  }, []);
+
+  const refreshOverview = useCallback(async () => {
+    const body = await loadOverview();
+    setData(body);
+    setError("");
+  }, [loadOverview]);
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
 
     const load = async () => {
       try {
-        const response = await fetch("/api/admin/overview", { cache: "no-store" });
-        const body = (await response.json().catch(() => null)) as OverviewResponse | null;
-        if (!response.ok || !body?.ok) {
-          throw new Error(body?.error ?? "Failed to load admin overview");
-        }
+        const body = await loadOverview(controller.signal);
         if (!cancelled) {
           setData(body);
           setError("");
         }
       } catch (e) {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Unknown admin error");
-        }
+        if (cancelled) return;
+        if (e instanceof Error && e.name === "AbortError") return;
+        setError(e instanceof Error ? e.message : "Unknown admin error");
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -199,9 +212,41 @@ export default function AdminPage() {
 
     return () => {
       cancelled = true;
+      controller.abort();
       clearInterval(timer);
     };
-  }, []);
+  }, [loadOverview]);
+
+  async function handleDeleteContainer(input: {
+    dockerHost: string;
+    containerName: string;
+    ownerDeploymentId?: string | null;
+  }) {
+    const confirmed = window.confirm(
+      `Delete container "${input.containerName}"? This will force-stop and remove it.`,
+    );
+    if (!confirmed) return;
+
+    const deleteKey = `${input.dockerHost}|${input.containerName}`;
+    setActiveDeleteKey(deleteKey);
+    setError("");
+    try {
+      const response = await fetch("/api/admin/containers/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      const payload = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error ?? "Failed to delete container");
+      }
+      await refreshOverview();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete container");
+    } finally {
+      setActiveDeleteKey(null);
+    }
+  }
 
   const totalContainers = useMemo(() => {
     if (!data?.hosts) return 0;
@@ -368,6 +413,26 @@ export default function AdminPage() {
                           Bot: <code>{container.ownerBotName?.trim() || "unknown"}</code> • Deployment:{" "}
                           <code>{container.ownerDeploymentId?.trim() || "unknown"}</code>
                         </p>
+                        {group.key.startsWith("agent:") ? (
+                          <div className="row" style={{ marginTop: 10 }}>
+                            <button
+                              className="button secondary"
+                              type="button"
+                              onClick={() =>
+                                void handleDeleteContainer({
+                                  dockerHost: item.host.dockerHost,
+                                  containerName: container.name,
+                                  ownerDeploymentId: container.ownerDeploymentId ?? null,
+                                })
+                              }
+                              disabled={activeDeleteKey === `${item.host.dockerHost}|${container.name}`}
+                            >
+                              {activeDeleteKey === `${item.host.dockerHost}|${container.name}`
+                                ? "Deleting..."
+                                : "Delete container"}
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
                     ))}
                   </div>
