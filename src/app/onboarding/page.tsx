@@ -10,7 +10,8 @@ export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState(1);
   const [botName, setBotName] = useState("MyAssistant");
-  const [channel, setChannel] = useState<"none" | "telegram">("none");
+  const [provider, setProvider] = useState<"openai" | "anthropic">("openai");
+  const [apiKey, setApiKey] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -48,7 +49,8 @@ export default function OnboardingPage() {
       body: JSON.stringify({
         step: nextStep,
         botName,
-        channel,
+        modelProvider: apiKey.trim() ? provider : null,
+        modelApiKey: apiKey.trim() || null,
         plan: "free",
       }),
     });
@@ -92,8 +94,15 @@ export default function OnboardingPage() {
       <p className="muted">{title}</p>
 
       {step === 1 && <NameStep value={botName} onChange={setBotName} />}
-      {step === 2 && <ChannelStep value={channel} onChange={setChannel} />}
-      {step === 3 && <PlanStep onDeploy={handleDeploy} loading={loading} channel={channel} />}
+      {step === 2 && (
+        <ChannelStep
+          provider={provider}
+          apiKey={apiKey}
+          onProviderChange={setProvider}
+          onApiKeyChange={setApiKey}
+        />
+      )}
+      {step === 3 && <PlanStep onDeploy={handleDeploy} loading={loading} hasApiKey={Boolean(apiKey.trim())} />}
 
       {error ? (
         <p style={{ color: "#ff8e8e" }}>{error}</p>
