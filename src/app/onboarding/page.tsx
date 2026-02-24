@@ -93,7 +93,7 @@ export default function OnboardingPage() {
 
       {step === 1 && <NameStep value={botName} onChange={setBotName} />}
       {step === 2 && <ChannelStep value={channel} onChange={setChannel} />}
-      {step === 3 && <PlanStep onDeploy={handleDeploy} loading={loading} />}
+      {step === 3 && <PlanStep onDeploy={handleDeploy} loading={loading} channel={channel} />}
 
       {error ? (
         <p style={{ color: "#ff8e8e" }}>{error}</p>

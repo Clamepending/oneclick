@@ -133,8 +133,8 @@ export async function processDeploymentJob(job: DeploymentJob) {
      LIMIT 1`,
     [job.deploymentId],
   );
-  const onboarding = await pool.query<{ bot_name: string | null }>(
-    `SELECT bot_name
+  const onboarding = await pool.query<{ bot_name: string | null; channel: string | null }>(
+    `SELECT bot_name, channel
      FROM onboarding_sessions
      WHERE user_id = $1
      LIMIT 1`,
@@ -142,8 +142,22 @@ export async function processDeploymentJob(job: DeploymentJob) {
   );
   const runtimeSlugSource =
     deploymentBot.rows[0]?.bot_name?.trim() || onboarding.rows[0]?.bot_name?.trim() || null;
+  const selectedChannel = onboarding.rows[0]?.channel?.trim() || "none";
+  const telegramBotToken = process.env.OPENCLAW_TELEGRAM_BOT_TOKEN?.trim() || null;
   if (runtimeSlugSource) {
     await appendEvent(job.deploymentId, "starting", `Using runtime subdomain slug "${runtimeSlugSource}"`);
+  }
+  if (selectedChannel === "telegram") {
+    await appendEvent(
+      job.deploymentId,
+      "starting",
+      "Linking Telegram channel: provisioning bot token and runtime channel config",
+    );
+    if (!telegramBotToken) {
+      throw new Error(
+        "Telegram was selected, but OPENCLAW_TELEGRAM_BOT_TOKEN is not configured on the server.",
+      );
+    }
   }
 
   const runtime = await launchUserContainer({
@@ -151,6 +165,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
     userId: job.userId,
     runtimeSlugSource,
     host,
+    telegramBotToken: selectedChannel === "telegram" ? telegramBotToken : null,
   });
   await appendEvent(job.deploymentId, "starting", "Waiting for runtime health check");
   await waitForRuntimeReady(runtime.readyUrl);
@@ -166,6 +181,11 @@ export async function processDeploymentJob(job: DeploymentJob) {
     [runtime.readyUrl, runtime.runtimeId, runtime.deployProvider, job.deploymentId],
   );
   await appendEvent(job.deploymentId, "ready", "Runtime is ready");
+  await appendEvent(
+    job.deploymentId,
+    "ready",
+    "Next step: enter the customer's OpenAI or Anthropic API key inside OpenClaw.",
+  );
 }
 
 export async function markDeploymentFailed(deploymentId: string, error: unknown) {

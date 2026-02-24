@@ -156,11 +156,17 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
           </div>
         ) : null}
         {deployment?.status === "ready" && deployment.readyUrl ? (
-          <p>
-            <a className="button" href={deployment.readyUrl} target="_blank" rel="noreferrer">
-              Open OpenClaw
-            </a>
-          </p>
+          <div style={{ display: "grid", gap: 8 }}>
+            <p style={{ margin: 0 }}>
+              <a className="button" href={deployment.readyUrl} target="_blank" rel="noreferrer">
+                Open OpenClaw
+              </a>
+            </p>
+            <p className="muted" style={{ margin: 0 }}>
+              After opening OpenClaw, enter your customer&apos;s OpenAI or Anthropic API key for inference (never
+              use a personal key).
+            </p>
+          </div>
         ) : null}
         {deployment ? (
           <DeploymentActions
