@@ -50,8 +50,10 @@ for (const key of keys) {
     stdio: "ignore",
   });
 
+  // Send raw value and let EOF terminate input. Appending "\n" can store an
+  // unintended trailing newline in Vercel for single-line secrets/settings.
   const add = spawnSync("vercel", ["env", "add", key, target], {
-    input: `${value}\n`,
+    input: value,
     encoding: "utf8",
   });
 

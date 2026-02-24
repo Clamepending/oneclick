@@ -3,8 +3,8 @@ import { config as loadEnv } from "dotenv";
 import { DescribeServicesCommand, DescribeTasksCommand, ECSClient, ListTasksCommand } from "@aws-sdk/client-ecs";
 import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runtimeProvider";
 
-loadEnv({ path: ".env" });
-loadEnv({ path: ".env.local", override: true });
+loadEnv({ path: ".env", quiet: true });
+loadEnv({ path: ".env.local", override: true, quiet: true });
 
 function requireEnv(name: string) {
   const value = process.env[name]?.trim();
