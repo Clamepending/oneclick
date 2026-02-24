@@ -30,6 +30,14 @@ function canUseQueueMode() {
   return true;
 }
 
+function startInProcessDeployment(deploymentId: string, userId: string) {
+  setTimeout(() => {
+    void processDeploymentJob({ deploymentId, userId }).catch(async (error) => {
+      await markDeploymentFailed(deploymentId, error);
+    });
+  }, 0);
+}
+
 export async function POST(request: Request) {
   const session = await auth();
   if (!session?.user?.email) {
@@ -76,10 +84,10 @@ export async function POST(request: Request) {
   );
 
   try {
-    // Vercel-safe default: if queue mode is not usable, process in-process.
+    // Vercel-safe default: if queue mode is not usable, process in-process in background.
     if (!canUseQueueMode()) {
-      await processDeploymentJob({ deploymentId, userId: session.user.email });
-      return NextResponse.json({ id: deploymentId, status: "ready" }, { status: 200 });
+      startInProcessDeployment(deploymentId, session.user.email);
+      return NextResponse.json({ id: deploymentId, status: "queued" }, { status: 202 });
     }
 
     try {
@@ -88,8 +96,8 @@ export async function POST(request: Request) {
       const queueMessage =
         queueError instanceof Error ? queueError.message : String(queueError);
       if (queueMessage.includes("ECONNREFUSED") || queueMessage.includes("ENOTFOUND")) {
-        await processDeploymentJob({ deploymentId, userId: session.user.email });
-        return NextResponse.json({ id: deploymentId, status: "ready" }, { status: 200 });
+        startInProcessDeployment(deploymentId, session.user.email);
+        return NextResponse.json({ id: deploymentId, status: "queued" }, { status: 202 });
       }
       throw queueError;
     }

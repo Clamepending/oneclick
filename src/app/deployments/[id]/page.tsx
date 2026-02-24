@@ -24,6 +24,14 @@ type EventResponse = {
   items: Array<{ status: string; message: string; ts: string }>;
 };
 
+function getStatusMeta(status?: DeploymentResponse["status"]) {
+  if (status === "ready") return { label: "READY", color: "#1f9d55", bg: "rgba(31,157,85,0.18)" };
+  if (status === "failed") return { label: "FAILED", color: "#ff6b6b", bg: "rgba(255,107,107,0.2)" };
+  if (status === "starting") return { label: "STARTING", color: "#f5c542", bg: "rgba(245,197,66,0.2)" };
+  if (status === "queued") return { label: "QUEUED", color: "#7ea7ff", bg: "rgba(126,167,255,0.2)" };
+  return { label: "LOADING", color: "#b7bfd3", bg: "rgba(183,191,211,0.2)" };
+}
+
 export default function DeploymentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const [deploymentId, setDeploymentId] = useState("");
   const [deployment, setDeployment] = useState<DeploymentResponse | null>(null);
@@ -86,11 +94,27 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
     if (deployment.status === "failed") return "Deployment failed";
     return "Deployment in progress";
   }, [deployment]);
+  const statusMeta = getStatusMeta(deployment?.status);
 
   return (
     <main className="container">
       <div className="card">
-        <h1>Deployment dashboard</h1>
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+          <h1 style={{ margin: 0 }}>Deployment dashboard</h1>
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 700,
+              letterSpacing: 0.4,
+              padding: "6px 10px",
+              borderRadius: 999,
+              color: statusMeta.color,
+              background: statusMeta.bg,
+            }}
+          >
+            {statusMeta.label}
+          </span>
+        </div>
         <p className="muted" style={{ marginTop: -6 }}>
           {statusTitle}
         </p>
