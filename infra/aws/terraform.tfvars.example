@@ -1,0 +1,5 @@
+aws_region = "us-east-1"
+project_name = "oneclick"
+
+# Optional: tighten this later to your office/VPN CIDRs instead of world-open.
+runtime_ingress_cidrs = ["0.0.0.0/0"]

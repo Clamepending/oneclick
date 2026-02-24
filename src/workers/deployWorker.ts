@@ -3,6 +3,7 @@ import { Queue, Worker } from "bullmq";
 import { randomUUID } from "crypto";
 import net from "node:net";
 import { Client } from "ssh2";
+import { DescribeServicesCommand, ECSClient } from "@aws-sdk/client-ecs";
 import { ensureSchema, pool } from "@/lib/db";
 import { selectHost } from "@/lib/provisioner/hostScheduler";
 import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runtimeProvider";
@@ -46,6 +47,20 @@ function parseSshRuntimeId(runtimeId: string) {
   return { sshTarget: split[0], containerName: split[1] };
 }
 
+function parseEcsRuntimeId(runtimeId: string) {
+  if (!runtimeId.startsWith("ecs:")) return null;
+  const body = runtimeId.slice(4);
+  const split = body.split("|");
+  if (split.length !== 2) return null;
+  return { cluster: split[0], serviceName: split[1] };
+}
+
+function readTrimmedEnv(name: string) {
+  const raw = process.env[name];
+  if (!raw) return "";
+  return raw.trim().replace(/^"(.*)"$/, "$1").replace(/\\n/g, "").trim();
+}
+
 function parseUserAndHost(sshTarget: string) {
   const [user, host] = sshTarget.includes("@") ? sshTarget.split("@") : ["root", sshTarget];
   return { user, host };
@@ -81,19 +96,14 @@ async function probeSshLocalPort(sshTarget: string, port: number) {
   await new Promise<void>((resolve, reject) => {
     let settled = false;
     const conn = new Client();
-    let timer: NodeJS.Timeout | null = null;
-
-    const clearTimer = () => {
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
-    };
+    const timer = setTimeout(() => {
+      finish(new Error(`SSH probe timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
 
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
-      clearTimer();
+      clearTimeout(timer);
       conn.end();
       if (error) reject(error);
       else resolve();
@@ -101,10 +111,6 @@ async function probeSshLocalPort(sshTarget: string, port: number) {
 
     conn
       .on("ready", () => {
-        timer = setTimeout(() => {
-          finish(new Error(`SSH probe timed out after ${timeoutMs}ms`));
-        }, timeoutMs);
-
         conn.exec(command, (execErr, stream) => {
           if (execErr) {
             finish(execErr);
@@ -131,12 +137,42 @@ async function probeSshLocalPort(sshTarget: string, port: number) {
 }
 
 async function waitForRuntimeReady(input: {
-  readyUrl: string;
+  readyUrl: string | null;
   deployProvider: string | null;
   runtimeId: string;
 }) {
   const startupTimeoutMs = Number(process.env.OPENCLAW_STARTUP_TIMEOUT_MS ?? "120000");
   const pollIntervalMs = 3000;
+  const parsedEcsRuntime = input.deployProvider === "ecs" ? parseEcsRuntimeId(input.runtimeId) : null;
+  if (parsedEcsRuntime) {
+    const region = readTrimmedEnv("AWS_REGION");
+    if (!region) {
+      throw new Error("AWS_REGION is required for ECS runtime health checks.");
+    }
+    const ecsClient = new ECSClient({ region });
+    const deadline = Date.now() + startupTimeoutMs;
+    while (Date.now() < deadline) {
+      const result = await ecsClient.send(
+        new DescribeServicesCommand({
+          cluster: parsedEcsRuntime.cluster,
+          services: [parsedEcsRuntime.serviceName],
+        }),
+      );
+      const service = result.services?.[0];
+      if (service && service.status === "ACTIVE" && (service.runningCount ?? 0) > 0) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+    throw new Error(
+      `ECS service ${parsedEcsRuntime.serviceName} did not report a running task within ${startupTimeoutMs}ms`,
+    );
+  }
+
+  if (!input.readyUrl) {
+    throw new Error("readyUrl is required for non-ECS runtime health checks.");
+  }
+
   const url = new URL(input.readyUrl);
   const host = url.hostname;
   const port = Number(url.port || (url.protocol === "https:" ? "443" : "80"));
@@ -163,6 +199,8 @@ async function waitForRuntimeReady(input: {
 export async function processDeploymentJob(job: DeploymentJob) {
   await ensureSchema();
   await appendEvent(job.deploymentId, "starting", "Scheduling runtime host");
+  const provider = process.env.DEPLOY_PROVIDER ?? "mock";
+  const providerRequiresHost = provider === "ssh" || provider === "mock";
 
   // Enforce one runtime per user by destroying previous ready runtimes.
   const previousDeployments = await pool.query<{
@@ -197,23 +235,32 @@ export async function processDeploymentJob(job: DeploymentJob) {
     await appendEvent(previous.id, "failed", "Replaced by newer deployment");
   }
 
-  const activeByHost = new Map<string, number>();
-  const activeRows = await pool.query<{ host_name: string; active_count: string }>(
-    `SELECT host_name, COUNT(*)::text as active_count
-     FROM deployments
-     WHERE status IN ('queued', 'starting') AND host_name IS NOT NULL
-     GROUP BY host_name`,
-  );
-  for (const row of activeRows.rows) {
-    activeByHost.set(row.host_name, Number(row.active_count));
-  }
+  let host: Awaited<ReturnType<typeof selectHost>> | undefined;
+  if (providerRequiresHost) {
+    const activeByHost = new Map<string, number>();
+    const activeRows = await pool.query<{ host_name: string; active_count: string }>(
+      `SELECT host_name, COUNT(*)::text as active_count
+       FROM deployments
+       WHERE status IN ('queued', 'starting') AND host_name IS NOT NULL
+       GROUP BY host_name`,
+    );
+    for (const row of activeRows.rows) {
+      activeByHost.set(row.host_name, Number(row.active_count));
+    }
 
-  const host = await selectHost(activeByHost);
-  await pool.query(
-    `UPDATE deployments SET host_name = $1, status = 'starting', updated_at = NOW() WHERE id = $2`,
-    [host.name, job.deploymentId],
-  );
-  await appendEvent(job.deploymentId, "starting", `Assigned host ${host.name}`);
+    host = await selectHost(activeByHost);
+    await pool.query(
+      `UPDATE deployments SET host_name = $1, status = 'starting', updated_at = NOW() WHERE id = $2`,
+      [host.name, job.deploymentId],
+    );
+    await appendEvent(job.deploymentId, "starting", `Assigned host ${host.name}`);
+  } else {
+    await pool.query(
+      `UPDATE deployments SET host_name = $1, status = 'starting', updated_at = NOW() WHERE id = $2`,
+      [provider, job.deploymentId],
+    );
+    await appendEvent(job.deploymentId, "starting", `Using provider ${provider}`);
+  }
 
   const deploymentRow = await pool.query<{
     bot_name: string | null;

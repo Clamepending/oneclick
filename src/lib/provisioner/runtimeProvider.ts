@@ -1,6 +1,13 @@
 import { randomUUID } from "crypto";
 import { Client } from "ssh2";
 import {
+  CreateServiceCommand,
+  DeleteServiceCommand,
+  ECSClient,
+  RegisterTaskDefinitionCommand,
+  UpdateServiceCommand,
+} from "@aws-sdk/client-ecs";
+import {
   getOpenClawImage,
   getOpenClawPort,
   getOpenClawStartCommand,
@@ -19,7 +26,7 @@ type LaunchInput = {
   openrouterApiKey?: string | null;
   subsidyProxyBaseUrl?: string | null;
   subsidyProxyToken?: string | null;
-  host: Host;
+  host?: Host;
 };
 
 type DestroyInput = {
@@ -29,6 +36,38 @@ type DestroyInput = {
 
 function sanitizeSegment(value: string) {
   return value.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 48) || "default";
+}
+
+function readTrimmedEnv(name: string) {
+  const raw = process.env[name];
+  if (!raw) return "";
+  return raw.trim().replace(/^"(.*)"$/, "$1").replace(/\\n/g, "").trim();
+}
+
+function requireEnv(name: string) {
+  const value = readTrimmedEnv(name);
+  if (!value) {
+    throw new Error(`${name} is required for DEPLOY_PROVIDER=ecs.`);
+  }
+  return value;
+}
+
+function parseCsvEnv(name: string, required = true) {
+  const value = readTrimmedEnv(name);
+  if (!value) {
+    if (required) {
+      throw new Error(`${name} is required for DEPLOY_PROVIDER=ecs.`);
+    }
+    return [] as string[];
+  }
+  const parsed = value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (required && parsed.length === 0) {
+    throw new Error(`${name} must contain at least one value for DEPLOY_PROVIDER=ecs.`);
+  }
+  return parsed;
 }
 
 function shellQuote(value: string) {
@@ -117,6 +156,10 @@ function runtimeIdFromSsh(sshTarget: string, containerName: string) {
   return `ssh:${sshTarget}|${containerName}`;
 }
 
+function runtimeIdFromEcs(cluster: string, serviceName: string) {
+  return `ecs:${cluster}|${serviceName}`;
+}
+
 function getGatewayToken() {
   return randomUUID().replace(/-/g, "");
 }
@@ -135,6 +178,33 @@ function parseSshRuntimeId(runtimeId: string) {
   return { sshTarget: split[0], containerName: split[1] };
 }
 
+function parseEcsRuntimeId(runtimeId: string) {
+  if (!runtimeId.startsWith("ecs:")) return null;
+  const body = runtimeId.slice(4);
+  const split = body.split("|");
+  if (split.length !== 2) return null;
+  return { cluster: split[0], serviceName: split[1] };
+}
+
+function splitStartCommand(command: string) {
+  return command
+    .trim()
+    .split(/\s+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+function buildEcsReadyUrl(input: { deploymentId: string; userId: string; serviceName: string }) {
+  const template = readTrimmedEnv("ECS_READY_URL_TEMPLATE");
+  if (!template) {
+    return `${process.env.APP_BASE_URL ?? "http://localhost:3000"}/runtime/${input.deploymentId}`;
+  }
+  return template
+    .replaceAll("{deploymentId}", input.deploymentId)
+    .replaceAll("{userId}", input.userId)
+    .replaceAll("{service}", input.serviceName);
+}
+
 async function runSshCommand(sshTarget: string, command: string) {
   const { user, host } = parseUserAndHost(sshTarget);
   const privateKeyRaw = process.env.DEPLOY_SSH_PRIVATE_KEY?.trim();
@@ -147,19 +217,14 @@ async function runSshCommand(sshTarget: string, command: string) {
   await new Promise<void>((resolve, reject) => {
     let settled = false;
     const conn = new Client();
-    let timer: NodeJS.Timeout | null = null;
-
-    const clearTimer = () => {
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
-    };
+    const timer = setTimeout(() => {
+      finish(new Error(`SSH command timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
 
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
-      clearTimer();
+      clearTimeout(timer);
       conn.end();
       if (error) {
         reject(error);
@@ -170,10 +235,6 @@ async function runSshCommand(sshTarget: string, command: string) {
 
     conn
       .on("ready", () => {
-        timer = setTimeout(() => {
-          finish(new Error(`SSH command timed out after ${timeoutMs}ms`));
-        }, timeoutMs);
-
         conn.exec(command, (execErr, stream) => {
           if (execErr) {
             finish(execErr);
@@ -416,6 +477,9 @@ ${subsidyEnvArgs}
 }
 
 async function launchViaSsh(input: LaunchInput) {
+  if (!input.host) {
+    throw new Error("Host is required for DEPLOY_PROVIDER=ssh.");
+  }
   const sshTarget = parseSshTarget(input.host.dockerHost);
   if (!sshTarget) {
     throw new Error(`Invalid ssh dockerHost value: ${input.host.dockerHost}`);
@@ -476,11 +540,150 @@ async function launchViaSsh(input: LaunchInput) {
     port: containerPort,
     hostPort,
     startCommand,
-    hostName: input.host.name,
+    hostName: input.host?.name ?? "mock",
     readyUrl: withGatewayToken(
       runtimeDomain?.readyUrl ?? toReadyUrl(input.host, hostPort, input.deploymentId),
       gatewayToken,
     ),
+  };
+}
+
+async function launchViaEcs(input: LaunchInput) {
+  const region = requireEnv("AWS_REGION");
+  const cluster = requireEnv("ECS_CLUSTER");
+  const subnets = parseCsvEnv("ECS_SUBNET_IDS");
+  const securityGroups = parseCsvEnv("ECS_SECURITY_GROUP_IDS");
+  const executionRoleArn = requireEnv("ECS_EXECUTION_ROLE_ARN");
+  const taskRoleArn = readTrimmedEnv("ECS_TASK_ROLE_ARN");
+  const servicePrefix = readTrimmedEnv("ECS_SERVICE_PREFIX") || "oneclick-agent";
+  const launchType = readTrimmedEnv("ECS_LAUNCH_TYPE") || "FARGATE";
+  const assignPublicIp = (readTrimmedEnv("ECS_ASSIGN_PUBLIC_IP") || "true").toLowerCase() === "false"
+    ? "DISABLED"
+    : "ENABLED";
+  const image = getOpenClawImage();
+  const containerPort = getOpenClawPort();
+  const startCommand = getOpenClawStartCommand();
+  const command = splitStartCommand(startCommand);
+  const cpu = readTrimmedEnv("ECS_TASK_CPU") || "512";
+  const memory = readTrimmedEnv("ECS_TASK_MEMORY") || "1024";
+  const platformVersion = readTrimmedEnv("ECS_PLATFORM_VERSION");
+  const serviceName = `${servicePrefix}-${sanitizeNamePart(input.userId, 16)}-${sanitizeNamePart(input.deploymentId, 10)}`.slice(0, 63);
+  const family = `${servicePrefix}-${sanitizeNamePart(input.userId, 18)}-${sanitizeNamePart(input.deploymentId, 12)}`.slice(0, 255);
+  const containerName = readTrimmedEnv("ECS_CONTAINER_NAME") || "openclaw";
+  const awslogsGroup = readTrimmedEnv("ECS_LOG_GROUP");
+  const awslogsPrefix = readTrimmedEnv("ECS_LOG_STREAM_PREFIX") || "oneclick";
+  const telemetryEnv = readTrimmedEnv("OPENCLAW_TELEMETRY");
+  const ecsClient = new ECSClient({ region });
+
+  const environment = [
+    { name: "OPENCLAW_ALLOW_INSECURE_CONTROL_UI", value: shouldAllowInsecureControlUi() ? "true" : "false" },
+    input.telegramBotToken?.trim() ? { name: "TELEGRAM_BOT_TOKEN", value: input.telegramBotToken.trim() } : null,
+    input.openaiApiKey?.trim() ? { name: "OPENAI_API_KEY", value: input.openaiApiKey.trim() } : null,
+    input.anthropicApiKey?.trim() ? { name: "ANTHROPIC_API_KEY", value: input.anthropicApiKey.trim() } : null,
+    input.openrouterApiKey?.trim() ? { name: "OPENROUTER_API_KEY", value: input.openrouterApiKey.trim() } : null,
+    input.subsidyProxyToken?.trim() && input.subsidyProxyBaseUrl?.trim() && !input.openaiApiKey && !input.anthropicApiKey && !input.openrouterApiKey
+      ? { name: "OPENAI_API_KEY", value: input.subsidyProxyToken.trim() }
+      : null,
+    input.subsidyProxyToken?.trim() && input.subsidyProxyBaseUrl?.trim() && !input.openaiApiKey && !input.anthropicApiKey && !input.openrouterApiKey
+      ? { name: "OPENAI_BASE_URL", value: input.subsidyProxyBaseUrl.trim() }
+      : null,
+    input.subsidyProxyToken?.trim() && input.subsidyProxyBaseUrl?.trim() && !input.openaiApiKey && !input.anthropicApiKey && !input.openrouterApiKey
+      ? { name: "OPENAI_API_BASE", value: input.subsidyProxyBaseUrl.trim() }
+      : null,
+    telemetryEnv ? { name: "OPENCLAW_TELEMETRY", value: telemetryEnv } : null,
+  ].filter((entry): entry is { name: string; value: string } => Boolean(entry));
+
+  const register = await ecsClient.send(
+    new RegisterTaskDefinitionCommand({
+      family,
+      networkMode: "awsvpc",
+      requiresCompatibilities: ["FARGATE"],
+      cpu,
+      memory,
+      executionRoleArn,
+      taskRoleArn: taskRoleArn || undefined,
+      containerDefinitions: [
+        {
+          name: containerName,
+          image,
+          essential: true,
+          command: command.length > 0 ? command : undefined,
+          environment,
+          portMappings: [
+            {
+              containerPort,
+              protocol: "tcp",
+            },
+          ],
+          logConfiguration: awslogsGroup
+            ? {
+                logDriver: "awslogs",
+                options: {
+                  "awslogs-group": awslogsGroup,
+                  "awslogs-region": region,
+                  "awslogs-stream-prefix": awslogsPrefix,
+                },
+              }
+            : undefined,
+        },
+      ],
+    }),
+  );
+
+  const taskDefinitionArn = register.taskDefinition?.taskDefinitionArn;
+  if (!taskDefinitionArn) {
+    throw new Error("ECS did not return a task definition ARN.");
+  }
+
+  try {
+    await ecsClient.send(
+      new CreateServiceCommand({
+        cluster,
+        serviceName,
+        taskDefinition: taskDefinitionArn,
+        desiredCount: 1,
+        launchType: launchType as "FARGATE" | "EC2" | "EXTERNAL",
+        platformVersion: platformVersion || undefined,
+        networkConfiguration: {
+          awsvpcConfiguration: {
+            subnets,
+            securityGroups,
+            assignPublicIp,
+          },
+        },
+      }),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const lower = message.toLowerCase();
+    const shouldUpdateExisting =
+      lower.includes("already exists") || lower.includes("not idempotent");
+    if (!shouldUpdateExisting) {
+      throw error;
+    }
+    await ecsClient.send(
+      new UpdateServiceCommand({
+        cluster,
+        service: serviceName,
+        taskDefinition: taskDefinitionArn,
+        desiredCount: 1,
+      }),
+    );
+  }
+
+  return {
+    runtimeId: runtimeIdFromEcs(cluster, serviceName),
+    deployProvider: "ecs",
+    image,
+    port: containerPort,
+    hostPort: null,
+    startCommand,
+    hostName: `ecs:${cluster}`,
+    readyUrl: buildEcsReadyUrl({
+      deploymentId: input.deploymentId,
+      userId: input.userId,
+      serviceName,
+    }),
   };
 }
 
@@ -495,6 +698,10 @@ export async function launchUserContainer(input: LaunchInput) {
     return launchViaDigitalOcean(input);
   }
 
+  if (provider === "ecs") {
+    return launchViaEcs(input);
+  }
+
   const image = getOpenClawImage();
   const port = getOpenClawPort();
   const startCommand = getOpenClawStartCommand();
@@ -505,7 +712,7 @@ export async function launchUserContainer(input: LaunchInput) {
     port,
     hostPort: null,
     startCommand,
-    hostName: input.host.name,
+    hostName: input.host?.name ?? "mock",
     readyUrl: `${process.env.APP_BASE_URL ?? "http://localhost:3000"}/runtime/${input.deploymentId}`,
   };
 }
@@ -545,6 +752,22 @@ export async function destroyUserRuntime(input: DestroyInput) {
     await runSshCommand(
       parsed.sshTarget,
       `docker rm -f "${parsed.containerName}" >/dev/null 2>&1 || true`,
+    );
+    return;
+  }
+  if (provider === "ecs") {
+    const parsed = parseEcsRuntimeId(input.runtimeId);
+    if (!parsed) {
+      throw new Error("Invalid ecs runtime id format.");
+    }
+    const region = requireEnv("AWS_REGION");
+    const ecsClient = new ECSClient({ region });
+    await ecsClient.send(
+      new DeleteServiceCommand({
+        cluster: parsed.cluster,
+        service: parsed.serviceName,
+        force: true,
+      }),
     );
     return;
   }
