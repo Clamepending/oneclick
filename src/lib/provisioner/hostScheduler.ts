@@ -16,6 +16,10 @@ function getHostPool(): Host[] {
   }
 }
 
+export function listHosts(): Host[] {
+  return getHostPool();
+}
+
 export function getHostByName(name: string): Host | null {
   const pool = getHostPool();
   return pool.find((host) => host.name === name) ?? null;

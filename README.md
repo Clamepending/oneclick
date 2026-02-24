@@ -31,6 +31,7 @@ Critical keys:
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
 - `AUTH_SECRET`
+- `ADMIN_EMAILS` (optional comma-separated allowlist for `/admin`; if unset, any signed-in user can access admin in this prototype)
 - `DATABASE_URL`
 - `HOST_POOL_JSON`
 - `OPENCLAW_IMAGE`
@@ -143,6 +144,7 @@ Notes:
 - `POST /api/deployments`
 - `GET /api/deployments/:id`
 - `GET /api/deployments/:id/events`
+- `GET /api/admin/overview`
 
 ## Acceptance checklist
 

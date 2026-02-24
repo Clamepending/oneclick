@@ -77,6 +77,9 @@ export default async function HomePage() {
               <Link className="button" href="/onboarding">
                 Start new deployment
               </Link>
+              <Link className="button secondary" href="/admin">
+                Admin
+              </Link>
             </div>
           </div>
         )}

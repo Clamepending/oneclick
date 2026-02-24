@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 
-const PROTECTED_PREFIXES = ["/onboarding", "/deployments", "/api/onboarding", "/api/deployments"];
+const PROTECTED_PREFIXES = ["/onboarding", "/deployments", "/admin", "/api/onboarding", "/api/deployments", "/api/admin"];
 
 export default auth((req) => {
   const isProtected = PROTECTED_PREFIXES.some((prefix) =>
