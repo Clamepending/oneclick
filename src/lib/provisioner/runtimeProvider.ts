@@ -8,6 +8,7 @@ import {
   RegisterTaskDefinitionCommand,
   UpdateServiceCommand,
 } from "@aws-sdk/client-ecs";
+import { getRuntimeBaseDomain } from "@/lib/subdomainConfig";
 import {
   getOpenClawImage,
   getOpenClawPort,
@@ -133,10 +134,6 @@ function buildRuntimeName(input: { runtimeSlugSource?: string | null; userId: st
   const deploymentPart = sanitizeNamePart(input.deploymentId, 10);
   const joined = `oneclick-${botPart}-${userPart}-${deploymentPart}`;
   return joined.slice(0, 63);
-}
-
-function getRuntimeBaseDomain() {
-  return process.env.RUNTIME_BASE_DOMAIN?.trim().toLowerCase() ?? "";
 }
 
 function buildRuntimeUrlFromDomain(runtimeSlugSource: string | null | undefined, userId: string) {

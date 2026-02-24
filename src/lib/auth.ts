@@ -1,5 +1,6 @@
 import NextAuth from "next-auth";
 import Google from "next-auth/providers/google";
+import { getBotDashboardBaseDomain } from "@/lib/subdomainConfig";
 
 function parseHostnameFromUrl(value: string | null | undefined) {
   if (!value) return null;
@@ -21,7 +22,7 @@ function getAllowedRedirectHosts() {
 
 function getAllowedRedirectBaseDomains() {
   const domains = new Set<string>();
-  const botBaseDomain = process.env.BOT_DASHBOARD_BASE_DOMAIN?.trim().toLowerCase();
+  const botBaseDomain = getBotDashboardBaseDomain();
   if (botBaseDomain) domains.add(botBaseDomain);
   return domains;
 }

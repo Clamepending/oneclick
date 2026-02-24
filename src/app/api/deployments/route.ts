@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
+import { getRuntimeBaseDomain } from "@/lib/subdomainConfig";
 import { buildRuntimeSubdomain, normalizeBotName } from "@/lib/provisioner/runtimeSlug";
 import { applyMemoryRateLimit } from "@/lib/security/rateLimit";
 import {
@@ -90,7 +91,7 @@ async function readRequestedBotName(request: Request) {
 }
 
 function buildRuntimeUrlPreview(runtimeSlug: string) {
-  const baseDomain = process.env.RUNTIME_BASE_DOMAIN?.trim().toLowerCase() ?? "";
+  const baseDomain = getRuntimeBaseDomain();
   if (!baseDomain) return null;
   return `https://${runtimeSlug}.${baseDomain}`;
 }

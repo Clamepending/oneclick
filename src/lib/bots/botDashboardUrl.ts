@@ -1,8 +1,10 @@
+import { getBotDashboardBaseDomain } from "@/lib/subdomainConfig";
+
 export function buildBotDashboardUrl(runtimeSlug: string | null | undefined) {
   const slug = runtimeSlug?.trim().toLowerCase();
   if (!slug) return null;
 
-  const baseDomain = process.env.BOT_DASHBOARD_BASE_DOMAIN?.trim().toLowerCase() ?? "";
+  const baseDomain = getBotDashboardBaseDomain();
   if (baseDomain) {
     return `https://${slug}.${baseDomain}`;
   }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { getBotDashboardBaseDomain } from "@/lib/subdomainConfig";
 
 const PROTECTED_PREFIXES = [
   "/onboarding",
@@ -31,7 +32,7 @@ function getCanonicalLoginOrigin() {
 }
 
 function getBotSubdomain(hostname: string) {
-  const baseDomain = process.env.BOT_DASHBOARD_BASE_DOMAIN?.trim().toLowerCase() ?? "";
+  const baseDomain = getBotDashboardBaseDomain();
   if (!baseDomain) return null;
   if (!hostname.endsWith(`.${baseDomain}`)) return null;
   const subdomain = hostname.slice(0, -(baseDomain.length + 1)).trim().toLowerCase();
