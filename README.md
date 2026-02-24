@@ -44,7 +44,6 @@ Runtime deployment mode:
 
 - `DEPLOY_PROVIDER=mock` (default placeholder runtime URL)
 - `DEPLOY_PROVIDER=ssh` (real SSH host deployment using Docker)
-- `DEPLOY_PROVIDER=digitalocean` (create Droplet via API from Vercel)
 - `DEPLOY_PROVIDER=ecs` (AWS ECS Fargate, one always-on task per deployment)
 - `DEPLOY_SSH_PRIVATE_KEY` can contain a PEM private key with `\\n` newlines.
 - `DEPLOY_SSH_KNOWN_HOSTS` is optional but recommended for strict host verification.
@@ -178,24 +177,6 @@ If you want bot dashboards on `botname.oneclickagent.net`, use a dedicated dashb
    - `RUNTIME_BASE_DOMAIN=runtime.oneclickagent.net`
 5. Update Google OAuth callback URL:
    - `https://app.oneclickagent.net/api/auth/callback/google`
-
-## Real container deployment via DigitalOcean API (Vercel-friendly)
-
-Set:
-
-- `DEPLOY_PROVIDER=digitalocean`
-- `DO_API_TOKEN` (DigitalOcean personal access token)
-- optional sizing/region:
-  - `DO_REGION` (default `nyc1`)
-  - `DO_SIZE` (default `s-1vcpu-2gb`)
-  - `DO_IMAGE` (default `ubuntu-24-04-x64`)
-  - `DO_API_TIMEOUT_MS` (default `15000`)
-
-Notes:
-
-- This mode does not require `ssh` binary on Vercel.
-- It creates a Droplet and launches the OpenClaw image via cloud-init.
-- deployment step: after launch, enter the customer’s own OpenAI or Anthropic API key in OpenClaw (never use your personal key in customer deployments)
 
 ## API
 

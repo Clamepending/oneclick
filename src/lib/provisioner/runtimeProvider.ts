@@ -321,176 +321,6 @@ function toReadyUrl(host: Host, hostPort: number, deploymentId: string) {
   return `http://${hostname}:${hostPort}`;
 }
 
-function extractPublicIp(networks: unknown): string | null {
-  if (!networks || typeof networks !== "object") return null;
-  const maybe = networks as { v4?: Array<{ type?: string; ip_address?: string }> };
-  const publicNet = maybe.v4?.find((entry) => entry.type === "public" && entry.ip_address);
-  return publicNet?.ip_address ?? null;
-}
-
-async function launchViaDigitalOcean(input: LaunchInput) {
-  const token = process.env.DO_API_TOKEN?.trim();
-  if (!token) {
-    throw new Error("DO_API_TOKEN is required for DEPLOY_PROVIDER=digitalocean.");
-  }
-
-  const image = getOpenClawImage();
-  const containerPort = getOpenClawPort();
-  const startCommand = getOpenClawStartCommand();
-  const allowInsecureControlUi = shouldAllowInsecureControlUi();
-  const gatewayToken = getGatewayToken();
-  const region = process.env.DO_REGION ?? "nyc1";
-  const size = process.env.DO_SIZE ?? "s-1vcpu-2gb";
-  const osImage = process.env.DO_IMAGE ?? "ubuntu-24-04-x64";
-  const safeDeployment = sanitizeSegment(input.deploymentId);
-  const safeUser = sanitizeSegment(input.userId);
-  const runtimeName = buildRuntimeName(input);
-  const dropletName = runtimeName;
-  const telegramBotToken = input.telegramBotToken?.trim() || "";
-  const openaiApiKey = input.openaiApiKey?.trim() || "";
-  const anthropicApiKey = input.anthropicApiKey?.trim() || "";
-  const openrouterApiKey = input.openrouterApiKey?.trim() || "";
-  const subsidyProxyBaseUrl = input.subsidyProxyBaseUrl?.trim() || "";
-  const subsidyProxyToken = input.subsidyProxyToken?.trim() || "";
-  const resourceFlags = getDockerResourceFlags();
-
-  const configBase = process.env.OPENCLAW_CONFIG_MOUNT_BASE ?? "/var/lib/oneclick/openclaw";
-  const workspaceSuffix = process.env.OPENCLAW_WORKSPACE_SUFFIX ?? "workspace";
-  const userDir = `${configBase}/${safeUser}/${safeDeployment}`;
-  const workspaceDir = `${userDir}/${workspaceSuffix}`;
-  const containerName = runtimeName;
-  const telegramEnvArgs = telegramBotToken
-    ? `  -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)} \\\n`
-    : "";
-  const modelEnvArgs = [
-    openaiApiKey ? `  -e OPENAI_API_KEY=${shellQuote(openaiApiKey)} \\\n` : "",
-    anthropicApiKey ? `  -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)} \\\n` : "",
-    openrouterApiKey ? `  -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)} \\\n` : "",
-  ].join("");
-  const subsidyEnvArgs =
-    !openaiApiKey && !anthropicApiKey && !openrouterApiKey && subsidyProxyBaseUrl && subsidyProxyToken
-      ? `  -e OPENAI_API_KEY=${shellQuote(subsidyProxyToken)} \\\n  -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} \\\n  -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)} \\\n`
-      : "";
-
-  // Cloud-init script bootstraps Docker and launches the OpenClaw container.
-  const userDataScript = `#!/bin/bash
-set -euxo pipefail
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y ca-certificates curl
-curl -fsSL https://get.docker.com | sh
-systemctl enable docker
-systemctl start docker
-mkdir -p "${userDir}" "${workspaceDir}"
-chown -R 1000:1000 "${userDir}" "${workspaceDir}" || true
-docker pull "${image}"
-docker rm -f "${containerName}" >/dev/null 2>&1 || true
-docker run --rm \\
-  -v "${userDir}:/home/node/.openclaw" \\
-  -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
-  "${image}" config set gateway.bind lan
-docker run --rm \\
-  -v "${userDir}:/home/node/.openclaw" \\
-  -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
-  "${image}" config set gateway.auth.token ${shellQuote(gatewayToken)}
-${allowInsecureControlUi ? `docker run --rm \\
-  -v "${userDir}:/home/node/.openclaw" \\
-  -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
-  "${image}" config set gateway.controlUi.allowInsecureAuth true
-docker run --rm \\
-  -v "${userDir}:/home/node/.openclaw" \\
-  -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
-  "${image}" config set gateway.controlUi.dangerouslyDisableDeviceAuth true
-docker run --rm \\
-  -v "${userDir}:/home/node/.openclaw" \\
-  -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
-  "${image}" config set gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback true
-docker run --rm \\
-  -v "${userDir}:/home/node/.openclaw" \\
-  -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
-  "${image}" config set gateway.trustedProxies '["172.16.0.0/12"]'` : ""}
-docker run -d --name "${containerName}" --restart unless-stopped \\
-  --memory=${resourceFlags.memory} --memory-swap=${resourceFlags.memory} --cpus=${resourceFlags.cpus} --pids-limit=${resourceFlags.pids} --shm-size=${resourceFlags.shmSize} \\
-  --log-opt max-size=${resourceFlags.logMaxSize} --log-opt max-file=${resourceFlags.logMaxFiles}${resourceFlags.writableLayerSize ? ` --storage-opt size=${resourceFlags.writableLayerSize}` : ""} \\
-  -v "${userDir}:/home/node/.openclaw" \\
-  -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
-${telegramEnvArgs}
-${modelEnvArgs}
-${subsidyEnvArgs}
-  -p "${containerPort}:${containerPort}" \\
-  "${image}" ${startCommand}
-`;
-
-  const response = await fetch("https://api.digitalocean.com/v2/droplets", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      name: dropletName,
-      region,
-      size,
-      image: osImage,
-      user_data: userDataScript,
-      ipv6: true,
-      monitoring: true,
-      backups: false,
-      tags: ["oneclick", "openclaw"],
-    }),
-    signal: AbortSignal.timeout(Number(process.env.DO_API_TIMEOUT_MS ?? "15000")),
-  });
-
-  if (!response.ok) {
-    const details = await response.text();
-    throw new Error(`DigitalOcean create droplet failed (${response.status}): ${details}`);
-  }
-
-  const payload = (await response.json()) as {
-    droplet?: {
-      id?: number;
-      networks?: unknown;
-    };
-  };
-
-  const dropletId = payload?.droplet?.id;
-  if (!dropletId) {
-    throw new Error("DigitalOcean did not return droplet id.");
-  }
-
-  // Try IP from create response first.
-  let publicIp = extractPublicIp(payload?.droplet?.networks);
-  if (!publicIp) {
-    // Then fetch droplet detail once.
-    const detailRes = await fetch(`https://api.digitalocean.com/v2/droplets/${dropletId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(Number(process.env.DO_API_TIMEOUT_MS ?? "15000")),
-    });
-    if (detailRes.ok) {
-      const detail = (await detailRes.json()) as {
-        droplet?: { networks?: unknown };
-      };
-      publicIp = extractPublicIp(detail?.droplet?.networks);
-    }
-  }
-
-  if (!publicIp) {
-    throw new Error("Droplet created but public IP not available yet.");
-  }
-
-  const readyUrl = withGatewayToken(`http://${publicIp}:${containerPort}`, gatewayToken);
-  return {
-    runtimeId: String(dropletId),
-    deployProvider: "digitalocean",
-    image,
-    port: containerPort,
-    hostPort: containerPort,
-    startCommand,
-    hostName: `do:${dropletName}`,
-    readyUrl,
-  };
-}
-
 async function launchViaSsh(input: LaunchInput) {
   if (!input.host) {
     throw new Error("Host is required for DEPLOY_PROVIDER=ssh.");
@@ -709,10 +539,6 @@ export async function launchUserContainer(input: LaunchInput) {
     return launchViaSsh(input);
   }
 
-  if (provider === "digitalocean") {
-    return launchViaDigitalOcean(input);
-  }
-
   if (provider === "ecs") {
     return launchViaEcs(input);
   }
@@ -732,33 +558,8 @@ export async function launchUserContainer(input: LaunchInput) {
   };
 }
 
-async function destroyDigitalOceanRuntime(runtimeId: string) {
-  const token = process.env.DO_API_TOKEN?.trim();
-  if (!token) {
-    throw new Error("DO_API_TOKEN is required to destroy DigitalOcean runtime.");
-  }
-
-  const response = await fetch(`https://api.digitalocean.com/v2/droplets/${runtimeId}`, {
-    method: "DELETE",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-    signal: AbortSignal.timeout(Number(process.env.DO_API_TIMEOUT_MS ?? "15000")),
-  });
-
-  if (response.status === 404) return;
-  if (response.status !== 204) {
-    const details = await response.text();
-    throw new Error(`DigitalOcean destroy droplet failed (${response.status}): ${details}`);
-  }
-}
-
 export async function destroyUserRuntime(input: DestroyInput) {
   const provider = (input.deployProvider ?? "").trim();
-  if (provider === "digitalocean") {
-    await destroyDigitalOceanRuntime(input.runtimeId);
-    return;
-  }
   if (provider === "ssh") {
     const parsed = parseSshRuntimeId(input.runtimeId);
     if (!parsed) {
