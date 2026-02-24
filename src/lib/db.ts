@@ -89,6 +89,25 @@ export async function ensureSchema() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS subsidy_usage_events (
+      id BIGSERIAL PRIMARY KEY,
+      deployment_id TEXT NOT NULL,
+      http_status INT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS subsidy_usage_events_created_at_idx
+    ON subsidy_usage_events (created_at);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS subsidy_usage_events_deployment_id_idx
+    ON subsidy_usage_events (deployment_id, created_at);
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS bot_identities (
       id BIGSERIAL PRIMARY KEY,
       owner_user_id TEXT NOT NULL,

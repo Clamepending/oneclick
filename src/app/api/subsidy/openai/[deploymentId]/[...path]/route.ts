@@ -11,6 +11,14 @@ function readBearerToken(request: Request) {
   return authHeader.slice("bearer ".length).trim() || null;
 }
 
+async function appendUsageEvent(deploymentId: string, httpStatus: number) {
+  await pool.query(
+    `INSERT INTO subsidy_usage_events (deployment_id, http_status)
+     VALUES ($1, $2)`,
+    [deploymentId, httpStatus],
+  );
+}
+
 async function proxyToOpenAi(
   request: Request,
   context: { params: Promise<{ deploymentId: string; path: string[] }> },
@@ -49,6 +57,7 @@ async function proxyToOpenAi(
     60_000,
   );
   if (!rateLimit.allowed) {
+    await appendUsageEvent(deploymentId, 429).catch(() => {});
     return NextResponse.json(
       { ok: false, error: "Subsidy rate limit exceeded (50 requests per minute)." },
       { status: 429, headers: { "Retry-After": "60" } },
@@ -77,6 +86,7 @@ async function proxyToOpenAi(
   const responseHeaders = new Headers();
   const upstreamType = upstream.headers.get("content-type");
   if (upstreamType) responseHeaders.set("content-type", upstreamType);
+  await appendUsageEvent(deploymentId, upstream.status).catch(() => {});
 
   return new Response(responseBody, {
     status: upstream.status,

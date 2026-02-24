@@ -34,6 +34,14 @@ type OverviewResponse = {
   ok: boolean;
   generatedAt: string;
   hosts: HostItem[];
+  subsidyUsage?: {
+    totalRequests: number;
+    requests24h: number;
+    requests1h: number;
+    rateLimited1h: number;
+    uniqueDeployments24h: number;
+    topDeployments24h: Array<{ deploymentId: string; requestCount: number }>;
+  };
   error?: string;
 };
 
@@ -169,6 +177,36 @@ export default function AdminPage() {
         {loading ? <p className="muted">Loading admin metrics...</p> : null}
         {error ? <p style={{ color: "#ff8e8e" }}>{error}</p> : null}
       </div>
+
+      <section className="card" style={{ marginTop: 14 }}>
+        <h2 style={{ marginTop: 0 }}>Subsidy usage</h2>
+        <p className="muted">Request volume served via server-side OpenAI subsidy proxy.</p>
+        <div style={{ display: "grid", gap: 6 }}>
+          <p className="muted" style={{ marginBottom: 0 }}>
+            Total requests: <code>{data?.subsidyUsage?.totalRequests ?? 0}</code>
+          </p>
+          <p className="muted" style={{ marginBottom: 0 }}>
+            Requests (24h): <code>{data?.subsidyUsage?.requests24h ?? 0}</code> | Requests (1h):{" "}
+            <code>{data?.subsidyUsage?.requests1h ?? 0}</code>
+          </p>
+          <p className="muted" style={{ marginBottom: 0 }}>
+            Rate-limited (1h): <code>{data?.subsidyUsage?.rateLimited1h ?? 0}</code> | Active deployments (24h):{" "}
+            <code>{data?.subsidyUsage?.uniqueDeployments24h ?? 0}</code>
+          </p>
+        </div>
+        <h3 style={{ marginBottom: 8 }}>Top deployments (24h)</h3>
+        {data?.subsidyUsage?.topDeployments24h?.length ? (
+          <div style={{ display: "grid", gap: 6 }}>
+            {data.subsidyUsage.topDeployments24h.map((item) => (
+              <p className="muted" style={{ marginBottom: 0 }} key={item.deploymentId}>
+                <code>{item.deploymentId}</code>: <code>{item.requestCount}</code> requests
+              </p>
+            ))}
+          </div>
+        ) : (
+          <p className="muted">No subsidy usage recorded yet.</p>
+        )}
+      </section>
 
       {data?.hosts?.map((item) => (
         <section className="card" key={item.host.name} style={{ marginTop: 14 }}>
