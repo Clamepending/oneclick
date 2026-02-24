@@ -45,6 +45,7 @@ Runtime deployment mode:
 - `DEPLOY_PROVIDER=mock` (default placeholder runtime URL)
 - `DEPLOY_PROVIDER=ssh` (real SSH host deployment using Docker)
 - `DEPLOY_PROVIDER=digitalocean` (create Droplet via API from Vercel)
+- `DEPLOY_PROVIDER=ecs` (AWS ECS Fargate, one always-on task per deployment)
 - `DEPLOY_SSH_PRIVATE_KEY` can contain a PEM private key with `\\n` newlines.
 - `DEPLOY_SSH_KNOWN_HOSTS` is optional but recommended for strict host verification.
 - `OPENCLAW_TELEGRAM_BOT_TOKEN` is required when users select Telegram during onboarding; this token is injected at container launch.
@@ -64,6 +65,26 @@ Worker (separate process):
 ```bash
 npm run worker -- --run
 ```
+
+## AWS ECS (minimal manual setup)
+
+The repo includes a Terraform stack that creates the AWS base infra for ECS mode (VPC, subnets, security group, ECS cluster, IAM roles, logs, ECR).
+
+Fastest path:
+
+```bash
+# In your shell (use the IAM access key you created)
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+export AWS_REGION=us-east-1
+
+# Creates/updates AWS infra and writes .env.aws-ecs
+npm run aws:bootstrap
+```
+
+Then copy values from `.env.aws-ecs` into your app runtime env (`.env.local`, Vercel env, etc.) and set `DEPLOY_PROVIDER=ecs`.
+
+Infra source: `infra/aws/`
 
 ## Vercel deployment
 

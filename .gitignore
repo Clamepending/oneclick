@@ -7,3 +7,10 @@ coverage
 .vercel
 .env*.local
 .env.production
+.env.aws-ecs
+.env*.bak.*
+.terraform
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tsbuildinfo
