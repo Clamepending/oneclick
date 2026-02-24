@@ -16,7 +16,7 @@ export function DeploymentActions({ deploymentId, status, compact = false, botNa
   const [isRedeploying, setIsRedeploying] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const canDelete = status !== "queued" && status !== "starting";
+  const canDelete = status !== "queued";
 
   async function handleRedeploy() {
     setError("");
@@ -42,7 +42,7 @@ export function DeploymentActions({ deploymentId, status, compact = false, botNa
 
   async function handleDelete() {
     if (!canDelete) {
-      setError("This deployment is in progress and cannot be deleted yet.");
+      setError("This deployment is still queued and cannot be deleted yet.");
       return;
     }
     const confirmed = window.confirm("Delete this bot deployment? This will destroy its runtime.");
@@ -81,7 +81,7 @@ export function DeploymentActions({ deploymentId, status, compact = false, botNa
           type="button"
           onClick={() => void handleDelete()}
           disabled={isRedeploying || isDeleting || !canDelete}
-          title={!canDelete ? "In-progress deployments cannot be deleted" : undefined}
+          title={!canDelete ? "Queued deployments cannot be deleted yet" : undefined}
         >
           {isDeleting ? "Deleting..." : "Delete bot"}
         </button>

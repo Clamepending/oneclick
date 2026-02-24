@@ -38,6 +38,28 @@ function canUseQueueMode() {
   return true;
 }
 
+async function failStaleInProgressDeployments(userId: string) {
+  const staleAfterMs = Number(process.env.DEPLOY_STALE_STARTING_TIMEOUT_MS ?? "900000");
+  const staleMessage =
+    "Deployment timed out while in progress. Please redeploy.";
+  await pool.query(
+    `WITH stale AS (
+       UPDATE deployments
+       SET status = 'failed',
+           error = $2,
+           updated_at = NOW()
+       WHERE user_id = $1
+         AND status IN ('queued', 'starting')
+         AND updated_at < NOW() - ($3::double precision * INTERVAL '1 millisecond')
+       RETURNING id
+     )
+     INSERT INTO deployment_events (deployment_id, status, message)
+     SELECT id, 'failed', $2
+     FROM stale`,
+    [userId, staleMessage, staleAfterMs],
+  );
+}
+
 function startInProcessDeployment(deploymentId: string, userId: string) {
   setTimeout(() => {
     void processDeploymentJob({ deploymentId, userId }).catch(async (error) => {
@@ -200,6 +222,7 @@ export async function POST(request: Request) {
   }
 
   await ensureSchema();
+  await failStaleInProgressDeployments(session.user.email);
   const active = await pool.query<{ count: string }>(
     `SELECT COUNT(*)::text as count
      FROM deployments

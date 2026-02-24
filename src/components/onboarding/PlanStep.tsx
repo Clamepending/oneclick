@@ -20,9 +20,17 @@ export function PlanStep({ onDeploy, loading, hasApiKey }: Props) {
         }}
       >
         <strong>Free</strong>
-        <p className="muted" style={{ marginBottom: 0 }}>
-          One active deployment, basic usage limits.
+        <p className="muted" style={{ marginBottom: 8 }}>
+          One active deployment with shared-host safeguards.
         </p>
+        <ul className="muted" style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
+          <li>1 active deployment</li>
+          <li>1 GB RAM limit</li>
+          <li>0.5 vCPU limit</li>
+          <li>256 process limit (PIDs)</li>
+          <li>128 MB shared memory (/dev/shm)</li>
+          <li>Persistent workspace storage on shared host (no fixed per-container disk cap)</li>
+        </ul>
       </div>
       <h3 style={{ margin: "0 0 8px" }}>Deployment checklist</h3>
       <ol className="muted" style={{ marginTop: 0, marginBottom: 12, paddingLeft: 18, display: "grid", gap: 6 }}>

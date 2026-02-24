@@ -23,9 +23,8 @@ async function checkRuntimeHealth(readyUrl: string) {
   }
 }
 
-function isStaleStartingDeployment(item: { status: string; runtime_id: string | null; updated_at: string }) {
-  if (item.status !== "starting") return false;
-  if (item.runtime_id?.trim()) return false;
+function isStaleInProgressDeployment(item: { status: string; updated_at: string }) {
+  if (item.status !== "queued" && item.status !== "starting") return false;
   const updatedAtMs = Date.parse(item.updated_at);
   if (!Number.isFinite(updatedAtMs)) return false;
   const staleAfterMs = Number(process.env.DEPLOY_STALE_STARTING_TIMEOUT_MS ?? "900000");
@@ -73,9 +72,8 @@ export async function GET(
     return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
   }
 
-  if (isStaleStartingDeployment(item)) {
-    const staleMessage =
-      "Deployment timed out while starting (runtime metadata was not finalized). Please redeploy.";
+  if (isStaleInProgressDeployment(item)) {
+    const staleMessage = "Deployment timed out while in progress. Please redeploy.";
     await pool.query(
       `UPDATE deployments
        SET status = 'failed',
@@ -137,8 +135,9 @@ export async function DELETE(
     status: string;
     runtime_id: string | null;
     deploy_provider: string | null;
+    updated_at: string;
   }>(
-    `SELECT id, status, runtime_id, deploy_provider
+    `SELECT id, status, runtime_id, deploy_provider, updated_at
      FROM deployments
      WHERE id = $1 AND user_id = $2`,
     [id, session.user.email],
@@ -147,6 +146,24 @@ export async function DELETE(
   const deployment = result.rows[0];
   if (!deployment) {
     return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
+  }
+
+  if (isStaleInProgressDeployment(deployment)) {
+    const staleMessage = "Deployment timed out while in progress. Please redeploy.";
+    await pool.query(
+      `UPDATE deployments
+       SET status = 'failed',
+           error = $1,
+           updated_at = NOW()
+       WHERE id = $2`,
+      [staleMessage, deployment.id],
+    );
+    await pool.query(
+      `INSERT INTO deployment_events (deployment_id, status, message)
+       VALUES ($1, 'failed', $2)`,
+      [deployment.id, staleMessage],
+    );
+    deployment.status = "failed";
   }
 
   if (deployment.status === "queued" || deployment.status === "starting") {
