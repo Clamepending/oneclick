@@ -24,6 +24,10 @@ function sanitizeSegment(value: string) {
   return value.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 48) || "default";
 }
 
+function shellQuote(value: string) {
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
 function sanitizeNamePart(value: string, maxLength: number) {
   const sanitized = value
     .toLowerCase()
@@ -98,6 +102,16 @@ function parseUserAndHost(sshTarget: string) {
 
 function runtimeIdFromSsh(sshTarget: string, containerName: string) {
   return `ssh:${sshTarget}|${containerName}`;
+}
+
+function getGatewayToken() {
+  return randomUUID().replace(/-/g, "");
+}
+
+function withGatewayToken(readyUrl: string, token: string) {
+  const url = new URL(readyUrl);
+  url.searchParams.set("token", token);
+  return url.toString();
 }
 
 function parseSshRuntimeId(runtimeId: string) {
@@ -235,6 +249,7 @@ async function launchViaDigitalOcean(input: LaunchInput) {
   const containerPort = getOpenClawPort();
   const startCommand = getOpenClawStartCommand();
   const allowInsecureControlUi = shouldAllowInsecureControlUi();
+  const gatewayToken = getGatewayToken();
   const region = process.env.DO_REGION ?? "nyc1";
   const size = process.env.DO_SIZE ?? "s-1vcpu-2gb";
   const osImage = process.env.DO_IMAGE ?? "ubuntu-24-04-x64";
@@ -266,6 +281,10 @@ docker run --rm \\
   -v "${userDir}:/home/node/.openclaw" \\
   -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
   "${image}" config set gateway.bind lan
+docker run --rm \\
+  -v "${userDir}:/home/node/.openclaw" \\
+  -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
+  "${image}" config set gateway.auth.token ${shellQuote(gatewayToken)}
 ${allowInsecureControlUi ? `docker run --rm \\
   -v "${userDir}:/home/node/.openclaw" \\
   -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
@@ -342,7 +361,7 @@ docker run -d --name "${containerName}" --restart unless-stopped \\
     throw new Error("Droplet created but public IP not available yet.");
   }
 
-  const readyUrl = `http://${publicIp}:${containerPort}`;
+  const readyUrl = withGatewayToken(`http://${publicIp}:${containerPort}`, gatewayToken);
   return {
     runtimeId: String(dropletId),
     deployProvider: "digitalocean",
@@ -365,6 +384,7 @@ async function launchViaSsh(input: LaunchInput) {
   const containerPort = getOpenClawPort();
   const startCommand = getOpenClawStartCommand();
   const allowInsecureControlUi = shouldAllowInsecureControlUi();
+  const gatewayToken = getGatewayToken();
   const hostPort = buildAssignedPort(input.deploymentId);
 
   const safeUser = sanitizeSegment(input.userId);
@@ -383,6 +403,7 @@ async function launchViaSsh(input: LaunchInput) {
     `docker pull "${image}"`,
     `docker rm -f "${containerName}" >/dev/null 2>&1 || true`,
     `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.bind lan`,
+    `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.auth.token ${shellQuote(gatewayToken)}`,
     ...(allowInsecureControlUi
       ? [
           `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.controlUi.allowInsecureAuth true`,
@@ -407,7 +428,10 @@ async function launchViaSsh(input: LaunchInput) {
     hostPort,
     startCommand,
     hostName: input.host.name,
-    readyUrl: runtimeDomain?.readyUrl ?? toReadyUrl(input.host, hostPort, input.deploymentId),
+    readyUrl: withGatewayToken(
+      runtimeDomain?.readyUrl ?? toReadyUrl(input.host, hostPort, input.deploymentId),
+      gatewayToken,
+    ),
   };
 }
 

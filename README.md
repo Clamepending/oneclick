@@ -48,6 +48,7 @@ Runtime deployment mode:
 - `DEPLOY_SSH_PRIVATE_KEY` can contain a PEM private key with `\\n` newlines.
 - `DEPLOY_SSH_KNOWN_HOSTS` is optional but recommended for strict host verification.
 - `OPENCLAW_ALLOW_INSECURE_CONTROL_UI=true` allows Control UI over plain HTTP for prototype environments (less secure; prefer HTTPS in production)
+- `OPENCLAW_GATEWAY_TOKEN` optionally pins a stable gateway token used in runtime URLs (`?token=...`) so browser access works reliably behind proxies
 - `NEXT_PUBLIC_DEPLOY_POLL_INTERVAL_MS` controls dashboard polling in browser (default `10000`)
 - `PG_POOL_MAX`/`PG_IDLE_TIMEOUT_MS`/`PG_CONNECTION_TIMEOUT_MS` tune DB pool usage for serverless (defaults are safe for small Supabase poolers)
 
