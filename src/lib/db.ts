@@ -45,6 +45,7 @@ export async function ensureSchema() {
       host_name TEXT,
       runtime_id TEXT,
       deploy_provider TEXT,
+      subsidy_proxy_token TEXT,
       ready_url TEXT,
       error TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -55,6 +56,7 @@ export async function ensureSchema() {
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS runtime_id TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS deploy_provider TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS bot_name TEXT;`);
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS subsidy_proxy_token TEXT;`);
   await pool.query(`ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS model_provider TEXT;`);
   await pool.query(`ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS model_api_key TEXT;`);
   await pool.query(`ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS telegram_bot_token TEXT;`);

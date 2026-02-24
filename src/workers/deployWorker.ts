@@ -151,9 +151,15 @@ export async function processDeploymentJob(job: DeploymentJob) {
   const selectedChannel = onboarding.rows[0]?.channel?.trim() || "none";
   const selectedModelProvider = onboarding.rows[0]?.model_provider?.trim() || null;
   const selectedModelApiKey = onboarding.rows[0]?.model_api_key?.trim() || null;
+  const useSubsidyProxy = !selectedModelApiKey;
+  const subsidyProxyToken = useSubsidyProxy ? randomUUID().replace(/-/g, "") : null;
   const onboardingTelegramBotToken = onboarding.rows[0]?.telegram_bot_token?.trim() || null;
   const telegramBotToken =
     onboardingTelegramBotToken || process.env.OPENCLAW_TELEGRAM_BOT_TOKEN?.trim() || null;
+  const appBaseUrl = process.env.APP_BASE_URL?.trim() || "http://localhost:3000";
+  const subsidyProxyBaseUrl = subsidyProxyToken
+    ? `${appBaseUrl}/api/subsidy/openai/${job.deploymentId}/v1`
+    : null;
   if (runtimeSlugSource) {
     await appendEvent(job.deploymentId, "starting", `Using runtime subdomain slug "${runtimeSlugSource}"`);
   }
@@ -170,6 +176,17 @@ export async function processDeploymentJob(job: DeploymentJob) {
     }
   }
 
+  if (useSubsidyProxy && subsidyProxyToken) {
+    await appendEvent(job.deploymentId, "starting", "Using server-side subsidy proxy (50 requests/minute cap)");
+  }
+  await pool.query(
+    `UPDATE deployments
+     SET subsidy_proxy_token = $1,
+         updated_at = NOW()
+     WHERE id = $2`,
+    [subsidyProxyToken, job.deploymentId],
+  );
+
   const runtime = await launchUserContainer({
     deploymentId: job.deploymentId,
     userId: job.userId,
@@ -178,6 +195,8 @@ export async function processDeploymentJob(job: DeploymentJob) {
     telegramBotToken: selectedChannel === "telegram" ? telegramBotToken : null,
     modelProvider: selectedModelProvider,
     modelApiKey: selectedModelApiKey,
+    subsidyProxyToken,
+    subsidyProxyBaseUrl,
   });
   await appendEvent(job.deploymentId, "starting", "Waiting for runtime health check");
   await waitForRuntimeReady(runtime.readyUrl);

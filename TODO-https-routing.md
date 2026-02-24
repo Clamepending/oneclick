@@ -1,5 +1,11 @@
 # TODO: Production HTTPS Routing for User Containers
 
+## Subsidy MVP Note
+
+- [ ] Current subsidy proxy rate limit is in-memory (`applyMemoryRateLimit`) at 50 req/min per deployment.
+- [ ] This limiter is single-instance only and resets on restart/redeploy.
+- [ ] Follow-up: migrate subsidy limiter to Redis for shared, durable multi-instance enforcement.
+
 ## Goal
 
 Serve each user runtime at a stable HTTPS URL:
