@@ -1,6 +1,11 @@
 import { randomUUID } from "crypto";
 import { Client } from "ssh2";
-import { getOpenClawImage, getOpenClawPort, getOpenClawStartCommand } from "@/lib/provisioner/openclawBundle";
+import {
+  getOpenClawImage,
+  getOpenClawPort,
+  getOpenClawStartCommand,
+  shouldAllowInsecureControlUi,
+} from "@/lib/provisioner/openclawBundle";
 import type { Host } from "@/lib/provisioner/hostScheduler";
 
 type LaunchInput = {
@@ -16,6 +21,37 @@ type DestroyInput = {
 
 function sanitizeSegment(value: string) {
   return value.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 48) || "default";
+}
+
+function sanitizeDnsLabel(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 50);
+}
+
+function getRuntimeBaseDomain() {
+  return process.env.RUNTIME_BASE_DOMAIN?.trim().toLowerCase() ?? "";
+}
+
+function buildUserSubdomain(userId: string) {
+  const localPart = userId.split("@")[0] ?? userId;
+  const label = sanitizeDnsLabel(localPart);
+  if (label) return label;
+  const fallback = sanitizeDnsLabel(userId).slice(0, 12);
+  return fallback || "runtime-user";
+}
+
+function buildRuntimeUrlFromDomain(userId: string) {
+  const baseDomain = getRuntimeBaseDomain();
+  if (!baseDomain) return null;
+  const subdomain = buildUserSubdomain(userId);
+  return {
+    fqdn: `${subdomain}.${baseDomain}`,
+    readyUrl: `https://${subdomain}.${baseDomain}`,
+  };
 }
 
 function buildAssignedPort(deploymentId: string) {
@@ -123,6 +159,27 @@ async function runSshCommand(sshTarget: string, command: string) {
   });
 }
 
+async function ensureCaddyRoute(sshTarget: string, fqdn: string, hostPort: number) {
+  const caddyEmail = process.env.CADDY_EMAIL?.trim() ?? "";
+  const caddyRoot = "/var/lib/oneclick/caddy";
+  const globalHeader = caddyEmail ? `{\n  email ${caddyEmail}\n}\n\n` : "";
+  const caddyfileContent = `${globalHeader}import /etc/caddy/sites/*.caddy\n`;
+  const siteBlock = `${fqdn} {\n  reverse_proxy 127.0.0.1:${hostPort}\n}\n`;
+  const caddyfileEscaped = caddyfileContent.replace(/'/g, `'\"'\"'`);
+  const siteBlockEscaped = siteBlock.replace(/'/g, `'\"'\"'`);
+
+  const remoteScript = [
+    "set -e",
+    `mkdir -p "${caddyRoot}/sites" "${caddyRoot}/data" "${caddyRoot}/config"`,
+    `printf '%s' '${caddyfileEscaped}' > "${caddyRoot}/Caddyfile"`,
+    `printf '%s' '${siteBlockEscaped}' > "${caddyRoot}/sites/${fqdn}.caddy"`,
+    `if ! docker ps --format '{{.Names}}' | grep -qx 'oneclick-caddy'; then docker rm -f oneclick-caddy >/dev/null 2>&1 || true && docker run -d --name oneclick-caddy --restart unless-stopped -p 80:80 -p 443:443 -v "${caddyRoot}/Caddyfile:/etc/caddy/Caddyfile" -v "${caddyRoot}/sites:/etc/caddy/sites" -v "${caddyRoot}/data:/data" -v "${caddyRoot}/config:/config" caddy:2 >/dev/null; fi`,
+    `docker exec oneclick-caddy caddy reload --config /etc/caddy/Caddyfile`,
+  ].join(" && ");
+
+  await runSshCommand(sshTarget, remoteScript);
+}
+
 function toReadyUrl(host: Host, hostPort: number, deploymentId: string) {
   if (host.publicBaseUrl) {
     if (host.publicBaseUrl.includes("{port}")) {
@@ -156,6 +213,7 @@ async function launchViaDigitalOcean(input: LaunchInput) {
   const image = getOpenClawImage();
   const containerPort = getOpenClawPort();
   const startCommand = getOpenClawStartCommand();
+  const allowInsecureControlUi = shouldAllowInsecureControlUi();
   const region = process.env.DO_REGION ?? "nyc1";
   const size = process.env.DO_SIZE ?? "s-1vcpu-2gb";
   const osImage = process.env.DO_IMAGE ?? "ubuntu-24-04-x64";
@@ -186,6 +244,14 @@ docker run --rm \\
   -v "${userDir}:/home/node/.openclaw" \\
   -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
   "${image}" config set gateway.bind lan
+${allowInsecureControlUi ? `docker run --rm \\
+  -v "${userDir}:/home/node/.openclaw" \\
+  -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
+  "${image}" config set gateway.controlUi.allowInsecureAuth true
+docker run --rm \\
+  -v "${userDir}:/home/node/.openclaw" \\
+  -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
+  "${image}" config set gateway.controlUi.dangerouslyDisableDeviceAuth true` : ""}
 docker run -d --name "${containerName}" --restart unless-stopped \\
   -v "${userDir}:/home/node/.openclaw" \\
   -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
@@ -272,6 +338,7 @@ async function launchViaSsh(input: LaunchInput) {
   const image = getOpenClawImage();
   const containerPort = getOpenClawPort();
   const startCommand = getOpenClawStartCommand();
+  const allowInsecureControlUi = shouldAllowInsecureControlUi();
   const hostPort = buildAssignedPort(input.deploymentId);
 
   const safeUser = sanitizeSegment(input.userId);
@@ -290,10 +357,20 @@ async function launchViaSsh(input: LaunchInput) {
     `docker pull "${image}"`,
     `docker rm -f "${containerName}" >/dev/null 2>&1 || true`,
     `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.bind lan`,
+    ...(allowInsecureControlUi
+      ? [
+          `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.controlUi.allowInsecureAuth true`,
+          `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.controlUi.dangerouslyDisableDeviceAuth true`,
+        ]
+      : []),
     `docker run -d --name "${containerName}" --restart unless-stopped -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" -p "${hostPort}:${containerPort}" "${image}" ${startCommand}`,
   ].join(" && ");
 
   await runSshCommand(sshTarget, remoteScript);
+  const runtimeDomain = buildRuntimeUrlFromDomain(input.userId);
+  if (runtimeDomain) {
+    await ensureCaddyRoute(sshTarget, runtimeDomain.fqdn, hostPort);
+  }
 
   return {
     runtimeId: runtimeIdFromSsh(sshTarget, containerName),
@@ -303,7 +380,7 @@ async function launchViaSsh(input: LaunchInput) {
     hostPort,
     startCommand,
     hostName: input.host.name,
-    readyUrl: toReadyUrl(input.host, hostPort, input.deploymentId),
+    readyUrl: runtimeDomain?.readyUrl ?? toReadyUrl(input.host, hostPort, input.deploymentId),
   };
 }
 

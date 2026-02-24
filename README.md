@@ -47,6 +47,7 @@ Runtime deployment mode:
 - `DEPLOY_PROVIDER=digitalocean` (create Droplet via API from Vercel)
 - `DEPLOY_SSH_PRIVATE_KEY` can contain a PEM private key with `\\n` newlines.
 - `DEPLOY_SSH_KNOWN_HOSTS` is optional but recommended for strict host verification.
+- `OPENCLAW_ALLOW_INSECURE_CONTROL_UI=true` allows Control UI over plain HTTP for prototype environments (less secure; prefer HTTPS in production)
 - `NEXT_PUBLIC_DEPLOY_POLL_INTERVAL_MS` controls dashboard polling in browser (default `10000`)
 - `PG_POOL_MAX`/`PG_IDLE_TIMEOUT_MS`/`PG_CONNECTION_TIMEOUT_MS` tune DB pool usage for serverless (defaults are safe for small Supabase poolers)
 
@@ -119,8 +120,11 @@ For Vercel + SSH deployment (one shared VM, one container per user):
 - set `DEPLOY_PROVIDER=ssh`
 - set `DEPLOY_SSH_PRIVATE_KEY` (escaped newlines)
 - set `HOST_POOL_JSON` to your droplet (for example `ssh://root@64.225.46.105`)
+- set `RUNTIME_BASE_DOMAIN` (for example `oneclickagent.net`) to enable `https://<user>.yourdomain` URLs
+- optional: set `CADDY_EMAIL` for certificate issuer contact
 - do not set `REDIS_URL` to localhost; either provide a real remote Redis or leave `REDIS_URL` unset
 - each new deploy for a user destroys that user’s previous container
+- if using `RUNTIME_BASE_DOMAIN`, open droplet ports `80/443` and point wildcard DNS (`*.yourdomain`) to droplet IP
 
 ## Real container deployment via DigitalOcean API (Vercel-friendly)
 
