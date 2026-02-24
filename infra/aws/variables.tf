@@ -51,3 +51,39 @@ variable "ecs_service_prefix" {
   type        = string
   default     = "oneclick-agent"
 }
+
+variable "enable_monthly_budget_alerts" {
+  description = "Enable AWS Budget monthly cost alerts"
+  type        = bool
+  default     = false
+}
+
+variable "monthly_budget_limit_usd" {
+  description = "Monthly AWS cost budget limit in USD"
+  type        = number
+  default     = 25
+}
+
+variable "budget_alert_email_addresses" {
+  description = "Email addresses to receive AWS budget alerts"
+  type        = list(string)
+  default     = []
+}
+
+variable "budget_alert_threshold_percent_1" {
+  description = "First budget alert threshold percentage"
+  type        = number
+  default     = 50
+}
+
+variable "budget_alert_threshold_percent_2" {
+  description = "Second budget alert threshold percentage"
+  type        = number
+  default     = 80
+}
+
+variable "budget_alert_threshold_percent_3" {
+  description = "Third budget alert threshold percentage"
+  type        = number
+  default     = 100
+}

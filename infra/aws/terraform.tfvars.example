@@ -3,3 +3,8 @@ project_name = "oneclick"
 
 # Optional: tighten this later to your office/VPN CIDRs instead of world-open.
 runtime_ingress_cidrs = ["0.0.0.0/0"]
+
+# Optional cost alerts (disabled by default)
+# enable_monthly_budget_alerts = true
+# monthly_budget_limit_usd = 25
+# budget_alert_email_addresses = ["you@example.com"]

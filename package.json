@@ -13,6 +13,8 @@
     "aws:env": "bash scripts/aws-ecs-print-env.sh",
     "aws:bootstrap:from-env": "bash scripts/aws-ecs-bootstrap-from-env.sh",
     "aws:smoke": "tsx scripts/ecs-smoke-test.ts",
+    "cost:guard:sweep": "tsx scripts/cost-guard-sweep.ts",
+    "ecs:audit:cleanup": "tsx scripts/ecs-audit-cleanup.ts",
     "env:upsert": "node scripts/upsert-env-file.mjs"
   },
   "dependencies": {
