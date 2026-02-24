@@ -1,6 +1,9 @@
 import { randomUUID } from "crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { getOpenClawImage, getOpenClawPort, getOpenClawStartCommand } from "@/lib/provisioner/openclawBundle";
 import type { Host } from "@/lib/provisioner/hostScheduler";
 
@@ -28,6 +31,32 @@ function parseSshTarget(dockerHost: string) {
   // Expected format: ssh://user@hostname
   if (!dockerHost.startsWith("ssh://")) return null;
   return dockerHost.replace("ssh://", "");
+}
+
+function buildSshArgs(sshTarget: string) {
+  const args = ["-o", "BatchMode=yes"];
+  const knownHosts = process.env.DEPLOY_SSH_KNOWN_HOSTS?.trim();
+  const privateKeyRaw = process.env.DEPLOY_SSH_PRIVATE_KEY?.trim();
+  let keyPath: string | null = null;
+
+  if (knownHosts) {
+    const knownHostsPath = join(tmpdir(), "oneclick-known-hosts");
+    writeFileSync(knownHostsPath, `${knownHosts}\n`, { mode: 0o600 });
+    args.push("-o", `UserKnownHostsFile=${knownHostsPath}`);
+    args.push("-o", "StrictHostKeyChecking=yes");
+  } else {
+    args.push("-o", "StrictHostKeyChecking=no");
+  }
+
+  if (privateKeyRaw) {
+    keyPath = join(tmpdir(), `oneclick-key-${Date.now()}`);
+    const keyMaterial = privateKeyRaw.replace(/\\n/g, "\n");
+    writeFileSync(keyPath, `${keyMaterial}\n`, { mode: 0o600 });
+    args.push("-i", keyPath);
+  }
+
+  args.push(sshTarget);
+  return { args, keyPath };
 }
 
 function toReadyUrl(host: Host, hostPort: number, deploymentId: string) {
@@ -78,9 +107,16 @@ async function launchViaSsh(input: LaunchInput) {
     `  "${image}" sh -lc '${startCommand.replace(/'/g, `'\"'\"'`)}'`,
   ].join(" && ");
 
-  await execFileAsync("ssh", [sshTarget, remoteScript], {
-    timeout: Number(process.env.OPENCLAW_SSH_TIMEOUT_MS ?? "120000"),
-  });
+  const { args, keyPath } = buildSshArgs(sshTarget);
+  try {
+    await execFileAsync("ssh", [...args, remoteScript], {
+      timeout: Number(process.env.OPENCLAW_SSH_TIMEOUT_MS ?? "120000"),
+    });
+  } finally {
+    if (keyPath) {
+      rmSync(keyPath, { force: true });
+    }
+  }
 
   return {
     runtimeId: randomUUID(),

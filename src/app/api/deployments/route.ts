@@ -15,6 +15,21 @@ function getClientIp(request: Request) {
   return "unknown";
 }
 
+function canUseQueueMode() {
+  const redisUrl = process.env.REDIS_URL?.trim();
+  if (!redisUrl) return false;
+
+  // On Vercel/local serverless, localhost Redis usually means "not configured".
+  if (
+    redisUrl.includes("127.0.0.1") ||
+    redisUrl.includes("localhost")
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 export async function POST(request: Request) {
   const session = await auth();
   if (!session?.user?.email) {
@@ -61,14 +76,23 @@ export async function POST(request: Request) {
   );
 
   try {
-    // Vercel-safe default: if REDIS_URL is absent, process in-process.
-    // This keeps one-click flow functional without a separate always-on worker.
-    if (!process.env.REDIS_URL) {
+    // Vercel-safe default: if queue mode is not usable, process in-process.
+    if (!canUseQueueMode()) {
       await processDeploymentJob({ deploymentId, userId: session.user.email });
       return NextResponse.json({ id: deploymentId, status: "ready" }, { status: 200 });
     }
 
-    await enqueueDeploymentJob({ deploymentId, userId: session.user.email });
+    try {
+      await enqueueDeploymentJob({ deploymentId, userId: session.user.email });
+    } catch (queueError) {
+      const queueMessage =
+        queueError instanceof Error ? queueError.message : String(queueError);
+      if (queueMessage.includes("ECONNREFUSED") || queueMessage.includes("ENOTFOUND")) {
+        await processDeploymentJob({ deploymentId, userId: session.user.email });
+        return NextResponse.json({ id: deploymentId, status: "ready" }, { status: 200 });
+      }
+      throw queueError;
+    }
   } catch (error) {
     const message = await markDeploymentFailed(deploymentId, error);
     return NextResponse.json({ ok: false, error: message }, { status: 500 });

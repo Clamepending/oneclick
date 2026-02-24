@@ -43,6 +43,8 @@ Runtime deployment mode:
 
 - `DEPLOY_PROVIDER=mock` (default placeholder runtime URL)
 - `DEPLOY_PROVIDER=ssh` (real SSH host deployment using Docker)
+- `DEPLOY_SSH_PRIVATE_KEY` can contain a PEM private key with `\\n` newlines.
+- `DEPLOY_SSH_KNOWN_HOSTS` is optional but recommended for strict host verification.
 
 ## Run
 
@@ -107,6 +109,13 @@ Requirements on each host:
 - Docker installed and user has permission to run Docker.
 - SSH access from deploy worker runtime.
 - Port range `OPENCLAW_HOST_PORT_BASE` to `OPENCLAW_HOST_PORT_BASE + OPENCLAW_HOST_PORT_SPAN` open.
+
+For Vercel + SSH deployment:
+
+- set `DEPLOY_PROVIDER=ssh`
+- set `DEPLOY_SSH_PRIVATE_KEY` (escaped newlines)
+- if using strict host checks, set `DEPLOY_SSH_KNOWN_HOSTS`
+- do not set `REDIS_URL` to localhost; either provide a real remote Redis or leave `REDIS_URL` unset
 
 ## API
 
