@@ -3,7 +3,7 @@ import { Queue, Worker } from "bullmq";
 import { randomUUID } from "crypto";
 import net from "node:net";
 import { Client } from "ssh2";
-import { DescribeServicesCommand, ECSClient } from "@aws-sdk/client-ecs";
+import { DescribeServicesCommand, ECSClient, type ECSClientConfig } from "@aws-sdk/client-ecs";
 import { ensureSchema, pool } from "@/lib/db";
 import { selectHost } from "@/lib/provisioner/hostScheduler";
 import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runtimeProvider";
@@ -59,6 +59,23 @@ function readTrimmedEnv(name: string) {
   const raw = process.env[name];
   if (!raw) return "";
   return raw.trim().replace(/^"(.*)"$/, "$1").replace(/\\n/g, "").trim();
+}
+
+function buildAwsConfigWithTrimmedCreds(region: string): ECSClientConfig {
+  const accessKeyId = readTrimmedEnv("AWS_ACCESS_KEY_ID");
+  const secretAccessKey = readTrimmedEnv("AWS_SECRET_ACCESS_KEY");
+  const sessionToken = readTrimmedEnv("AWS_SESSION_TOKEN");
+  if (!accessKeyId || !secretAccessKey) {
+    return { region };
+  }
+  return {
+    region,
+    credentials: {
+      accessKeyId,
+      secretAccessKey,
+      sessionToken: sessionToken || undefined,
+    },
+  };
 }
 
 function parseUserAndHost(sshTarget: string) {
@@ -149,7 +166,7 @@ async function waitForRuntimeReady(input: {
     if (!region) {
       throw new Error("AWS_REGION is required for ECS runtime health checks.");
     }
-    const ecsClient = new ECSClient({ region });
+    const ecsClient = new ECSClient(buildAwsConfigWithTrimmedCreds(region));
     const deadline = Date.now() + startupTimeoutMs;
     while (Date.now() < deadline) {
       const result = await ecsClient.send(

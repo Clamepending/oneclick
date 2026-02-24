@@ -4,6 +4,7 @@ import {
   CreateServiceCommand,
   DeleteServiceCommand,
   ECSClient,
+  type ECSClientConfig,
   RegisterTaskDefinitionCommand,
   UpdateServiceCommand,
 } from "@aws-sdk/client-ecs";
@@ -68,6 +69,23 @@ function parseCsvEnv(name: string, required = true) {
     throw new Error(`${name} must contain at least one value for DEPLOY_PROVIDER=ecs.`);
   }
   return parsed;
+}
+
+function buildAwsConfigWithTrimmedCreds(region: string): ECSClientConfig {
+  const accessKeyId = readTrimmedEnv("AWS_ACCESS_KEY_ID");
+  const secretAccessKey = readTrimmedEnv("AWS_SECRET_ACCESS_KEY");
+  const sessionToken = readTrimmedEnv("AWS_SESSION_TOKEN");
+  if (!accessKeyId || !secretAccessKey) {
+    return { region };
+  }
+  return {
+    region,
+    credentials: {
+      accessKeyId,
+      secretAccessKey,
+      sessionToken: sessionToken || undefined,
+    },
+  };
 }
 
 function shellQuote(value: string) {
@@ -573,7 +591,7 @@ async function launchViaEcs(input: LaunchInput) {
   const awslogsGroup = readTrimmedEnv("ECS_LOG_GROUP");
   const awslogsPrefix = readTrimmedEnv("ECS_LOG_STREAM_PREFIX") || "oneclick";
   const telemetryEnv = readTrimmedEnv("OPENCLAW_TELEMETRY");
-  const ecsClient = new ECSClient({ region });
+  const ecsClient = new ECSClient(buildAwsConfigWithTrimmedCreds(region));
 
   const environment = [
     { name: "OPENCLAW_ALLOW_INSECURE_CONTROL_UI", value: shouldAllowInsecureControlUi() ? "true" : "false" },
@@ -761,7 +779,7 @@ export async function destroyUserRuntime(input: DestroyInput) {
       throw new Error("Invalid ecs runtime id format.");
     }
     const region = requireEnv("AWS_REGION");
-    const ecsClient = new ECSClient({ region });
+    const ecsClient = new ECSClient(buildAwsConfigWithTrimmedCreds(region));
     await ecsClient.send(
       new DeleteServiceCommand({
         cluster: parsed.cluster,
