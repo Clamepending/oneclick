@@ -40,7 +40,7 @@ type OverviewResponse = {
     requests1h: number;
     rateLimited1h: number;
     uniqueDeployments24h: number;
-    topDeployments24h: Array<{ deploymentId: string; requestCount: number }>;
+    topDeployments24h: Array<{ deploymentId: string; botName: string | null; requestCount: number }>;
     topUsers24h: Array<{
       userId: string;
       requestCount: number;
@@ -205,7 +205,8 @@ export default function AdminPage() {
           <div style={{ display: "grid", gap: 6 }}>
             {data.subsidyUsage.topDeployments24h.map((item) => (
               <p className="muted" style={{ marginBottom: 0 }} key={item.deploymentId}>
-                <code>{item.deploymentId}</code>: <code>{item.requestCount}</code> requests
+                <code>{item.botName?.trim() || "Unnamed bot"}</code> (<code>{item.deploymentId}</code>):{" "}
+                <code>{item.requestCount}</code> requests
               </p>
             ))}
           </div>

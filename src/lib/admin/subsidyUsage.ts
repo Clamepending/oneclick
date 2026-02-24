@@ -10,6 +10,7 @@ type TotalsRow = {
 
 type TopDeploymentRow = {
   deployment_id: string;
+  bot_name: string | null;
   request_count: string;
 };
 
@@ -26,7 +27,7 @@ export type SubsidyUsageOverview = {
   requests1h: number;
   rateLimited1h: number;
   uniqueDeployments24h: number;
-  topDeployments24h: Array<{ deploymentId: string; requestCount: number }>;
+  topDeployments24h: Array<{ deploymentId: string; botName: string | null; requestCount: number }>;
   topUsers24h: Array<{
     userId: string;
     requestCount: number;
@@ -52,10 +53,14 @@ export async function fetchSubsidyUsageOverview(): Promise<SubsidyUsageOverview>
   );
 
   const topDeployments = await pool.query<TopDeploymentRow>(
-    `SELECT deployment_id, COUNT(*)::text AS request_count
-     FROM subsidy_usage_events
-     WHERE created_at >= NOW() - INTERVAL '24 hours'
-     GROUP BY deployment_id
+    `SELECT
+       sue.deployment_id,
+       MAX(d.bot_name) AS bot_name,
+       COUNT(*)::text AS request_count
+     FROM subsidy_usage_events sue
+     LEFT JOIN deployments d ON d.id = sue.deployment_id
+     WHERE sue.created_at >= NOW() - INTERVAL '24 hours'
+     GROUP BY sue.deployment_id
      ORDER BY COUNT(*) DESC
      LIMIT 5`,
   );
@@ -87,6 +92,7 @@ export async function fetchSubsidyUsageOverview(): Promise<SubsidyUsageOverview>
     uniqueDeployments24h: Number(row?.unique_deployments_24h ?? "0"),
     topDeployments24h: topDeployments.rows.map((item) => ({
       deploymentId: item.deployment_id,
+      botName: item.bot_name,
       requestCount: Number(item.request_count),
     })),
     topUsers24h: topUsers.rows.map((item) => ({
