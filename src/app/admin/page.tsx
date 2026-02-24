@@ -65,6 +65,34 @@ function asGbFromKb(kb: number) {
   return (kb / 1024 / 1024).toFixed(2);
 }
 
+function clampPercent(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, value));
+}
+
+function usageColor(percent: number) {
+  if (percent >= 90) return "#ff8e8e";
+  if (percent >= 75) return "#ffd166";
+  return "#7bd88f";
+}
+
+function barStyle(percent: number): React.CSSProperties {
+  const safePercent = clampPercent(percent);
+  return {
+    width: `${safePercent.toFixed(0)}%`,
+    height: 8,
+    borderRadius: 999,
+    background: usageColor(safePercent),
+    transition: "width 200ms ease",
+  };
+}
+
+function parseLoad1(loadAvg: string) {
+  const raw = loadAvg.split(" ")[0] ?? "0";
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : 0;
+}
+
 function formatUptime(seconds: number) {
   const days = Math.floor(seconds / 86400);
   const hours = Math.floor((seconds % 86400) / 3600);
@@ -241,7 +269,45 @@ export default function AdminPage() {
           {item.error ? (
             <p style={{ color: "#ff8e8e" }}>{item.error}</p>
           ) : item.stats ? (
-            <div style={{ display: "grid", gap: 6, marginBottom: 12 }}>
+            <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+              {(() => {
+                const load1 = parseLoad1(item.stats.loadAvg);
+                const cpuPercent = clampPercent((load1 / Math.max(item.stats.cpuCores, 1)) * 100);
+                const memUsedKb = Math.max(item.stats.memTotalKb - item.stats.memAvailableKb, 0);
+                const memPercent = clampPercent((memUsedKb / Math.max(item.stats.memTotalKb, 1)) * 100);
+                const diskPercent = clampPercent(Number(item.stats.diskUsePercent.replace("%", "")));
+                return (
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <div>
+                      <p className="muted" style={{ marginBottom: 4 }}>
+                        CPU load (1m): <code>{cpuPercent.toFixed(0)}%</code> (<code>{load1.toFixed(2)}</code> /{" "}
+                        <code>{item.stats.cpuCores}</code> cores)
+                      </p>
+                      <div style={{ width: "100%", background: "#1f1f1f", borderRadius: 999, overflow: "hidden" }}>
+                        <div style={barStyle(cpuPercent)} />
+                      </div>
+                    </div>
+                    <div>
+                      <p className="muted" style={{ marginBottom: 4 }}>
+                        Memory used: <code>{memPercent.toFixed(0)}%</code> (<code>{asGbFromKb(memUsedKb)} GB</code> /{" "}
+                        <code>{asGbFromKb(item.stats.memTotalKb)} GB</code>)
+                      </p>
+                      <div style={{ width: "100%", background: "#1f1f1f", borderRadius: 999, overflow: "hidden" }}>
+                        <div style={barStyle(memPercent)} />
+                      </div>
+                    </div>
+                    <div>
+                      <p className="muted" style={{ marginBottom: 4 }}>
+                        Disk used: <code>{diskPercent.toFixed(0)}%</code> (<code>{asGbFromKb(item.stats.diskUsedKb)} GB</code>{" "}
+                        / <code>{asGbFromKb(item.stats.diskTotalKb)} GB</code>)
+                      </p>
+                      <div style={{ width: "100%", background: "#1f1f1f", borderRadius: 999, overflow: "hidden" }}>
+                        <div style={barStyle(diskPercent)} />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
               <p className="muted" style={{ marginBottom: 0 }}>
                 Uptime: <code>{formatUptime(item.stats.uptimeSeconds)}</code>
               </p>
