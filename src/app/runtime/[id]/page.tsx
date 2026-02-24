@@ -122,6 +122,13 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
     return renderPlaceholder(id, "Deployment not found.");
   }
 
+  if (deployment.status === "failed") {
+    return renderPlaceholder(
+      id,
+      deployment.error || "This deployment is no longer active.",
+    );
+  }
+
   const provider = (deployment.deploy_provider ?? "").trim();
   if (provider === "ecs" && deployment.runtime_id) {
     let resolved: string | null = null;
