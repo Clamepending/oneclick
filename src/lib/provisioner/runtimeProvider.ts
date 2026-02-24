@@ -165,15 +165,15 @@ async function ensureCaddyRoute(sshTarget: string, fqdn: string, hostPort: numbe
   const globalHeader = caddyEmail ? `{\n  email ${caddyEmail}\n}\n\n` : "";
   const caddyfileContent = `${globalHeader}import /etc/caddy/sites/*.caddy\n`;
   const siteBlock = `${fqdn} {\n  reverse_proxy 127.0.0.1:${hostPort}\n}\n`;
-  const caddyfileEscaped = caddyfileContent.replace(/'/g, `'\"'\"'`);
-  const siteBlockEscaped = siteBlock.replace(/'/g, `'\"'\"'`);
+  const caddyfileBase64 = Buffer.from(caddyfileContent, "utf8").toString("base64");
+  const siteBlockBase64 = Buffer.from(siteBlock, "utf8").toString("base64");
 
   const remoteScript = [
     "set -e",
     `mkdir -p "${caddyRoot}/sites" "${caddyRoot}/data" "${caddyRoot}/config"`,
-    `printf '%s' '${caddyfileEscaped}' > "${caddyRoot}/Caddyfile"`,
-    `printf '%s' '${siteBlockEscaped}' > "${caddyRoot}/sites/${fqdn}.caddy"`,
-    `if ! docker ps --format '{{.Names}}' | grep -qx 'oneclick-caddy'; then docker rm -f oneclick-caddy >/dev/null 2>&1 || true && docker run -d --name oneclick-caddy --restart unless-stopped -p 80:80 -p 443:443 -v "${caddyRoot}/Caddyfile:/etc/caddy/Caddyfile" -v "${caddyRoot}/sites:/etc/caddy/sites" -v "${caddyRoot}/data:/data" -v "${caddyRoot}/config:/config" caddy:2 >/dev/null; fi`,
+    `printf '%s' '${caddyfileBase64}' | base64 -d > "${caddyRoot}/Caddyfile"`,
+    `printf '%s' '${siteBlockBase64}' | base64 -d > "${caddyRoot}/sites/${fqdn}.caddy"`,
+    `if ! docker ps --format '{{.Names}}' | grep -qx 'oneclick-caddy'; then docker rm -f oneclick-caddy >/dev/null 2>&1 || true && docker run -d --name oneclick-caddy --restart unless-stopped --network host -v "${caddyRoot}/Caddyfile:/etc/caddy/Caddyfile" -v "${caddyRoot}/sites:/etc/caddy/sites" -v "${caddyRoot}/data:/data" -v "${caddyRoot}/config:/config" caddy:2 >/dev/null; fi`,
     `docker exec oneclick-caddy caddy reload --config /etc/caddy/Caddyfile`,
   ].join(" && ");
 
