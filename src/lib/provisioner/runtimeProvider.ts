@@ -147,19 +147,14 @@ async function runSshCommand(sshTarget: string, command: string) {
   await new Promise<void>((resolve, reject) => {
     let settled = false;
     const conn = new Client();
-    let timer: NodeJS.Timeout | null = null;
-
-    const clearTimer = () => {
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
-    };
+    const timer = setTimeout(() => {
+      finish(new Error(`SSH command timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
 
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
-      clearTimer();
+      clearTimeout(timer);
       conn.end();
       if (error) {
         reject(error);
@@ -170,10 +165,6 @@ async function runSshCommand(sshTarget: string, command: string) {
 
     conn
       .on("ready", () => {
-        timer = setTimeout(() => {
-          finish(new Error(`SSH command timed out after ${timeoutMs}ms`));
-        }, timeoutMs);
-
         conn.exec(command, (execErr, stream) => {
           if (execErr) {
             finish(execErr);

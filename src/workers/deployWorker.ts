@@ -81,19 +81,14 @@ async function probeSshLocalPort(sshTarget: string, port: number) {
   await new Promise<void>((resolve, reject) => {
     let settled = false;
     const conn = new Client();
-    let timer: NodeJS.Timeout | null = null;
-
-    const clearTimer = () => {
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
-    };
+    const timer = setTimeout(() => {
+      finish(new Error(`SSH probe timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
 
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
-      clearTimer();
+      clearTimeout(timer);
       conn.end();
       if (error) reject(error);
       else resolve();
@@ -101,10 +96,6 @@ async function probeSshLocalPort(sshTarget: string, port: number) {
 
     conn
       .on("ready", () => {
-        timer = setTimeout(() => {
-          finish(new Error(`SSH probe timed out after ${timeoutMs}ms`));
-        }, timeoutMs);
-
         conn.exec(command, (execErr, stream) => {
           if (execErr) {
             finish(execErr);
