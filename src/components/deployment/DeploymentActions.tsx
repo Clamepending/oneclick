@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 type Props = {
@@ -15,6 +15,7 @@ export function DeploymentActions({ deploymentId, status, compact = false, botNa
   const [error, setError] = useState("");
   const [isRedeploying, setIsRedeploying] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isNavigating, startTransition] = useTransition();
 
   const canDelete = status !== "queued";
 
@@ -31,8 +32,10 @@ export function DeploymentActions({ deploymentId, status, compact = false, botNa
       if (!response.ok || !payload.id) {
         throw new Error(payload.error || "Failed to redeploy");
       }
-      router.push(`/deployments/${payload.id}`);
-      router.refresh();
+      startTransition(() => {
+        router.push(`/deployments/${payload.id}`);
+        router.refresh();
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to redeploy");
     } finally {
@@ -56,8 +59,10 @@ export function DeploymentActions({ deploymentId, status, compact = false, botNa
       if (!response.ok || !payload.ok) {
         throw new Error(payload.error || "Failed to delete deployment");
       }
-      router.push("/");
-      router.refresh();
+      startTransition(() => {
+        router.push("/");
+        router.refresh();
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete deployment");
     } finally {
@@ -72,18 +77,18 @@ export function DeploymentActions({ deploymentId, status, compact = false, botNa
           className="button secondary"
           type="button"
           onClick={() => void handleRedeploy()}
-          disabled={isRedeploying || isDeleting}
+          disabled={isRedeploying || isDeleting || isNavigating}
         >
-          {isRedeploying ? "Redeploying..." : "Redeploy bot"}
+          {isRedeploying || isNavigating ? "Working..." : "Redeploy bot"}
         </button>
         <button
           className="button secondary"
           type="button"
           onClick={() => void handleDelete()}
-          disabled={isRedeploying || isDeleting || !canDelete}
+          disabled={isRedeploying || isDeleting || isNavigating || !canDelete}
           title={!canDelete ? "Queued deployments cannot be deleted yet" : undefined}
         >
-          {isDeleting ? "Deleting..." : "Delete bot"}
+          {isDeleting || isNavigating ? "Working..." : "Delete bot"}
         </button>
       </div>
       {error ? (

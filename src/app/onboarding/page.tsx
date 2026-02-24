@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { NameStep } from "@/components/onboarding/NameStep";
 import { ChannelStep } from "@/components/onboarding/ChannelStep";
@@ -23,7 +23,9 @@ export default function OnboardingPage() {
   const [apiKey, setApiKey] = useState("");
   const [telegramBotToken, setTelegramBotToken] = useState("");
   const [loading, setLoading] = useState(false);
+  const [isAdvancing, setIsAdvancing] = useState(false);
   const [error, setError] = useState("");
+  const [isNavigating, startNavTransition] = useTransition();
 
   useEffect(() => {
     void fetch("/api/onboarding/start", { method: "POST" });
@@ -74,12 +76,15 @@ export default function OnboardingPage() {
 
   async function handleNext() {
     setError("");
+    setIsAdvancing(true);
     try {
       await saveStep(step);
       setStep((s) => Math.min(3, s + 1));
     } catch (e) {
       const message = e instanceof Error ? e.message : "Could not save this step. Please try again.";
       setError(message);
+    } finally {
+      setIsAdvancing(false);
     }
   }
 
@@ -93,7 +98,9 @@ export default function OnboardingPage() {
       if (!response.ok || !body.id) {
         throw new Error(body.error ?? body.message ?? "Deployment failed to start");
       }
-      router.push(`/deployments/${body.id}`);
+      startNavTransition(() => {
+        router.push(`/deployments/${body.id}`);
+      });
     } catch (e) {
       const message = e instanceof Error ? e.message : "Deployment failed to start";
       setError(message);
@@ -116,7 +123,13 @@ export default function OnboardingPage() {
           onTelegramBotTokenChange={setTelegramBotToken}
         />
       )}
-      {step === 3 && <PlanStep onDeploy={handleDeploy} loading={loading} hasApiKey={Boolean(apiKey.trim())} />}
+      {step === 3 && (
+        <PlanStep
+          onDeploy={handleDeploy}
+          loading={loading || isNavigating}
+          hasApiKey={Boolean(apiKey.trim())}
+        />
+      )}
 
       {error ? (
         <p style={{ color: "#ff8e8e" }}>{error}</p>
@@ -129,8 +142,8 @@ export default function OnboardingPage() {
           </button>
         ) : null}
         {step < 3 ? (
-          <button className="button" onClick={handleNext} type="button">
-            Next
+          <button className="button" onClick={handleNext} type="button" disabled={isAdvancing}>
+            {isAdvancing ? "Saving..." : "Next"}
           </button>
         ) : null}
       </div>
