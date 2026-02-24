@@ -37,6 +37,13 @@ type OverviewResponse = {
   error?: string;
 };
 
+type ContainerGroup = {
+  key: string;
+  title: string;
+  containers: ContainerItem[];
+  sortOrder: number;
+};
+
 function asGbFromKb(kb: number) {
   return (kb / 1024 / 1024).toFixed(2);
 }
@@ -46,6 +53,64 @@ function formatUptime(seconds: number) {
   const hours = Math.floor((seconds % 86400) / 3600);
   const mins = Math.floor((seconds % 3600) / 60);
   return `${days}d ${hours}h ${mins}m`;
+}
+
+function imageRepository(image: string) {
+  const withoutDigest = image.split("@")[0] ?? image;
+  const [repo] = withoutDigest.split(":");
+  return repo ?? "";
+}
+
+function titleFromRepo(repo: string) {
+  if (!repo) return "Unknown";
+  const normalized = repo.trim().toLowerCase();
+  if (normalized.includes("openclaw")) return "Vanilla OpenClaw";
+  if (normalized.includes("oneclick")) return "Vanilla OpenClaw";
+  return repo;
+}
+
+function groupContainers(containers: ContainerItem[]): ContainerGroup[] {
+  const grouped = new Map<string, ContainerGroup>();
+
+  for (const container of containers) {
+    const lowerName = container.name.toLowerCase();
+    const repo = imageRepository(container.image);
+    const lowerRepo = repo.toLowerCase();
+
+    let key = "";
+    let title = "";
+    let sortOrder = 0;
+
+    if (lowerName.includes("caddy") || lowerRepo === "caddy") {
+      key = "caddy";
+      title = "Caddy";
+      sortOrder = 0;
+    } else if (
+      lowerRepo.includes("openclaw") ||
+      lowerRepo.includes("oneclick") ||
+      lowerName.startsWith("oneclick-")
+    ) {
+      key = "agent:vanilla-openclaw";
+      title = "Agent: Vanilla OpenClaw";
+      sortOrder = 1;
+    } else {
+      const inferredType = titleFromRepo(repo);
+      key = `agent:${inferredType.toLowerCase()}`;
+      title = `Agent: ${inferredType}`;
+      sortOrder = 2;
+    }
+
+    if (!grouped.has(key)) {
+      grouped.set(key, { key, title, containers: [], sortOrder });
+    }
+
+    grouped.get(key)?.containers.push(container);
+  }
+
+  return Array.from(grouped.values()).sort((a, b) => {
+    if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+    return a.title.localeCompare(b.title);
+  });
 }
 
 export default function AdminPage() {
@@ -137,22 +202,31 @@ export default function AdminPage() {
           {item.containers.length === 0 ? (
             <p className="muted">No running containers.</p>
           ) : (
-            <div style={{ display: "grid", gap: 8 }}>
-              {item.containers.map((container) => (
-                <div className="card" key={`${item.host.name}-${container.name}`}>
-                  <p className="muted" style={{ marginBottom: 0 }}>
-                    Name: <code>{container.name}</code>
-                  </p>
-                  <p className="muted" style={{ marginBottom: 0 }}>
-                    Image: <code>{container.image}</code>
-                  </p>
-                  <p className="muted" style={{ marginBottom: 0 }}>
-                    Status: <code>{container.status}</code>
-                  </p>
-                  <p className="muted" style={{ marginBottom: 0 }}>
-                    Ports: <code>{container.ports || "none"}</code>
-                  </p>
-                </div>
+            <div style={{ display: "grid", gap: 12 }}>
+              {groupContainers(item.containers).map((group) => (
+                <section key={`${item.host.name}-${group.key}`}>
+                  <h4 style={{ marginBottom: 8 }}>
+                    {group.title} ({group.containers.length})
+                  </h4>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {group.containers.map((container) => (
+                      <div className="card" key={`${item.host.name}-${group.key}-${container.name}`}>
+                        <p className="muted" style={{ marginBottom: 0 }}>
+                          Name: <code>{container.name}</code>
+                        </p>
+                        <p className="muted" style={{ marginBottom: 0 }}>
+                          Image: <code>{container.image}</code>
+                        </p>
+                        <p className="muted" style={{ marginBottom: 0 }}>
+                          Status: <code>{container.status}</code>
+                        </p>
+                        <p className="muted" style={{ marginBottom: 0 }}>
+                          Ports: <code>{container.ports || "none"}</code>
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </section>
               ))}
             </div>
           )}
