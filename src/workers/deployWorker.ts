@@ -199,7 +199,7 @@ async function waitForRuntimeReady(input: {
 export async function processDeploymentJob(job: DeploymentJob) {
   await ensureSchema();
   await appendEvent(job.deploymentId, "starting", "Scheduling runtime host");
-  const provider = process.env.DEPLOY_PROVIDER ?? "mock";
+  const provider = readTrimmedEnv("DEPLOY_PROVIDER") || "mock";
   const providerRequiresHost = provider === "ssh" || provider === "mock";
 
   // Enforce one runtime per user by destroying previous ready runtimes.

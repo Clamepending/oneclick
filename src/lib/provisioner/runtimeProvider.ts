@@ -688,7 +688,7 @@ async function launchViaEcs(input: LaunchInput) {
 }
 
 export async function launchUserContainer(input: LaunchInput) {
-  const provider = process.env.DEPLOY_PROVIDER ?? "mock";
+  const provider = readTrimmedEnv("DEPLOY_PROVIDER") || "mock";
 
   if (provider === "ssh") {
     return launchViaSsh(input);
@@ -739,7 +739,7 @@ async function destroyDigitalOceanRuntime(runtimeId: string) {
 }
 
 export async function destroyUserRuntime(input: DestroyInput) {
-  const provider = input.deployProvider ?? "";
+  const provider = (input.deployProvider ?? "").trim();
   if (provider === "digitalocean") {
     await destroyDigitalOceanRuntime(input.runtimeId);
     return;
