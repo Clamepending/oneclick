@@ -223,7 +223,7 @@ export async function POST(request: Request) {
      LIMIT 1`,
     [session.user.email],
   );
-  const fallbackBotName = onboarding.rows[0]?.bot_name?.trim() || "My Assistant";
+  const fallbackBotName = onboarding.rows[0]?.bot_name?.trim() || "MyAssistant";
   const botName = parsedPayload.botName ?? fallbackBotName;
   const reservation = await reserveBotIdentity(session.user.email, botName);
   if (!reservation.ok) {

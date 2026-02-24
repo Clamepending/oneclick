@@ -14,7 +14,7 @@ export function NameStep({ value, onChange }: Props) {
         className="input"
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        placeholder="My Assistant"
+        placeholder="MyAssistant"
       />
     </div>
   );

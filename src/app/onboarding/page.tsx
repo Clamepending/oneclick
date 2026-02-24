@@ -9,7 +9,7 @@ import { PlanStep } from "@/components/onboarding/PlanStep";
 export default function OnboardingPage() {
   const router = useRouter();
   const [step, setStep] = useState(1);
-  const [botName, setBotName] = useState("My Assistant");
+  const [botName, setBotName] = useState("MyAssistant");
   const [channel, setChannel] = useState<"none" | "telegram">("none");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
