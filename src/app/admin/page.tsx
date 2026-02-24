@@ -41,6 +41,12 @@ type OverviewResponse = {
     rateLimited1h: number;
     uniqueDeployments24h: number;
     topDeployments24h: Array<{ deploymentId: string; requestCount: number }>;
+    topUsers24h: Array<{
+      userId: string;
+      requestCount: number;
+      requests1h: number;
+      rateLimited1h: number;
+    }>;
   };
   error?: string;
 };
@@ -205,6 +211,19 @@ export default function AdminPage() {
           </div>
         ) : (
           <p className="muted">No subsidy usage recorded yet.</p>
+        )}
+        <h3 style={{ marginBottom: 8, marginTop: 14 }}>Users (24h)</h3>
+        {data?.subsidyUsage?.topUsers24h?.length ? (
+          <div style={{ display: "grid", gap: 6 }}>
+            {data.subsidyUsage.topUsers24h.map((item) => (
+              <p className="muted" style={{ marginBottom: 0 }} key={item.userId}>
+                <code>{item.userId}</code>: <code>{item.requestCount}</code> requests (1h:{" "}
+                <code>{item.requests1h}</code>, 429 1h: <code>{item.rateLimited1h}</code>)
+              </p>
+            ))}
+          </div>
+        ) : (
+          <p className="muted">No user-level subsidy usage yet.</p>
         )}
       </section>
 

@@ -13,6 +13,13 @@ type TopDeploymentRow = {
   request_count: string;
 };
 
+type TopUserRow = {
+  user_id: string | null;
+  request_count: string;
+  requests_1h: string;
+  rate_limited_1h: string;
+};
+
 export type SubsidyUsageOverview = {
   totalRequests: number;
   requests24h: number;
@@ -20,6 +27,12 @@ export type SubsidyUsageOverview = {
   rateLimited1h: number;
   uniqueDeployments24h: number;
   topDeployments24h: Array<{ deploymentId: string; requestCount: number }>;
+  topUsers24h: Array<{
+    userId: string;
+    requestCount: number;
+    requests1h: number;
+    rateLimited1h: number;
+  }>;
 };
 
 export async function fetchSubsidyUsageOverview(): Promise<SubsidyUsageOverview> {
@@ -47,6 +60,24 @@ export async function fetchSubsidyUsageOverview(): Promise<SubsidyUsageOverview>
      LIMIT 5`,
   );
 
+  const topUsers = await pool.query<TopUserRow>(
+    `SELECT
+       user_id,
+       COUNT(*)::text AS request_count,
+       COUNT(*) FILTER (
+         WHERE created_at >= NOW() - INTERVAL '1 hour'
+       )::text AS requests_1h,
+       COUNT(*) FILTER (
+         WHERE created_at >= NOW() - INTERVAL '1 hour'
+           AND http_status = 429
+       )::text AS rate_limited_1h
+     FROM subsidy_usage_events
+     WHERE created_at >= NOW() - INTERVAL '24 hours'
+     GROUP BY user_id
+     ORDER BY COUNT(*) DESC
+     LIMIT 20`,
+  );
+
   const row = totals.rows[0];
   return {
     totalRequests: Number(row?.total_requests ?? "0"),
@@ -57,6 +88,12 @@ export async function fetchSubsidyUsageOverview(): Promise<SubsidyUsageOverview>
     topDeployments24h: topDeployments.rows.map((item) => ({
       deploymentId: item.deployment_id,
       requestCount: Number(item.request_count),
+    })),
+    topUsers24h: topUsers.rows.map((item) => ({
+      userId: item.user_id?.trim() || "unknown",
+      requestCount: Number(item.request_count),
+      requests1h: Number(item.requests_1h),
+      rateLimited1h: Number(item.rate_limited_1h),
     })),
   };
 }

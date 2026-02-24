@@ -92,10 +92,13 @@ export async function ensureSchema() {
     CREATE TABLE IF NOT EXISTS subsidy_usage_events (
       id BIGSERIAL PRIMARY KEY,
       deployment_id TEXT NOT NULL,
+      user_id TEXT,
       http_status INT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+
+  await pool.query(`ALTER TABLE subsidy_usage_events ADD COLUMN IF NOT EXISTS user_id TEXT;`);
 
   await pool.query(`
     CREATE INDEX IF NOT EXISTS subsidy_usage_events_created_at_idx
