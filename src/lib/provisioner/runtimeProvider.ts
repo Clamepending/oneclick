@@ -179,13 +179,14 @@ curl -fsSL https://get.docker.com | sh
 systemctl enable docker
 systemctl start docker
 mkdir -p "${userDir}" "${workspaceDir}"
+chown -R 1000:1000 "${userDir}" "${workspaceDir}" || true
 docker pull "${image}"
 docker rm -f "${containerName}" >/dev/null 2>&1 || true
-docker run -d --name "${containerName}" --restart unless-stopped --entrypoint /bin/sh \\
+docker run -d --name "${containerName}" --restart unless-stopped \\
   -v "${userDir}:/home/node/.openclaw" \\
   -v "${workspaceDir}:/home/node/.openclaw/workspace" \\
   -p "${containerPort}:${containerPort}" \\
-  "${image}" -lc '${startCommand.replace(/'/g, `'\"'\"'`)}'
+  "${image}" ${startCommand}
 `;
 
   const response = await fetch("https://api.digitalocean.com/v2/droplets", {
@@ -277,14 +278,14 @@ async function launchViaSsh(input: LaunchInput) {
   const userDir = `${configBase}/${safeUser}/${safeDeployment}`;
   const workspaceDir = `${userDir}/${workspaceSuffix}`;
 
-  const escapedStart = startCommand.replace(/'/g, `'\"'\"'`);
   const remoteScript = [
     `set -e`,
     `>&2 echo "oneclick-debug image=${image} container=${containerName} hostPort=${hostPort} containerPort=${containerPort}"`,
     `mkdir -p "${userDir}" "${workspaceDir}"`,
+    `chown -R 1000:1000 "${userDir}" "${workspaceDir}" || true`,
     `docker pull "${image}"`,
     `docker rm -f "${containerName}" >/dev/null 2>&1 || true`,
-    `docker run -d --name "${containerName}" --restart unless-stopped --entrypoint /bin/sh -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" -p "${hostPort}:${containerPort}" "${image}" -lc '${escapedStart}'`,
+    `docker run -d --name "${containerName}" --restart unless-stopped -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" -p "${hostPort}:${containerPort}" "${image}" ${startCommand}`,
   ].join(" && ");
 
   await runSshCommand(sshTarget, remoteScript);

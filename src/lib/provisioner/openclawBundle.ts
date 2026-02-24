@@ -14,5 +14,5 @@ export function getOpenClawPort() {
 }
 
 export function getOpenClawStartCommand() {
-  return readEnv("OPENCLAW_START_COMMAND") || "gateway start --foreground";
+  return readEnv("OPENCLAW_START_COMMAND") || "gateway --allow-unconfigured";
 }

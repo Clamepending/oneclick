@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { Queue, Worker } from "bullmq";
 import { randomUUID } from "crypto";
+import net from "node:net";
 import { ensureSchema, pool } from "@/lib/db";
 import { selectHost } from "@/lib/provisioner/hostScheduler";
 import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runtimeProvider";
@@ -39,24 +40,35 @@ async function appendEvent(deploymentId: string, status: string, message: string
 async function waitForRuntimeReady(readyUrl: string) {
   const startupTimeoutMs = Number(process.env.OPENCLAW_STARTUP_TIMEOUT_MS ?? "120000");
   const pollIntervalMs = 3000;
-  const healthPath = process.env.OPENCLAW_HEALTH_PATH ?? "/health";
-  const healthUrl = new URL(healthPath, readyUrl).toString();
+  const url = new URL(readyUrl);
+  const host = url.hostname;
+  const port = Number(url.port || (url.protocol === "https:" ? "443" : "80"));
   const deadline = Date.now() + startupTimeoutMs;
 
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(healthUrl, {
-        cache: "no-store",
-        signal: AbortSignal.timeout(3000),
+      await new Promise<void>((resolve, reject) => {
+        const socket = net.createConnection({ host, port, timeout: 3000 }, () => {
+          socket.end();
+          resolve();
+        });
+        socket.on("timeout", () => {
+          socket.destroy();
+          reject(new Error("timeout"));
+        });
+        socket.on("error", (error) => {
+          socket.destroy();
+          reject(error);
+        });
       });
-      if (response.ok) return;
+      return;
     } catch {
       // Runtime may still be booting; keep polling until timeout.
     }
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
 
-  throw new Error(`Runtime failed health check at ${healthUrl} within ${startupTimeoutMs}ms`);
+  throw new Error(`Runtime failed port check at ${readyUrl} within ${startupTimeoutMs}ms`);
 }
 
 export async function processDeploymentJob(job: DeploymentJob) {
