@@ -20,6 +20,27 @@ export default function OnboardingPage() {
 
   const title = useMemo(() => `Step ${step} of 3`, [step]);
 
+  async function parseErrorMessage(response: Response, fallback: string) {
+    const contentType = response.headers.get("content-type") ?? "";
+    if (contentType.includes("application/json")) {
+      const body = (await response.json().catch(() => null)) as
+        | { error?: string; message?: string }
+        | null;
+      return body?.error ?? body?.message ?? fallback;
+    }
+    const text = (await response.text().catch(() => ""))?.trim();
+    return text || fallback;
+  }
+
+  async function parseDeployResponse(response: Response) {
+    const contentType = response.headers.get("content-type") ?? "";
+    if (!contentType.includes("application/json")) {
+      const text = (await response.text().catch(() => ""))?.trim();
+      throw new Error(text || "Deployment API returned non-JSON response");
+    }
+    return (await response.json()) as { id?: string; error?: string; message?: string };
+  }
+
   async function saveStep(nextStep: number) {
     const response = await fetch("/api/onboarding/step", {
       method: "POST",
@@ -32,10 +53,8 @@ export default function OnboardingPage() {
       }),
     });
     if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as
-        | { error?: string }
-        | null;
-      throw new Error(body?.error ?? "Unable to save progress");
+      const message = await parseErrorMessage(response, "Unable to save progress");
+      throw new Error(message);
     }
   }
 
@@ -56,9 +75,9 @@ export default function OnboardingPage() {
     try {
       await saveStep(3);
       const response = await fetch("/api/deployments", { method: "POST" });
-      const body = (await response.json()) as { id?: string; error?: string };
+      const body = await parseDeployResponse(response);
       if (!response.ok || !body.id) {
-        throw new Error(body.error ?? "Deployment failed to start");
+        throw new Error(body.error ?? body.message ?? "Deployment failed to start");
       }
       router.push(`/deployments/${body.id}`);
     } catch (e) {
