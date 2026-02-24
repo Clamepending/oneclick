@@ -1,8 +1,31 @@
 import Link from "next/link";
 import { auth } from "@/lib/auth";
+import { ensureSchema, pool } from "@/lib/db";
+
+type LatestDeployment = {
+  id: string;
+  status: "queued" | "starting" | "ready" | "failed";
+  ready_url: string | null;
+  error: string | null;
+  updated_at: string;
+};
 
 export default async function HomePage() {
   const session = await auth();
+  let latestDeployment: LatestDeployment | null = null;
+
+  if (session?.user?.email) {
+    await ensureSchema();
+    const result = await pool.query<LatestDeployment>(
+      `SELECT id, status, ready_url, error, updated_at
+       FROM deployments
+       WHERE user_id = $1
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [session.user.email],
+    );
+    latestDeployment = result.rows[0] ?? null;
+  }
 
   return (
     <main className="container">
@@ -16,10 +39,45 @@ export default async function HomePage() {
             Continue with Google
           </Link>
         ) : (
-          <div className="row">
-            <Link className="button" href="/onboarding">
-              Continue setup
-            </Link>
+          <div style={{ display: "grid", gap: 12 }}>
+            {latestDeployment ? (
+              <div style={{ display: "grid", gap: 4 }}>
+                <p className="muted" style={{ marginBottom: 0 }}>
+                  Latest deployment: <code>{latestDeployment.id}</code>
+                </p>
+                <p className="muted" style={{ marginBottom: 0 }}>
+                  Status: <code>{latestDeployment.status.toUpperCase()}</code>
+                </p>
+                <p className="muted" style={{ marginBottom: 0 }}>
+                  Updated: <code>{new Date(latestDeployment.updated_at).toLocaleString()}</code>
+                </p>
+                {latestDeployment.status === "ready" && latestDeployment.ready_url ? (
+                  <p style={{ marginBottom: 0 }}>
+                    <a className="button" href={latestDeployment.ready_url} target="_blank" rel="noreferrer">
+                      Open OpenClaw
+                    </a>
+                  </p>
+                ) : null}
+                {latestDeployment.status === "failed" && latestDeployment.error ? (
+                  <p style={{ color: "#ff8e8e", marginBottom: 0 }}>{latestDeployment.error}</p>
+                ) : null}
+                <p style={{ marginBottom: 0 }}>
+                  <Link className="button secondary" href={`/deployments/${latestDeployment.id}`}>
+                    View deployment details
+                  </Link>
+                </p>
+              </div>
+            ) : (
+              <p className="muted" style={{ marginBottom: 0 }}>
+                No deployments yet. Start one below.
+              </p>
+            )}
+
+            <div className="row">
+              <Link className="button" href="/onboarding">
+                Start new deployment
+              </Link>
+            </div>
           </div>
         )}
       </div>
