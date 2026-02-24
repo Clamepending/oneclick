@@ -2,6 +2,7 @@ import "dotenv/config";
 import { Queue, Worker } from "bullmq";
 import { randomUUID } from "crypto";
 import net from "node:net";
+import { Client } from "ssh2";
 import { ensureSchema, pool } from "@/lib/db";
 import { selectHost } from "@/lib/provisioner/hostScheduler";
 import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runtimeProvider";
@@ -37,30 +38,118 @@ async function appendEvent(deploymentId: string, status: string, message: string
   );
 }
 
-async function waitForRuntimeReady(readyUrl: string) {
+function parseSshRuntimeId(runtimeId: string) {
+  if (!runtimeId.startsWith("ssh:")) return null;
+  const body = runtimeId.slice(4);
+  const split = body.split("|");
+  if (split.length !== 2) return null;
+  return { sshTarget: split[0], containerName: split[1] };
+}
+
+function parseUserAndHost(sshTarget: string) {
+  const [user, host] = sshTarget.includes("@") ? sshTarget.split("@") : ["root", sshTarget];
+  return { user, host };
+}
+
+async function probeTcpPort(host: string, port: number) {
+  await new Promise<void>((resolve, reject) => {
+    const socket = net.createConnection({ host, port, timeout: 3000 }, () => {
+      socket.end();
+      resolve();
+    });
+    socket.on("timeout", () => {
+      socket.destroy();
+      reject(new Error("timeout"));
+    });
+    socket.on("error", (error) => {
+      socket.destroy();
+      reject(error);
+    });
+  });
+}
+
+async function probeSshLocalPort(sshTarget: string, port: number) {
+  const privateKeyRaw = process.env.DEPLOY_SSH_PRIVATE_KEY?.trim();
+  if (!privateKeyRaw) {
+    throw new Error("DEPLOY_SSH_PRIVATE_KEY is required for SSH runtime health checks.");
+  }
+  const privateKey = privateKeyRaw.replace(/\\n/g, "\n");
+  const timeoutMs = Number(process.env.OPENCLAW_SSH_TIMEOUT_MS ?? "120000");
+  const { user, host } = parseUserAndHost(sshTarget);
+  const command = `bash -lc 'timeout 3 bash -c \"</dev/tcp/127.0.0.1/${port}\"'`;
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const conn = new Client();
+    let timer: NodeJS.Timeout | null = null;
+
+    const clearTimer = () => {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
+
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimer();
+      conn.end();
+      if (error) reject(error);
+      else resolve();
+    };
+
+    conn
+      .on("ready", () => {
+        timer = setTimeout(() => {
+          finish(new Error(`SSH probe timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+
+        conn.exec(command, (execErr, stream) => {
+          if (execErr) {
+            finish(execErr);
+            return;
+          }
+          let stderr = "";
+          stream.stderr.on("data", (data: Buffer) => {
+            stderr += data.toString("utf8");
+          });
+          stream.on("close", (code: number | null) => {
+            if (code === 0) finish();
+            else finish(new Error(stderr || `SSH probe failed with exit code ${code ?? "unknown"}`));
+          });
+        });
+      })
+      .on("error", (error) => finish(error))
+      .connect({
+        host,
+        username: user,
+        privateKey,
+        readyTimeout: timeoutMs,
+      });
+  });
+}
+
+async function waitForRuntimeReady(input: {
+  readyUrl: string;
+  deployProvider: string | null;
+  runtimeId: string;
+}) {
   const startupTimeoutMs = Number(process.env.OPENCLAW_STARTUP_TIMEOUT_MS ?? "120000");
   const pollIntervalMs = 3000;
-  const url = new URL(readyUrl);
+  const url = new URL(input.readyUrl);
   const host = url.hostname;
   const port = Number(url.port || (url.protocol === "https:" ? "443" : "80"));
+  const parsedSshRuntime = input.deployProvider === "ssh" ? parseSshRuntimeId(input.runtimeId) : null;
   const deadline = Date.now() + startupTimeoutMs;
 
   while (Date.now() < deadline) {
     try {
-      await new Promise<void>((resolve, reject) => {
-        const socket = net.createConnection({ host, port, timeout: 3000 }, () => {
-          socket.end();
-          resolve();
-        });
-        socket.on("timeout", () => {
-          socket.destroy();
-          reject(new Error("timeout"));
-        });
-        socket.on("error", (error) => {
-          socket.destroy();
-          reject(error);
-        });
-      });
+      if (parsedSshRuntime) {
+        await probeSshLocalPort(parsedSshRuntime.sshTarget, port);
+      } else {
+        await probeTcpPort(host, port);
+      }
       return;
     } catch {
       // Runtime may still be booting; keep polling until timeout.
@@ -68,7 +157,7 @@ async function waitForRuntimeReady(readyUrl: string) {
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
 
-  throw new Error(`Runtime failed port check at ${readyUrl} within ${startupTimeoutMs}ms`);
+  throw new Error(`Runtime failed port check at ${input.readyUrl} within ${startupTimeoutMs}ms`);
 }
 
 export async function processDeploymentJob(job: DeploymentJob) {
@@ -228,7 +317,11 @@ export async function processDeploymentJob(job: DeploymentJob) {
   );
   await appendEvent(job.deploymentId, "starting", "Runtime launched; persisted runtime metadata");
   await appendEvent(job.deploymentId, "starting", "Waiting for runtime health check");
-  await waitForRuntimeReady(runtime.readyUrl);
+  await waitForRuntimeReady({
+    readyUrl: runtime.readyUrl,
+    deployProvider: runtime.deployProvider,
+    runtimeId: runtime.runtimeId,
+  });
 
   await pool.query(
     `UPDATE deployments
