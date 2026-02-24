@@ -24,25 +24,63 @@ function getClientIp(request: Request) {
   return "unknown";
 }
 
-function canUseQueueMode() {
-  const redisUrl = process.env.REDIS_URL?.trim();
-  if (!redisUrl) return false;
+function readTrimmedEnv(name: string) {
+  const raw = process.env[name];
+  if (!raw) return "";
+  return raw.trim().replace(/^"(.*)"$/, "$1").replace(/\\n/g, "").trim();
+}
 
-  // On Vercel/local serverless, localhost Redis usually means "not configured".
-  if (
-    redisUrl.includes("127.0.0.1") ||
-    redisUrl.includes("localhost")
-  ) {
-    return false;
+function readBoolEnv(name: string, fallback = false) {
+  const value = readTrimmedEnv(name).toLowerCase();
+  if (!value) return fallback;
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  return fallback;
+}
+
+type QueueModeInfo = {
+  usable: boolean;
+  redisUrl: string;
+  reason: "ok" | "missing_redis_url" | "localhost_redis_url";
+};
+
+function getQueueModeInfo(): QueueModeInfo {
+  const redisUrl = readTrimmedEnv("REDIS_URL");
+  if (!redisUrl) return { usable: false, redisUrl: "", reason: "missing_redis_url" };
+  if (redisUrl.includes("127.0.0.1") || redisUrl.includes("localhost")) {
+    return { usable: false, redisUrl, reason: "localhost_redis_url" };
   }
+  return { usable: true, redisUrl, reason: "ok" };
+}
 
-  return true;
+function isVercelRuntime() {
+  return readBoolEnv("VERCEL", false) || readTrimmedEnv("VERCEL_ENV") !== "";
+}
+
+function summarizeRedisUrl(raw: string) {
+  if (!raw) return "none";
+  try {
+    const url = new URL(raw);
+    return `${url.protocol}//${url.hostname}${url.port ? `:${url.port}` : ""}`;
+  } catch {
+    return raw.slice(0, 40);
+  }
+}
+
+function queueUnavailableMessage(queueInfo: QueueModeInfo) {
+  if (queueInfo.reason === "missing_redis_url") {
+    return "Deployment queue unavailable: REDIS_URL is not configured. Deployments require a running worker + Redis in production.";
+  }
+  if (queueInfo.reason === "localhost_redis_url") {
+    return "Deployment queue unavailable: REDIS_URL points to localhost, which is not usable from Vercel. Configure a hosted Redis and run the deployment worker.";
+  }
+  return "Deployment queue unavailable. Please try again shortly.";
 }
 
 async function failStaleInProgressDeployments(userId: string) {
   const staleAfterMs = Number(process.env.DEPLOY_STALE_STARTING_TIMEOUT_MS ?? "900000");
   const staleMessage =
-    "Deployment timed out while in progress. Please redeploy.";
+    "Deployment timed out while in progress. The deployment worker may be unavailable. Please redeploy.";
   await pool.query(
     `WITH stale AS (
        UPDATE deployments
@@ -277,18 +315,98 @@ export async function POST(request: Request) {
   );
 
   try {
-    // Vercel-safe default: if queue mode is not usable, process in-process in background.
-    if (!canUseQueueMode()) {
+    const queueInfo = getQueueModeInfo();
+    const vercelRuntime = isVercelRuntime();
+    await pool.query(
+      `INSERT INTO deployment_events (deployment_id, status, message)
+       VALUES ($1, 'queued', $2)`,
+      [
+        deploymentId,
+        `Queue routing: provider=${vercelRuntime ? "vercel" : "node"} queueUsable=${queueInfo.usable ? "yes" : "no"} redis=${summarizeRedisUrl(queueInfo.redisUrl)} reason=${queueInfo.reason}`,
+      ],
+    );
+
+    if (!queueInfo.usable && vercelRuntime) {
+      const message = queueUnavailableMessage(queueInfo);
+      console.warn(`[deploy:${deploymentId}] ${message}`);
+      await pool.query(
+        `UPDATE deployments
+         SET status = 'failed',
+             error = $2,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [deploymentId, message],
+      );
+      await pool.query(
+        `INSERT INTO deployment_events (deployment_id, status, message)
+         VALUES ($1, 'failed', $2)`,
+        [deploymentId, message],
+      );
+      return NextResponse.json({ ok: false, error: message }, { status: 503 });
+    }
+
+    if (!queueInfo.usable) {
+      const fallbackMessage = `Queue unavailable (${queueInfo.reason}); using in-process deployment fallback.`;
+      console.warn(`[deploy:${deploymentId}] ${fallbackMessage}`);
+      await pool.query(
+        `INSERT INTO deployment_events (deployment_id, status, message)
+         VALUES ($1, 'starting', $2)`,
+        [deploymentId, fallbackMessage],
+      );
       startInProcessDeployment(deploymentId, session.user.email);
       return NextResponse.json({ id: deploymentId, status: "queued" }, { status: 202 });
     }
 
     try {
+      console.info(`[deploy:${deploymentId}] enqueueing deployment job via Redis ${summarizeRedisUrl(queueInfo.redisUrl)}`);
+      await pool.query(
+        `INSERT INTO deployment_events (deployment_id, status, message)
+         VALUES ($1, 'queued', 'Queue available; enqueueing deployment job for worker')`,
+        [deploymentId],
+      );
       await enqueueDeploymentJob({ deploymentId, userId: session.user.email });
+      await pool.query(
+        `INSERT INTO deployment_events (deployment_id, status, message)
+         VALUES ($1, 'queued', 'Deployment job enqueued successfully; waiting for worker pickup')`,
+        [deploymentId],
+      );
     } catch (queueError) {
       const queueMessage =
         queueError instanceof Error ? queueError.message : String(queueError);
-      if (queueMessage.includes("ECONNREFUSED") || queueMessage.includes("ENOTFOUND")) {
+      const retryableQueueConnectivityError =
+        queueMessage.includes("ECONNREFUSED") ||
+        queueMessage.includes("ENOTFOUND") ||
+        queueMessage.includes("ETIMEDOUT");
+      console.warn(`[deploy:${deploymentId}] queue enqueue failed: ${queueMessage}`);
+      await pool.query(
+        `INSERT INTO deployment_events (deployment_id, status, message)
+         VALUES ($1, 'starting', $2)`,
+        [deploymentId, `Queue enqueue failed: ${queueMessage}`],
+      );
+      if (retryableQueueConnectivityError && vercelRuntime) {
+        const message =
+          "Deploy queue connection failed on production. The deployment worker may be unavailable or Redis may be unreachable. Please try again shortly.";
+        await pool.query(
+          `UPDATE deployments
+           SET status = 'failed',
+               error = $2,
+               updated_at = NOW()
+           WHERE id = $1`,
+          [deploymentId, message],
+        );
+        await pool.query(
+          `INSERT INTO deployment_events (deployment_id, status, message)
+           VALUES ($1, 'failed', $2)`,
+          [deploymentId, message],
+        );
+        return NextResponse.json({ ok: false, error: message }, { status: 503 });
+      }
+      if (retryableQueueConnectivityError) {
+        await pool.query(
+          `INSERT INTO deployment_events (deployment_id, status, message)
+           VALUES ($1, 'starting', 'Falling back to in-process deployment after queue connectivity error')`,
+          [deploymentId],
+        );
         startInProcessDeployment(deploymentId, session.user.email);
         return NextResponse.json({ id: deploymentId, status: "queued" }, { status: 202 });
       }
