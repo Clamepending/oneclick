@@ -277,17 +277,14 @@ async function launchViaSsh(input: LaunchInput) {
   const userDir = `${configBase}/${safeUser}/${safeDeployment}`;
   const workspaceDir = `${userDir}/${workspaceSuffix}`;
 
+  const escapedStart = startCommand.replace(/'/g, `'\"'\"'`);
   const remoteScript = [
     `set -e`,
     `>&2 echo "oneclick-debug image=${image} container=${containerName} hostPort=${hostPort} containerPort=${containerPort}"`,
     `mkdir -p "${userDir}" "${workspaceDir}"`,
     `docker pull "${image}"`,
     `docker rm -f "${containerName}" >/dev/null 2>&1 || true`,
-    `docker run -d --name "${containerName}" --restart unless-stopped \\`,
-    `  -v "${userDir}:/home/node/.openclaw" \\`,
-    `  -v "${workspaceDir}:/home/node/.openclaw/workspace" \\`,
-    `  -p "${hostPort}:${containerPort}" \\`,
-    `  "${image}" sh -lc '${startCommand.replace(/'/g, `'\"'\"'`)}'`,
+    `docker run -d --name "${containerName}" --restart unless-stopped -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" -p "${hostPort}:${containerPort}" "${image}" sh -lc '${escapedStart}'`,
   ].join(" && ");
 
   await runSshCommand(sshTarget, remoteScript);
