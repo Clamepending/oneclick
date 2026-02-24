@@ -47,6 +47,8 @@ Runtime deployment mode:
 - `DEPLOY_PROVIDER=digitalocean` (create Droplet via API from Vercel)
 - `DEPLOY_SSH_PRIVATE_KEY` can contain a PEM private key with `\\n` newlines.
 - `DEPLOY_SSH_KNOWN_HOSTS` is optional but recommended for strict host verification.
+- `NEXT_PUBLIC_DEPLOY_POLL_INTERVAL_MS` controls dashboard polling in browser (default `10000`)
+- `PG_POOL_MAX`/`PG_IDLE_TIMEOUT_MS`/`PG_CONNECTION_TIMEOUT_MS` tune DB pool usage for serverless (defaults are safe for small Supabase poolers)
 
 ## Run
 

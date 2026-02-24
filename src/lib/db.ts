@@ -6,15 +6,23 @@ if (!connectionString) {
   throw new Error("DATABASE_URL is required.");
 }
 
-export const pool = new Pool({ connectionString });
+const poolMax = Number(process.env.PG_POOL_MAX ?? "1");
+const poolIdleTimeoutMs = Number(process.env.PG_IDLE_TIMEOUT_MS ?? "10000");
+const poolConnectionTimeoutMs = Number(process.env.PG_CONNECTION_TIMEOUT_MS ?? "5000");
+
+export const pool = new Pool({
+  connectionString,
+  max: poolMax,
+  idleTimeoutMillis: poolIdleTimeoutMs,
+  connectionTimeoutMillis: poolConnectionTimeoutMs,
+});
 
 let initialized = false;
 
 export async function ensureSchema() {
   if (initialized) return;
-  initialized = true;
-
-  await pool.query(`
+  try {
+    await pool.query(`
     CREATE TABLE IF NOT EXISTS onboarding_sessions (
       user_id TEXT PRIMARY KEY,
       bot_name TEXT NOT NULL DEFAULT '',
@@ -62,4 +70,9 @@ export async function ensureSchema() {
     CREATE INDEX IF NOT EXISTS deployment_events_deployment_id_idx
     ON deployment_events (deployment_id, created_at);
   `);
+    initialized = true;
+  } catch (error) {
+    initialized = false;
+    throw error;
+  }
 }

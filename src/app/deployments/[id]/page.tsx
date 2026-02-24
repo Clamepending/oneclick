@@ -37,9 +37,10 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
   useEffect(() => {
     if (!deploymentId) return;
 
-    const pollInterval = Number(process.env.NEXT_PUBLIC_DEPLOY_POLL_INTERVAL_MS ?? "3000");
+    const pollInterval = Number(process.env.NEXT_PUBLIC_DEPLOY_POLL_INTERVAL_MS ?? "10000");
 
     let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
     const poll = async () => {
       try {
         const [dRes, eRes] = await Promise.all([
@@ -56,6 +57,10 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
           setDeployment(dData);
           setEvents(eData.items);
           setError("");
+          if (dData.status === "ready" || dData.status === "failed") {
+            if (timer) clearInterval(timer);
+            timer = null;
+          }
         }
       } catch (e) {
         if (!cancelled) {
@@ -65,13 +70,13 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
     };
 
     void poll();
-    const timer = setInterval(() => {
+    timer = setInterval(() => {
       void poll();
     }, pollInterval);
 
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      if (timer) clearInterval(timer);
     };
   }, [deploymentId]);
 

@@ -13,18 +13,23 @@ type LatestDeployment = {
 export default async function HomePage() {
   const session = await auth();
   let latestDeployment: LatestDeployment | null = null;
+  let deploymentLookupFailed = false;
 
   if (session?.user?.email) {
-    await ensureSchema();
-    const result = await pool.query<LatestDeployment>(
-      `SELECT id, status, ready_url, error, updated_at
-       FROM deployments
-       WHERE user_id = $1
-       ORDER BY updated_at DESC
-       LIMIT 1`,
-      [session.user.email],
-    );
-    latestDeployment = result.rows[0] ?? null;
+    try {
+      await ensureSchema();
+      const result = await pool.query<LatestDeployment>(
+        `SELECT id, status, ready_url, error, updated_at
+         FROM deployments
+         WHERE user_id = $1
+         ORDER BY updated_at DESC
+         LIMIT 1`,
+        [session.user.email],
+      );
+      latestDeployment = result.rows[0] ?? null;
+    } catch {
+      deploymentLookupFailed = true;
+    }
   }
 
   return (
@@ -72,6 +77,11 @@ export default async function HomePage() {
                 No deployments yet. Start one below.
               </p>
             )}
+            {deploymentLookupFailed ? (
+              <p className="muted" style={{ marginBottom: 0 }}>
+                Deployment details are temporarily unavailable. You can still start a new deployment.
+              </p>
+            ) : null}
 
             <div className="row">
               <Link className="button" href="/onboarding">
