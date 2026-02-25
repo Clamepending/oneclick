@@ -419,6 +419,9 @@ async function launchViaEcs(input: LaunchInput) {
   const awslogsPrefix = readTrimmedEnv("ECS_LOG_STREAM_PREFIX") || "oneclick";
   const telemetryEnv = readTrimmedEnv("OPENCLAW_TELEMETRY");
   const ecsClient = new ECSClient(buildAwsConfigWithTrimmedCreds(region));
+  const configVolumeName = "openclaw-config";
+  const configMountPath = "/home/node/.openclaw";
+  const initContainerName = `${containerName}-config-init`.slice(0, 255);
 
   const environment = [
     { name: "OPENCLAW_ALLOW_INSECURE_CONTROL_UI", value: shouldAllowInsecureControlUi() ? "true" : "false" },
@@ -447,13 +450,54 @@ async function launchViaEcs(input: LaunchInput) {
       memory,
       executionRoleArn,
       taskRoleArn: taskRoleArn || undefined,
+      volumes: [
+        {
+          name: configVolumeName,
+        },
+      ],
       containerDefinitions: [
+        {
+          name: initContainerName,
+          image,
+          essential: false,
+          command: ["config", "set", "gateway.bind", "lan"],
+          mountPoints: [
+            {
+              sourceVolume: configVolumeName,
+              containerPath: configMountPath,
+              readOnly: false,
+            },
+          ],
+          logConfiguration: awslogsGroup
+            ? {
+                logDriver: "awslogs",
+                options: {
+                  "awslogs-group": awslogsGroup,
+                  "awslogs-region": region,
+                  "awslogs-stream-prefix": `${awslogsPrefix}-init`,
+                },
+              }
+            : undefined,
+        },
         {
           name: containerName,
           image,
           essential: true,
           command: command.length > 0 ? command : undefined,
           environment,
+          dependsOn: [
+            {
+              containerName: initContainerName,
+              condition: "SUCCESS",
+            },
+          ],
+          mountPoints: [
+            {
+              sourceVolume: configVolumeName,
+              containerPath: configMountPath,
+              readOnly: false,
+            },
+          ],
           portMappings: [
             {
               containerPort,
