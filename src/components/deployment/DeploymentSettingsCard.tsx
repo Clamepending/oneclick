@@ -100,7 +100,7 @@ export function DeploymentSettingsCard({
     >
       <h2 style={{ margin: 0, fontSize: 18 }}>Runtime settings</h2>
       <p className="muted" style={{ margin: 0 }}>
-        Values are hidden. If already set, leave blank to keep current values. Save updates settings only; Save + Redeploy applies them to a new runtime immediately.
+        Values are hidden. If already set, leave blank to keep current values. Redeploy applies changes immediately.
       </p>
       <label className="muted">
         OpenAI API key {hasOpenaiApiKey ? "(already set)" : "(not set)"}
@@ -152,20 +152,20 @@ export function DeploymentSettingsCard({
       </label>
       <div className="row">
         <button
-          className="button secondary"
+          className="button"
           type="button"
           onClick={() => void handleSave(false)}
           disabled={Boolean(savingMode)}
         >
-          {savingMode === "save" ? "Saving..." : "Save settings"}
+          {savingMode === "save" ? "Saving..." : "Save"}
         </button>
         <button
-          className="button"
+          className="button secondary"
           type="button"
           onClick={() => void handleSave(true)}
           disabled={Boolean(savingMode)}
         >
-          {savingMode === "redeploy" ? "Saving + redeploying..." : "Save + Redeploy"}
+          {savingMode === "redeploy" ? "Redeploying..." : "Redeploy"}
         </button>
       </div>
       {message ? (
