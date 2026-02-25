@@ -83,12 +83,13 @@ export async function PATCH(
     id: string;
     status: string;
     bot_name: string | null;
+    model_provider: string | null;
     openai_api_key: string | null;
     anthropic_api_key: string | null;
     openrouter_api_key: string | null;
     telegram_bot_token: string | null;
   }>(
-    `SELECT id, status, bot_name, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token
+    `SELECT id, status, bot_name, model_provider, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token
      FROM deployments
      WHERE id = $1 AND user_id = $2
      LIMIT 1`,
@@ -102,6 +103,7 @@ export async function PATCH(
   const { openaiApiKey, anthropicApiKey, openrouterApiKey, telegramBotToken, redeploy } = parsed.data;
   const updated = await pool.query<{
     bot_name: string | null;
+    model_provider: string | null;
     openai_api_key: string | null;
     anthropic_api_key: string | null;
     openrouter_api_key: string | null;
@@ -114,7 +116,7 @@ export async function PATCH(
          telegram_bot_token = COALESCE($4, telegram_bot_token),
          updated_at = NOW()
      WHERE id = $5 AND user_id = $6
-     RETURNING bot_name, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token`,
+     RETURNING bot_name, model_provider, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token`,
     [
       openaiApiKey ?? null,
       anthropicApiKey ?? null,
@@ -154,15 +156,27 @@ export async function PATCH(
 
   const nextDeploymentId = newDeploymentId();
   const source = updated.rows[0] ?? current;
+  let redeployModelProvider = source.model_provider;
+  if (!redeployModelProvider) {
+    const onboarding = await pool.query<{ model_provider: string | null }>(
+      `SELECT model_provider
+       FROM onboarding_sessions
+       WHERE user_id = $1
+       LIMIT 1`,
+      [session.user.email],
+    );
+    redeployModelProvider = onboarding.rows[0]?.model_provider?.trim() || null;
+  }
   await pool.query(
     `INSERT INTO deployments (
-       id, user_id, bot_name, status, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token
+       id, user_id, bot_name, status, model_provider, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token
      )
-     VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7)`,
+     VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8)`,
     [
       nextDeploymentId,
       session.user.email,
       source.bot_name,
+      redeployModelProvider,
       source.openai_api_key,
       source.anthropic_api_key,
       source.openrouter_api_key,

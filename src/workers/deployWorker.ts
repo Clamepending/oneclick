@@ -369,12 +369,13 @@ export async function processDeploymentJob(job: DeploymentJob) {
 
   const deploymentRow = await pool.query<{
     bot_name: string | null;
+    model_provider: string | null;
     openai_api_key: string | null;
     anthropic_api_key: string | null;
     openrouter_api_key: string | null;
     telegram_bot_token: string | null;
   }>(
-    `SELECT bot_name, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token
+    `SELECT bot_name, model_provider, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token
      FROM deployments
      WHERE id = $1
      LIMIT 1`,
@@ -398,18 +399,31 @@ export async function processDeploymentJob(job: DeploymentJob) {
   const selectedChannel = onboarding.rows[0]?.channel?.trim() || "none";
   const onboardingModelProvider = onboarding.rows[0]?.model_provider?.trim() || "";
   const onboardingModelApiKey = onboarding.rows[0]?.model_api_key?.trim() || "";
+  const deploymentModelProvider = deploymentRow.rows[0]?.model_provider?.trim() || "";
+  const effectiveModelProvider = deploymentModelProvider || onboardingModelProvider;
   const deploymentOpenAiKey = deploymentRow.rows[0]?.openai_api_key?.trim() || null;
   const deploymentAnthropicKey = deploymentRow.rows[0]?.anthropic_api_key?.trim() || null;
   const deploymentOpenRouterKey = deploymentRow.rows[0]?.openrouter_api_key?.trim() || null;
   const anthropicSubsidyApiKey = process.env.ANTHROPIC_SUBSIDY_API_KEY?.trim() || null;
-  const selectedOpenAiKey =
-    deploymentOpenAiKey || (onboardingModelProvider === "openai" ? onboardingModelApiKey : null);
-  const selectedAnthropicKey =
+  let selectedOpenAiKey =
+    deploymentOpenAiKey || (effectiveModelProvider === "openai" ? onboardingModelApiKey : null);
+  let selectedAnthropicKey =
     deploymentAnthropicKey ||
-    (onboardingModelProvider === "anthropic" ? onboardingModelApiKey : null) ||
-    (onboardingModelProvider === "anthropic" ? anthropicSubsidyApiKey : null);
+    (effectiveModelProvider === "anthropic" ? onboardingModelApiKey : null);
   const selectedOpenRouterKey = deploymentOpenRouterKey;
-  const useSubsidyProxy = !selectedOpenAiKey && !selectedAnthropicKey && !selectedOpenRouterKey;
+  if (!selectedAnthropicKey && effectiveModelProvider === "anthropic" && anthropicSubsidyApiKey) {
+    selectedAnthropicKey = anthropicSubsidyApiKey;
+  }
+  if (effectiveModelProvider === "anthropic" && !selectedAnthropicKey && !selectedOpenRouterKey) {
+    throw new Error(
+      "Anthropic model selected, but no Anthropic key is available. Configure an Anthropic API key or set ANTHROPIC_SUBSIDY_API_KEY.",
+    );
+  }
+  const useSubsidyProxy =
+    !selectedOpenAiKey &&
+    !selectedAnthropicKey &&
+    !selectedOpenRouterKey &&
+    effectiveModelProvider !== "anthropic";
   const subsidyProxyToken = useSubsidyProxy ? randomUUID().replace(/-/g, "") : null;
   const onboardingTelegramBotToken = onboarding.rows[0]?.telegram_bot_token?.trim() || null;
   const deploymentTelegramBotToken = deploymentRow.rows[0]?.telegram_bot_token?.trim() || null;
@@ -424,6 +438,9 @@ export async function processDeploymentJob(job: DeploymentJob) {
     : null;
   if (runtimeSlugSource) {
     await appendEvent(job.deploymentId, "starting", `Using runtime subdomain slug "${runtimeSlugSource}"`);
+  }
+  if (effectiveModelProvider) {
+    await appendEvent(job.deploymentId, "starting", `Model provider snapshot: ${effectiveModelProvider}`);
   }
   if (selectedChannel === "telegram") {
     await appendEvent(

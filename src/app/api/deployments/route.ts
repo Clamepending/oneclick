@@ -295,9 +295,11 @@ export async function POST(request: Request) {
   }
 
   await pool.query(
-    `INSERT INTO deployments (id, user_id, bot_name, status, openai_api_key, anthropic_api_key, telegram_bot_token)
-     VALUES ($1, $2, $3, 'queued', $4, $5, $6)`,
-    [deploymentId, session.user.email, botName, openaiApiKey, anthropicApiKey, telegramBotToken],
+    `INSERT INTO deployments (
+       id, user_id, bot_name, status, model_provider, openai_api_key, anthropic_api_key, telegram_bot_token
+     )
+     VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7)`,
+    [deploymentId, session.user.email, botName, modelProvider || null, openaiApiKey, anthropicApiKey, telegramBotToken],
   );
 
   await pool.query(
