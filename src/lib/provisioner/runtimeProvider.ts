@@ -424,6 +424,7 @@ async function launchViaEcs(input: LaunchInput) {
   const configVolumeName = "openclaw-config";
   const configMountPath = "/root/.openclaw";
   const configInitBase = `${containerName}-cfg`;
+  const authInitContainerName = `${configInitBase}-onboard`.slice(0, 255);
   const bindInitContainerName = `${configInitBase}-bind`.slice(0, 255);
   const tokenInitContainerName = `${configInitBase}-token`.slice(0, 255);
   const insecureOriginFallbackInitName = `${configInitBase}-origin`.slice(0, 255);
@@ -449,13 +450,19 @@ async function launchViaEcs(input: LaunchInput) {
     telemetryEnv ? { name: "OPENCLAW_TELEMETRY", value: telemetryEnv } : null,
   ].filter((entry): entry is { name: string; value: string } => Boolean(entry));
 
-  const buildConfigInitContainer = (name: string, command: string[], dependsOn?: Array<{ containerName: string; condition: "SUCCESS" }>) => ({
+  const buildConfigInitContainer = (
+    name: string,
+    command: string[],
+    dependsOn?: Array<{ containerName: string; condition: "SUCCESS" }>,
+    environment?: Array<{ name: string; value: string }>,
+  ) => ({
     name,
     image,
     essential: false,
     user: "0",
     command,
     dependsOn,
+    environment,
     mountPoints: [
       {
         sourceVolume: configVolumeName,
@@ -476,7 +483,31 @@ async function launchViaEcs(input: LaunchInput) {
   });
 
   const configInitContainers = [
-    buildConfigInitContainer(bindInitContainerName, ["config", "set", "gateway.bind", "lan"]),
+    buildConfigInitContainer(
+      authInitContainerName,
+      [
+        "sh",
+        "-lc",
+        [
+          "set -e",
+          // Seed per-agent auth store for Anthropic API keys so new agents can reply without manual UI auth setup.
+          "if [ -n \"${ANTHROPIC_API_KEY:-}\" ]; then",
+          `  openclaw onboard --non-interactive --mode local --auth-choice apiKey --anthropic-api-key \"$ANTHROPIC_API_KEY\" --gateway-port ${containerPort} --gateway-bind lan --skip-skills >/tmp/openclaw-onboard.log 2>&1 || (cat /tmp/openclaw-onboard.log >&2; exit 1)`,
+          "else",
+          "  echo 'Skipping auth onboard init (no ANTHROPIC_API_KEY provided)'",
+          "fi",
+        ].join("; "),
+      ],
+      undefined,
+      input.anthropicApiKey?.trim()
+        ? [{ name: "ANTHROPIC_API_KEY", value: input.anthropicApiKey.trim() }]
+        : undefined,
+    ),
+    buildConfigInitContainer(
+      bindInitContainerName,
+      ["config", "set", "gateway.bind", "lan"],
+      [{ containerName: authInitContainerName, condition: "SUCCESS" }],
+    ),
     buildConfigInitContainer(
       tokenInitContainerName,
       ["config", "set", "gateway.auth.token", gatewayToken],
