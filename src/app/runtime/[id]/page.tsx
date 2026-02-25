@@ -108,22 +108,6 @@ async function resolveEcsPublicUrl(input: { runtimeId: string; deploymentId: str
   return `http://${publicIp}:${port}`;
 }
 
-function withTokenFromReadyUrl(resolvedUrl: string, readyUrl: string | null) {
-  if (!readyUrl) return resolvedUrl;
-  try {
-    const source = new URL(readyUrl);
-    const token = source.searchParams.get("token");
-    if (!token) return resolvedUrl;
-    const target = new URL(resolvedUrl);
-    if (!target.searchParams.get("token")) {
-      target.searchParams.set("token", token);
-    }
-    return target.toString();
-  } catch {
-    return resolvedUrl;
-  }
-}
-
 function renderPlaceholder(id: string, details?: string) {
   return (
     <main className="container">
@@ -136,6 +120,26 @@ function renderPlaceholder(id: string, details?: string) {
       </div>
     </main>
   );
+}
+
+function mergeResolvedRuntimeUrl(resolvedBaseUrl: string, storedReadyUrl: string | null) {
+  try {
+    const resolved = new URL(resolvedBaseUrl);
+    if (!storedReadyUrl?.trim()) {
+      return resolved.toString();
+    }
+
+    const stored = new URL(storedReadyUrl);
+
+    // Preserve OpenClaw UI path/query (for gateway token or future flags) while
+    // swapping in the currently reachable ECS task host/port.
+    resolved.pathname = stored.pathname || "/";
+    resolved.search = stored.search;
+    resolved.hash = stored.hash;
+    return resolved.toString();
+  } catch {
+    return resolvedBaseUrl;
+  }
 }
 
 export default async function RuntimePage({ params }: { params: Promise<{ id: string }> }) {
@@ -178,7 +182,7 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
       return renderPlaceholder(id, message);
     }
     if (resolved) {
-      redirect(withTokenFromReadyUrl(resolved, deployment.ready_url));
+      redirect(mergeResolvedRuntimeUrl(resolved, deployment.ready_url));
     }
     return renderPlaceholder(
       id,

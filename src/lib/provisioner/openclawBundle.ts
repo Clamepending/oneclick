@@ -14,7 +14,7 @@ function readBool(name: string, fallback: boolean) {
 }
 
 export function getOpenClawImage() {
-  return readEnv("OPENCLAW_IMAGE") || "ghcr.io/phioranex/openclaw-docker:latest";
+  return readEnv("OPENCLAW_IMAGE") || "alpine/openclaw:latest";
 }
 
 export function getOpenClawPort() {
