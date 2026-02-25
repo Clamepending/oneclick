@@ -301,10 +301,10 @@ async function tryHotApplyTelegramToken(input: {
       return response.payload;
     };
 
+    const { label: authLabel, ...authPayload } = authVariant;
+
     try {
       await openPromise;
-      const { label: authLabel, ...authPayload } = authVariant;
-
       await rpc("connect", {
         minProtocol: 3,
         maxProtocol: 3,
