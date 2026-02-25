@@ -414,6 +414,15 @@ export async function processDeploymentJob(job: DeploymentJob) {
   if (!selectedAnthropicKey && effectiveModelProvider === "anthropic" && anthropicSubsidyApiKey) {
     selectedAnthropicKey = anthropicSubsidyApiKey;
   }
+  if (
+    !selectedOpenAiKey &&
+    !selectedAnthropicKey &&
+    !selectedOpenRouterKey &&
+    effectiveModelProvider !== "openai" &&
+    anthropicSubsidyApiKey
+  ) {
+    selectedAnthropicKey = anthropicSubsidyApiKey;
+  }
   if (effectiveModelProvider === "anthropic" && !selectedAnthropicKey && !selectedOpenRouterKey) {
     throw new Error(
       "Anthropic model selected, but no Anthropic key is available. Configure an Anthropic API key or set ANTHROPIC_SUBSIDY_API_KEY.",
@@ -423,7 +432,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
     !selectedOpenAiKey &&
     !selectedAnthropicKey &&
     !selectedOpenRouterKey &&
-    effectiveModelProvider !== "anthropic";
+    effectiveModelProvider === "openai";
   const subsidyProxyToken = useSubsidyProxy ? randomUUID().replace(/-/g, "") : null;
   const onboardingTelegramBotToken = onboarding.rows[0]?.telegram_bot_token?.trim() || null;
   const deploymentTelegramBotToken = deploymentRow.rows[0]?.telegram_bot_token?.trim() || null;
@@ -459,7 +468,9 @@ export async function processDeploymentJob(job: DeploymentJob) {
     await appendEvent(job.deploymentId, "starting", "Using server-side subsidy proxy (50 requests/minute cap)");
   }
   if (!useSubsidyProxy && selectedAnthropicKey && selectedAnthropicKey === anthropicSubsidyApiKey) {
-    await appendEvent(job.deploymentId, "starting", "Using server-side Anthropic subsidy key");
+    await appendEvent(job.deploymentId, "starting", effectiveModelProvider
+      ? "Using server-side Anthropic subsidy key"
+      : "Using server-side Anthropic subsidy key (default fallback)");
   }
   await pool.query(
     `UPDATE deployments
