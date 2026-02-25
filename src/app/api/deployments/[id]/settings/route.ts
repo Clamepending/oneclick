@@ -1,4 +1,11 @@
-import { DescribeTasksCommand, ECSClient, ListTasksCommand } from "@aws-sdk/client-ecs";
+import {
+  DescribeServicesCommand,
+  DescribeTaskDefinitionCommand,
+  DescribeTasksCommand,
+  ECSClient,
+  ListTasksCommand,
+  RunTaskCommand,
+} from "@aws-sdk/client-ecs";
 import { DescribeNetworkInterfacesCommand, EC2Client } from "@aws-sdk/client-ec2";
 import net from "node:net";
 import { NextResponse } from "next/server";
@@ -146,23 +153,30 @@ async function resolveRuntimeGatewayUrl(input: {
   runtimeId: string | null;
   readyUrl: string | null;
 }) {
+  const raw = input.readyUrl?.trim();
+  const directReadyUrl = (() => {
+    if (!raw) return null;
+    try {
+      const url = new URL(raw);
+      if (url.pathname === `/runtime/${input.deploymentId}`) {
+        return null;
+      }
+      return url.toString();
+    } catch {
+      return null;
+    }
+  })();
+  if (directReadyUrl) {
+    return directReadyUrl;
+  }
+
   const provider = (input.deployProvider ?? "").trim();
   if (provider === "ecs" && input.runtimeId) {
     const resolved = await resolveEcsPublicUrl(input.runtimeId);
     if (!resolved) return null;
     return mergeResolvedRuntimeUrl(resolved, input.readyUrl);
   }
-  const raw = input.readyUrl?.trim();
-  if (!raw) return null;
-  try {
-    const url = new URL(raw);
-    if (url.pathname === `/runtime/${input.deploymentId}`) {
-      return null;
-    }
-    return url.toString();
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 function toWsUrl(httpUrl: string) {
@@ -179,6 +193,142 @@ type RpcResponseMessage = {
   error?: { code?: string; message?: string } | string | null;
 };
 
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+async function tryHotApplyTelegramTokenViaEcsConfigTask(input: {
+  runtimeId: string | null;
+  telegramBotToken: string;
+}) {
+  const parsed = parseEcsRuntimeId(input.runtimeId);
+  if (!parsed) {
+    return { attempted: false as const, applied: false as const, reason: "invalid_ecs_runtime_id" };
+  }
+
+  const region = readTrimmedEnv("AWS_REGION");
+  if (!region) {
+    return { attempted: true as const, applied: false as const, reason: "missing_aws_region" };
+  }
+
+  const credentials =
+    readTrimmedEnv("AWS_ACCESS_KEY_ID") && readTrimmedEnv("AWS_SECRET_ACCESS_KEY")
+      ? {
+          accessKeyId: readTrimmedEnv("AWS_ACCESS_KEY_ID"),
+          secretAccessKey: readTrimmedEnv("AWS_SECRET_ACCESS_KEY"),
+        }
+      : undefined;
+
+  const ecs = new ECSClient({ region, credentials });
+  const containerName = readTrimmedEnv("ECS_CONTAINER_NAME") || "openclaw";
+
+  const serviceResponse = await ecs.send(
+    new DescribeServicesCommand({
+      cluster: parsed.cluster,
+      services: [parsed.serviceName],
+    }),
+  );
+  const service = serviceResponse.services?.[0];
+  if (!service?.taskDefinition) {
+    return { attempted: true as const, applied: false as const, reason: "ecs_service_not_found" };
+  }
+
+  const awsvpc = service.networkConfiguration?.awsvpcConfiguration;
+  if (!awsvpc?.subnets?.length) {
+    return { attempted: true as const, applied: false as const, reason: "ecs_network_config_missing" };
+  }
+
+  const taskDef = await ecs.send(
+    new DescribeTaskDefinitionCommand({
+      taskDefinition: service.taskDefinition,
+    }),
+  );
+
+  const mainContainerExists = (taskDef.taskDefinition?.containerDefinitions ?? []).some(
+    (definition) => definition.name === containerName,
+  );
+  if (!mainContainerExists) {
+    return {
+      attempted: true as const,
+      applied: false as const,
+      reason: `ecs_container_not_found:${containerName}`,
+    };
+  }
+
+  const runConfigSet = async (path: string, value: string) => {
+    const run = await ecs.send(
+      new RunTaskCommand({
+        cluster: parsed.cluster,
+        taskDefinition: service.taskDefinition,
+        launchType: (service.launchType ?? "FARGATE") as "FARGATE" | "EC2" | "EXTERNAL",
+        platformVersion: service.platformVersion || undefined,
+        count: 1,
+        networkConfiguration: {
+          awsvpcConfiguration: {
+            subnets: awsvpc.subnets,
+            securityGroups: awsvpc.securityGroups,
+            assignPublicIp: awsvpc.assignPublicIp,
+          },
+        },
+        overrides: {
+          containerOverrides: [
+            {
+              name: containerName,
+              command: ["config", "set", path, value],
+            },
+          ],
+        },
+      }),
+    );
+
+    const taskArn = run.tasks?.[0]?.taskArn;
+    if (!taskArn) {
+      const failure = run.failures?.[0];
+      throw new Error(failure?.reason || "ECS helper task did not start");
+    }
+
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 45_000) {
+      const described = await ecs.send(
+        new DescribeTasksCommand({
+          cluster: parsed.cluster,
+          tasks: [taskArn],
+        }),
+      );
+      const task = described.tasks?.[0];
+      if (!task) {
+        throw new Error("ECS helper task disappeared");
+      }
+
+      if (task.lastStatus === "STOPPED") {
+        const mainContainer = task.containers?.find((container) => container.name === containerName);
+        const exitCode = mainContainer?.exitCode;
+        if (exitCode === 0) {
+          return;
+        }
+        const reason =
+          mainContainer?.reason ||
+          task.stoppedReason ||
+          `ECS helper task failed (exit ${exitCode ?? "unknown"})`;
+        throw new Error(reason);
+      }
+
+      await sleep(1000);
+    }
+
+    throw new Error("ECS helper task timed out");
+  };
+
+  try {
+    await runConfigSet("channels.telegram.enabled", "true");
+    await runConfigSet("channels.telegram.botToken", input.telegramBotToken);
+    return { attempted: true as const, applied: true as const };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "ECS config helper failed";
+    return { attempted: true as const, applied: false as const, reason: `ecs-helper: ${message}` };
+  }
+}
+
 async function tryHotApplyTelegramToken(input: {
   deploymentId: string;
   deployProvider: string | null;
@@ -193,16 +343,46 @@ async function tryHotApplyTelegramToken(input: {
     readyUrl: input.readyUrl,
   });
   if (!gatewayUrl) {
-    return { attempted: true, applied: false as const, reason: "runtime_unreachable" };
+    const ecsFallback =
+      (input.deployProvider ?? "").trim() === "ecs"
+        ? await tryHotApplyTelegramTokenViaEcsConfigTask({
+            runtimeId: input.runtimeId,
+            telegramBotToken: input.telegramBotToken,
+          })
+        : null;
+    if (ecsFallback?.applied) {
+      return ecsFallback;
+    }
+    return { attempted: true, applied: false as const, reason: ecsFallback?.reason ?? "runtime_unreachable" };
   }
 
   const token = new URL(gatewayUrl).searchParams.get("token");
   if (!token) {
-    return { attempted: true, applied: false as const, reason: "missing_gateway_token" };
+    const ecsFallback =
+      (input.deployProvider ?? "").trim() === "ecs"
+        ? await tryHotApplyTelegramTokenViaEcsConfigTask({
+            runtimeId: input.runtimeId,
+            telegramBotToken: input.telegramBotToken,
+          })
+        : null;
+    if (ecsFallback?.applied) {
+      return ecsFallback;
+    }
+    return { attempted: true, applied: false as const, reason: ecsFallback?.reason ?? "missing_gateway_token" };
   }
 
   if (typeof WebSocket === "undefined") {
-    return { attempted: true, applied: false as const, reason: "websocket_unavailable" };
+    const ecsFallback =
+      (input.deployProvider ?? "").trim() === "ecs"
+        ? await tryHotApplyTelegramTokenViaEcsConfigTask({
+            runtimeId: input.runtimeId,
+            telegramBotToken: input.telegramBotToken,
+          })
+        : null;
+    if (ecsFallback?.applied) {
+      return ecsFallback;
+    }
+    return { attempted: true, applied: false as const, reason: ecsFallback?.reason ?? "websocket_unavailable" };
   }
 
   const profiles = [
@@ -355,6 +535,25 @@ async function tryHotApplyTelegramToken(input: {
         // no-op
       }
     }
+    }
+  }
+
+  if ((input.deployProvider ?? "").trim() === "ecs") {
+    const looksLikeScopeBlock = lastReason.includes("missing scope:");
+    const looksLikeAuthRoleBlock = lastReason.includes("operator.read");
+    if (looksLikeScopeBlock || looksLikeAuthRoleBlock) {
+      const ecsFallback = await tryHotApplyTelegramTokenViaEcsConfigTask({
+        runtimeId: input.runtimeId,
+        telegramBotToken: input.telegramBotToken,
+      });
+      if (ecsFallback.applied) {
+        return ecsFallback;
+      }
+      return {
+        attempted: true,
+        applied: false as const,
+        reason: `${lastReason}; ${ecsFallback.reason ?? "ecs helper failed"}`,
+      };
     }
   }
 
