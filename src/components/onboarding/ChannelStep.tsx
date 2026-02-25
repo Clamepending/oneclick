@@ -55,14 +55,14 @@ export function ChannelStep({
         />
         <p className="muted">Leave blank to skip for now.</p>
       </div>
-      <hr style={{ border: 0, borderTop: "1px solid #2f3c52", margin: "16px 0" }} />
+      <hr style={{ border: 0, borderTop: "1px solid var(--border)", margin: "16px 0" }} />
       <h3 style={{ margin: "0 0 8px" }}>Connect Telegram (optional)</h3>
       <div
         style={{
-          border: "1px solid #2f3c52",
+          border: "1px solid var(--border)",
           borderRadius: 12,
           padding: 12,
-          background: "#0f1521",
+          background: "var(--surface-strong)",
           display: "grid",
           gap: 10,
         }}

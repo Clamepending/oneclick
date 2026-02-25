@@ -13,7 +13,7 @@ export function PlanStep({ onDeploy, loading, hasApiKey }: Props) {
       <p className="muted">Free is preselected to keep this fast.</p>
       <div
         style={{
-          border: "1px solid #2f3c52",
+          border: "1px solid var(--border)",
           borderRadius: 10,
           padding: 16,
           marginBottom: 12,

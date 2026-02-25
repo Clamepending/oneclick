@@ -116,16 +116,16 @@ export function BotDashboard({ deployments }: Props) {
               }}
               style={{
                 textAlign: "left",
-                border: "1px solid #243041",
+                border: "1px solid var(--border)",
                 borderRadius: 12,
                 padding: "10px 12px",
-                background: isActive ? "#182135" : "#0f1521",
-                color: "#f5f7fa",
+                background: isActive ? "rgba(255, 87, 95, 0.08)" : "var(--surface-strong)",
+                color: "var(--text)",
                 cursor: "pointer",
                 display: "grid",
                 gap: 6,
                 transition: "border-color 120ms ease, transform 120ms ease",
-                borderColor: isActive ? "#3c5b86" : "#243041",
+                borderColor: isActive ? "var(--border-strong)" : "var(--border)",
               }}
             >
               <strong>{group.name}</strong>
@@ -138,7 +138,7 @@ export function BotDashboard({ deployments }: Props) {
                   <Link
                     href={preview.botDashboardUrl}
                     onClick={(event) => event.stopPropagation()}
-                    style={{ textDecoration: "underline", color: "#9fc2ff" }}
+                    style={{ textDecoration: "underline", color: "var(--accent-soft)" }}
                   >
                     {preview.botDashboardUrl}
                   </Link>
@@ -168,10 +168,10 @@ export function BotDashboard({ deployments }: Props) {
         <div style={{ display: "grid", gap: 10 }}>
           <div
             style={{
-              border: "1px solid #243041",
+              border: "1px solid var(--border)",
               borderRadius: 12,
               padding: 14,
-              background: "#0f1521",
+              background: "var(--surface-strong)",
               display: "grid",
               gap: 6,
             }}
@@ -203,10 +203,10 @@ export function BotDashboard({ deployments }: Props) {
                 style={{
                   display: "grid",
                   gap: 8,
-                  border: "1px solid #243041",
+                  border: "1px solid var(--border)",
                   borderRadius: 12,
                   padding: 14,
-                  background: "#0f1521",
+                  background: "var(--surface-strong)",
                 }}
               >
                 <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
