@@ -188,17 +188,19 @@ output "ecr_repository_url" {
 
 output "app_env_recommended" {
   value = {
-    DEPLOY_PROVIDER         = "ecs"
-    AWS_REGION              = var.aws_region
-    ECS_CLUSTER             = aws_ecs_cluster.main.name
-    ECS_SUBNET_IDS          = join(",", [for s in aws_subnet.public : s.id])
-    ECS_SECURITY_GROUP_IDS  = aws_security_group.ecs_tasks.id
-    ECS_EXECUTION_ROLE_ARN  = aws_iam_role.ecs_execution.arn
-    ECS_TASK_ROLE_ARN       = aws_iam_role.ecs_task.arn
-    ECS_LOG_GROUP           = aws_cloudwatch_log_group.ecs.name
-    ECS_LOG_STREAM_PREFIX   = var.ecs_log_stream_prefix
-    ECS_ASSIGN_PUBLIC_IP    = "true"
-    ECS_SERVICE_PREFIX      = var.ecs_service_prefix
-    OPENCLAW_CONTAINER_PORT = tostring(var.runtime_container_port)
+    DEPLOY_PROVIDER          = "ecs"
+    DEPLOY_QUEUE_PROVIDER    = "sqs"
+    AWS_REGION               = var.aws_region
+    SQS_DEPLOYMENT_QUEUE_URL = aws_sqs_queue.deployments.url
+    ECS_CLUSTER              = aws_ecs_cluster.main.name
+    ECS_SUBNET_IDS           = join(",", [for s in aws_subnet.public : s.id])
+    ECS_SECURITY_GROUP_IDS   = aws_security_group.ecs_tasks.id
+    ECS_EXECUTION_ROLE_ARN   = aws_iam_role.ecs_execution.arn
+    ECS_TASK_ROLE_ARN        = aws_iam_role.ecs_task.arn
+    ECS_LOG_GROUP            = aws_cloudwatch_log_group.ecs.name
+    ECS_LOG_STREAM_PREFIX    = var.ecs_log_stream_prefix
+    ECS_ASSIGN_PUBLIC_IP     = "true"
+    ECS_SERVICE_PREFIX       = var.ecs_service_prefix
+    OPENCLAW_CONTAINER_PORT  = tostring(var.runtime_container_port)
   }
 }

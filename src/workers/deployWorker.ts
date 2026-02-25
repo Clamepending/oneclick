@@ -5,11 +5,12 @@ import net from "node:net";
 import os from "node:os";
 import { Client } from "ssh2";
 import { DescribeServicesCommand, ECSClient, type ECSClientConfig } from "@aws-sdk/client-ecs";
+import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { ensureSchema, pool } from "@/lib/db";
 import { selectHost } from "@/lib/provisioner/hostScheduler";
 import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runtimeProvider";
 
-type DeploymentJob = {
+export type DeploymentJob = {
   deploymentId: string;
   userId: string;
 };
@@ -25,7 +26,31 @@ function getQueueConnection() {
   return { url: redisUrl };
 }
 
+function getQueueProvider() {
+  const value = (process.env.DEPLOY_QUEUE_PROVIDER ?? "redis").trim().toLowerCase();
+  return value === "sqs" ? "sqs" : "redis";
+}
+
+function getSqsQueueConfig() {
+  const region = readTrimmedEnv("AWS_REGION");
+  const queueUrl = readTrimmedEnv("SQS_DEPLOYMENT_QUEUE_URL");
+  if (!region) throw new Error("AWS_REGION is required for SQS deployment queue operations.");
+  if (!queueUrl) throw new Error("SQS_DEPLOYMENT_QUEUE_URL is required when DEPLOY_QUEUE_PROVIDER=sqs.");
+  return { region, queueUrl };
+}
+
 export async function enqueueDeploymentJob(job: DeploymentJob) {
+  if (getQueueProvider() === "sqs") {
+    const { region, queueUrl } = getSqsQueueConfig();
+    const client = new SQSClient(buildAwsConfigWithTrimmedCreds(region));
+    await client.send(
+      new SendMessageCommand({
+        QueueUrl: queueUrl,
+        MessageBody: JSON.stringify(job),
+      }),
+    );
+    return;
+  }
   const queue = new Queue<DeploymentJob>(queueName, { connection: getQueueConnection() });
   await queue.add("deploy", job, {
     jobId: job.deploymentId,
@@ -474,6 +499,11 @@ export async function markDeploymentFailed(deploymentId: string, error: unknown)
 }
 
 export function startDeploymentWorker() {
+  if (getQueueProvider() === "sqs") {
+    throw new Error(
+      "DEPLOY_QUEUE_PROVIDER=sqs is event-driven. Do not run the BullMQ worker; use the SQS consumer (Lambda) instead.",
+    );
+  }
   const worker = new Worker<DeploymentJob>(
     queueName,
     async (bullJob) => {

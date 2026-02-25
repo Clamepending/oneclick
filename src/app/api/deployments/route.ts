@@ -40,24 +40,34 @@ function readBoolEnv(name: string, fallback = false) {
 
 type QueueModeInfo = {
   usable: boolean;
-  redisUrl: string;
-  reason: "ok" | "missing_redis_url" | "localhost_redis_url";
+  provider: "redis" | "sqs";
+  endpoint: string;
+  reason: "ok" | "missing_redis_url" | "localhost_redis_url" | "missing_sqs_queue_url" | "missing_aws_region";
 };
 
 function getQueueModeInfo(): QueueModeInfo {
-  const redisUrl = readTrimmedEnv("REDIS_URL");
-  if (!redisUrl) return { usable: false, redisUrl: "", reason: "missing_redis_url" };
-  if (redisUrl.includes("127.0.0.1") || redisUrl.includes("localhost")) {
-    return { usable: false, redisUrl, reason: "localhost_redis_url" };
+  const provider = readTrimmedEnv("DEPLOY_QUEUE_PROVIDER").toLowerCase() === "sqs" ? "sqs" : "redis";
+  if (provider === "sqs") {
+    const region = readTrimmedEnv("AWS_REGION");
+    const queueUrl = readTrimmedEnv("SQS_DEPLOYMENT_QUEUE_URL");
+    if (!region) return { usable: false, provider, endpoint: "", reason: "missing_aws_region" };
+    if (!queueUrl) return { usable: false, provider, endpoint: "", reason: "missing_sqs_queue_url" };
+    return { usable: true, provider, endpoint: queueUrl, reason: "ok" };
   }
-  return { usable: true, redisUrl, reason: "ok" };
+
+  const redisUrl = readTrimmedEnv("REDIS_URL");
+  if (!redisUrl) return { usable: false, provider, endpoint: "", reason: "missing_redis_url" };
+  if (redisUrl.includes("127.0.0.1") || redisUrl.includes("localhost")) {
+    return { usable: false, provider, endpoint: redisUrl, reason: "localhost_redis_url" };
+  }
+  return { usable: true, provider, endpoint: redisUrl, reason: "ok" };
 }
 
 function isVercelRuntime() {
   return readBoolEnv("VERCEL", false) || readTrimmedEnv("VERCEL_ENV") !== "";
 }
 
-function summarizeRedisUrl(raw: string) {
+function summarizeQueueEndpoint(raw: string) {
   if (!raw) return "none";
   try {
     const url = new URL(raw);
@@ -68,6 +78,12 @@ function summarizeRedisUrl(raw: string) {
 }
 
 function queueUnavailableMessage(queueInfo: QueueModeInfo) {
+  if (queueInfo.reason === "missing_aws_region") {
+    return "Deployment queue unavailable: AWS_REGION is not configured for SQS queueing.";
+  }
+  if (queueInfo.reason === "missing_sqs_queue_url") {
+    return "Deployment queue unavailable: SQS_DEPLOYMENT_QUEUE_URL is not configured. Deployments require an SQS queue + consumer in production.";
+  }
   if (queueInfo.reason === "missing_redis_url") {
     return "Deployment queue unavailable: REDIS_URL is not configured. Deployments require a running worker + Redis in production.";
   }
@@ -322,7 +338,7 @@ export async function POST(request: Request) {
        VALUES ($1, 'queued', $2)`,
       [
         deploymentId,
-        `Queue routing: provider=${vercelRuntime ? "vercel" : "node"} queueUsable=${queueInfo.usable ? "yes" : "no"} redis=${summarizeRedisUrl(queueInfo.redisUrl)} reason=${queueInfo.reason}`,
+        `Queue routing: runtime=${vercelRuntime ? "vercel" : "node"} queueProvider=${queueInfo.provider} queueUsable=${queueInfo.usable ? "yes" : "no"} endpoint=${summarizeQueueEndpoint(queueInfo.endpoint)} reason=${queueInfo.reason}`,
       ],
     );
 
@@ -358,7 +374,9 @@ export async function POST(request: Request) {
     }
 
     try {
-      console.info(`[deploy:${deploymentId}] enqueueing deployment job via Redis ${summarizeRedisUrl(queueInfo.redisUrl)}`);
+      console.info(
+        `[deploy:${deploymentId}] enqueueing deployment job via ${queueInfo.provider} ${summarizeQueueEndpoint(queueInfo.endpoint)}`,
+      );
       await pool.query(
         `INSERT INTO deployment_events (deployment_id, status, message)
          VALUES ($1, 'queued', 'Queue available; enqueueing deployment job for worker')`,

@@ -36,9 +36,10 @@ Critical keys:
 - `HOST_POOL_JSON`
 - `OPENCLAW_IMAGE`
 
-Optional for background queue mode:
+Queueing / deployment orchestration:
 
-- `REDIS_URL` (required only if using separate worker process)
+- Recommended: `DEPLOY_QUEUE_PROVIDER=sqs` + `SQS_DEPLOYMENT_QUEUE_URL` (AWS SQS)
+- Legacy: `DEPLOY_QUEUE_PROVIDER=redis` + `REDIS_URL` (BullMQ/Redis)
 
 Runtime deployment mode:
 
@@ -88,7 +89,7 @@ Infra source: `infra/aws/`
 ## Vercel deployment
 
 - This app is Vercel-compatible out of the box.
-- If `REDIS_URL` is not set, deployments are processed in-process (no separate worker required).
+- Vercel production now fails fast if the configured queue backend is unavailable (instead of silently doing in-process deploy work).
 - On Vercel, set:
   - `AUTH_URL=https://your-app.vercel.app`
   - `APP_BASE_URL=https://your-app.vercel.app`
