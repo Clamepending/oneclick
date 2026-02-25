@@ -6,7 +6,7 @@ import { LambdaClient, GetFunctionConfigurationCommand, UpdateFunctionConfigurat
 
 const root = process.cwd();
 dotenv.config({ path: path.join(root, ".env"), quiet: true });
-dotenv.config({ path: path.join(root, ".env.local"), override: true, quiet: true });
+dotenv.config({ path: path.join(root, ".env.local"), quiet: true });
 
 function read(name) {
   const raw = process.env[name];

@@ -1,5 +1,4 @@
 import { randomUUID } from "crypto";
-import { Client } from "ssh2";
 import {
   CreateServiceCommand,
   DeleteServiceCommand,
@@ -221,6 +220,7 @@ function buildEcsReadyUrl(input: { deploymentId: string; userId: string; service
 }
 
 async function runSshCommand(sshTarget: string, command: string) {
+  const { Client } = await import("ssh2");
   const { user, host } = parseUserAndHost(sshTarget);
   const privateKeyRaw = process.env.DEPLOY_SSH_PRIVATE_KEY?.trim();
   if (!privateKeyRaw) {
