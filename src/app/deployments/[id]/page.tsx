@@ -184,7 +184,7 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
             botName={deployment.botName}
           />
         ) : null}
-        {deployment ? (
+        {deployment?.status === "ready" ? (
           <DeploymentSettingsCard
             deploymentId={deployment.id}
             hasOpenaiApiKey={Boolean(deployment.settings?.hasOpenaiApiKey)}
@@ -192,6 +192,10 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
             hasOpenrouterApiKey={Boolean(deployment.settings?.hasOpenrouterApiKey)}
             hasTelegramBotToken={Boolean(deployment.settings?.hasTelegramBotToken)}
           />
+        ) : deployment ? (
+          <p className="muted" style={{ margin: 0 }}>
+            Runtime settings will appear after the container is ready.
+          </p>
         ) : null}
         {(deployment?.status === "failed" || deployment?.status === "stopped") ? (
           <p style={{ color: "#ff8e8e" }}>{deployment.error ?? "Deployment failed."}</p>
