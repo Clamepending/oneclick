@@ -50,7 +50,13 @@ export function DeploymentSettingsCard({
         body: JSON.stringify(payload),
       });
       const body = (await response.json().catch(() => null)) as
-        | { ok?: boolean; error?: string; deploymentId?: string; redeployed?: boolean }
+        | {
+            ok?: boolean;
+            error?: string;
+            deploymentId?: string;
+            redeployed?: boolean;
+            liveApply?: { attempted?: boolean; applied?: boolean; reason?: string };
+          }
         | null;
       if (!response.ok || !body?.ok) {
         throw new Error(body?.error ?? "Failed to save deployment settings.");
@@ -65,7 +71,13 @@ export function DeploymentSettingsCard({
         router.push(`/deployments/${body.deploymentId}`);
         return;
       }
-      setMessage("Saved. New values are used on next redeploy.");
+      if (body?.liveApply?.attempted && body.liveApply.applied) {
+        setMessage("Saved and applied to the running OpenClaw runtime.");
+      } else if (body?.liveApply?.attempted) {
+        setMessage("Saved. Live apply did not succeed, so new values are used on next redeploy.");
+      } else {
+        setMessage("Saved. New values are used on next redeploy.");
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save deployment settings.");
     } finally {
