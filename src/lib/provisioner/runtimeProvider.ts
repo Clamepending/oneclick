@@ -420,10 +420,12 @@ async function launchViaEcs(input: LaunchInput) {
   const telemetryEnv = readTrimmedEnv("OPENCLAW_TELEMETRY");
   const ecsClient = new ECSClient(buildAwsConfigWithTrimmedCreds(region));
   const allowInsecureControlUi = shouldAllowInsecureControlUi();
+  const gatewayToken = getGatewayToken();
   const configVolumeName = "openclaw-config";
   const configMountPath = "/root/.openclaw";
   const configInitBase = `${containerName}-cfg`;
   const bindInitContainerName = `${configInitBase}-bind`.slice(0, 255);
+  const tokenInitContainerName = `${configInitBase}-token`.slice(0, 255);
   const insecureOriginFallbackInitName = `${configInitBase}-origin`.slice(0, 255);
   const insecureAuthInitName = `${configInitBase}-auth`.slice(0, 255);
   const insecureDeviceAuthInitName = `${configInitBase}-device`.slice(0, 255);
@@ -475,12 +477,17 @@ async function launchViaEcs(input: LaunchInput) {
 
   const configInitContainers = [
     buildConfigInitContainer(bindInitContainerName, ["config", "set", "gateway.bind", "lan"]),
+    buildConfigInitContainer(
+      tokenInitContainerName,
+      ["config", "set", "gateway.auth.token", gatewayToken],
+      [{ containerName: bindInitContainerName, condition: "SUCCESS" }],
+    ),
     ...(allowInsecureControlUi
       ? [
           buildConfigInitContainer(
             insecureAuthInitName,
             ["config", "set", "gateway.controlUi.allowInsecureAuth", "true"],
-            [{ containerName: bindInitContainerName, condition: "SUCCESS" }],
+            [{ containerName: tokenInitContainerName, condition: "SUCCESS" }],
           ),
           buildConfigInitContainer(
             insecureDeviceAuthInitName,
@@ -503,7 +510,7 @@ async function launchViaEcs(input: LaunchInput) {
 
   const mainContainerDependsOn = [
     {
-      containerName: allowInsecureControlUi ? trustedProxiesInitName : bindInitContainerName,
+      containerName: allowInsecureControlUi ? trustedProxiesInitName : tokenInitContainerName,
       condition: "SUCCESS" as const,
     },
   ];
@@ -609,11 +616,14 @@ async function launchViaEcs(input: LaunchInput) {
     hostPort: null,
     startCommand,
     hostName: `ecs:${cluster}`,
-    readyUrl: buildEcsReadyUrl({
-      deploymentId: input.deploymentId,
-      userId: input.userId,
-      serviceName,
-    }),
+    readyUrl: withGatewayToken(
+      buildEcsReadyUrl({
+        deploymentId: input.deploymentId,
+        userId: input.userId,
+        serviceName,
+      }),
+      gatewayToken,
+    ),
   };
 }
 

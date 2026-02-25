@@ -108,6 +108,22 @@ async function resolveEcsPublicUrl(input: { runtimeId: string; deploymentId: str
   return `http://${publicIp}:${port}`;
 }
 
+function withTokenFromReadyUrl(resolvedUrl: string, readyUrl: string | null) {
+  if (!readyUrl) return resolvedUrl;
+  try {
+    const source = new URL(readyUrl);
+    const token = source.searchParams.get("token");
+    if (!token) return resolvedUrl;
+    const target = new URL(resolvedUrl);
+    if (!target.searchParams.get("token")) {
+      target.searchParams.set("token", token);
+    }
+    return target.toString();
+  } catch {
+    return resolvedUrl;
+  }
+}
+
 function renderPlaceholder(id: string, details?: string) {
   return (
     <main className="container">
@@ -162,7 +178,7 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
       return renderPlaceholder(id, message);
     }
     if (resolved) {
-      redirect(resolved);
+      redirect(withTokenFromReadyUrl(resolved, deployment.ready_url));
     }
     return renderPlaceholder(
       id,
