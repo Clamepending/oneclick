@@ -488,6 +488,7 @@ async function launchViaEcs(input: LaunchInput) {
         [
           "onboard",
           "--non-interactive",
+          "--accept-risk",
           "--mode",
           "local",
           "--auth-choice",
