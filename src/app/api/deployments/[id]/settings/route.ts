@@ -294,7 +294,7 @@ async function tryHotApplyTelegramToken(input: {
         id: "cli",
         version: "1.0.0",
         platform: "linux",
-        mode: "operator",
+        mode: "cli",
       },
       role: "operator",
       scopes: ["operator.read", "operator.write"],
