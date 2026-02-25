@@ -205,137 +205,150 @@ async function tryHotApplyTelegramToken(input: {
     return { attempted: true, applied: false as const, reason: "websocket_unavailable" };
   }
 
-  const ws = new WebSocket(toWsUrl(gatewayUrl));
-  const pending = new Map<
-    string,
-    {
-      resolve: (value: RpcResponseMessage) => void;
-      reject: (reason?: unknown) => void;
-    }
-  >();
-  let seq = 0;
+  const profiles = [
+    { clientId: "control-ui", mode: "control-ui", userAgent: "openclaw-control-ui/1.0.0" },
+    { clientId: "web", mode: "web", userAgent: "openclaw-web/1.0.0" },
+    { clientId: "dashboard", mode: "dashboard", userAgent: "openclaw-dashboard/1.0.0" },
+    { clientId: "cli", mode: "cli", userAgent: "openclaw-cli/1.0.0" },
+  ];
 
-  const cleanup = () => {
-    for (const item of pending.values()) {
-      item.reject(new Error("WebSocket closed"));
-    }
-    pending.clear();
-  };
+  let lastReason = "Live apply failed";
 
-  ws.addEventListener("message", (event) => {
-    try {
-      const message = JSON.parse(String(event.data)) as RpcResponseMessage;
-      const id = message.id;
-      if (id === undefined || id === null) return;
-      const key = String(id);
-      const waiter = pending.get(key);
-      if (!waiter) return;
-      pending.delete(key);
-      waiter.resolve(message);
-    } catch {
-      // Ignore non-JSON frames.
-    }
-  });
+  for (const profile of profiles) {
+    const ws = new WebSocket(toWsUrl(gatewayUrl));
+    const pending = new Map<
+      string,
+      {
+        resolve: (value: RpcResponseMessage) => void;
+        reject: (reason?: unknown) => void;
+      }
+    >();
+    let seq = 0;
 
-  const openPromise = new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("WebSocket connect timeout")), 5000);
-    ws.addEventListener("open", () => {
-      clearTimeout(timeout);
-      resolve();
-    }, { once: true });
-    ws.addEventListener("error", () => {
-      clearTimeout(timeout);
-      reject(new Error("WebSocket connection failed"));
-    }, { once: true });
-  });
+    const cleanup = () => {
+      for (const item of pending.values()) {
+        item.reject(new Error("WebSocket closed"));
+      }
+      pending.clear();
+    };
 
-  ws.addEventListener("close", () => {
-    cleanup();
-  });
-
-  const rpc = async (method: string, params: unknown) => {
-    const id = `oneclick-${++seq}`;
-    const responsePromise = new Promise<RpcResponseMessage>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        pending.delete(id);
-        reject(new Error(`RPC timeout: ${method}`));
-      }, 7000);
-      pending.set(id, {
-        resolve: (value) => {
-          clearTimeout(timeout);
-          resolve(value);
-        },
-        reject: (reason) => {
-          clearTimeout(timeout);
-          reject(reason);
-        },
-      });
+    ws.addEventListener("message", (event) => {
+      try {
+        const message = JSON.parse(String(event.data)) as RpcResponseMessage;
+        const id = message.id;
+        if (id === undefined || id === null) return;
+        const key = String(id);
+        const waiter = pending.get(key);
+        if (!waiter) return;
+        pending.delete(key);
+        waiter.resolve(message);
+      } catch {
+        // Ignore non-JSON frames.
+      }
     });
 
-    ws.send(JSON.stringify({ type: "req", id, method, params }));
-    const response = await responsePromise;
-    const ok = response.ok !== false;
-    if (!ok) {
-      const errorMessage =
-        typeof response.error === "string"
-          ? response.error
-          : response.error?.message || `RPC failed: ${method}`;
-      throw new Error(errorMessage);
-    }
-    return response.payload;
-  };
-
-  try {
-    await openPromise;
-    await rpc("connect", {
-      minProtocol: 3,
-      maxProtocol: 3,
-      client: {
-        id: "cli",
-        version: "1.0.0",
-        platform: "linux",
-        mode: "cli",
-      },
-      role: "operator",
-      scopes: ["operator.read", "operator.write"],
-      caps: [],
-      commands: [],
-      permissions: {},
-      auth: { token },
-      locale: "en-US",
-      userAgent: "openclaw-cli/1.0.0",
+    const openPromise = new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("WebSocket connect timeout")), 5000);
+      ws.addEventListener("open", () => {
+        clearTimeout(timeout);
+        resolve();
+      }, { once: true });
+      ws.addEventListener("error", () => {
+        clearTimeout(timeout);
+        reject(new Error("WebSocket connection failed"));
+      }, { once: true });
     });
 
-    const currentConfig = (await rpc("config.get", {})) as { hash?: string } | null;
-    const baseHash = currentConfig?.hash;
-    if (!baseHash) {
-      return { attempted: true, applied: false as const, reason: "config_hash_missing" };
-    }
+    ws.addEventListener("close", () => {
+      cleanup();
+    });
 
-    await rpc("config.patch", {
-      baseHash,
-      idempotencyKey: `oneclick-telegram-${Date.now()}`,
-      raw: JSON.stringify({
-        channels: {
-          telegram: {
-            enabled: true,
-            botToken: input.telegramBotToken,
+    const rpc = async (method: string, params: unknown) => {
+      const id = `oneclick-${++seq}`;
+      const responsePromise = new Promise<RpcResponseMessage>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          pending.delete(id);
+          reject(new Error(`RPC timeout: ${method}`));
+        }, 7000);
+        pending.set(id, {
+          resolve: (value) => {
+            clearTimeout(timeout);
+            resolve(value);
           },
-        },
-      }),
-    });
+          reject: (reason) => {
+            clearTimeout(timeout);
+            reject(reason);
+          },
+        });
+      });
 
-    return { attempted: true, applied: true as const };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Live apply failed";
-    return { attempted: true, applied: false as const, reason: message };
-  } finally {
+      ws.send(JSON.stringify({ type: "req", id, method, params }));
+      const response = await responsePromise;
+      const ok = response.ok !== false;
+      if (!ok) {
+        const errorMessage =
+          typeof response.error === "string"
+            ? response.error
+            : response.error?.message || `RPC failed: ${method}`;
+        throw new Error(errorMessage);
+      }
+      return response.payload;
+    };
+
     try {
-      ws.close();
-    } catch {
-      // no-op
+      await openPromise;
+      await rpc("connect", {
+        minProtocol: 3,
+        maxProtocol: 3,
+        client: {
+          id: profile.clientId,
+          version: "1.0.0",
+          platform: "linux",
+          mode: profile.mode,
+        },
+        role: "operator",
+        scopes: ["operator.admin", "operator.write", "operator.read"],
+        caps: [],
+        commands: [],
+        permissions: {},
+        auth: { token },
+        locale: "en-US",
+        userAgent: profile.userAgent,
+      });
+
+      const currentConfig = (await rpc("config.get", {})) as { hash?: string } | null;
+      const baseHash = currentConfig?.hash;
+      if (!baseHash) {
+        lastReason = "config_hash_missing";
+        continue;
+      }
+
+      await rpc("config.patch", {
+        baseHash,
+        idempotencyKey: `oneclick-telegram-${Date.now()}`,
+        raw: JSON.stringify({
+          channels: {
+            telegram: {
+              enabled: true,
+              botToken: input.telegramBotToken,
+            },
+          },
+        }),
+      });
+
+      return { attempted: true, applied: true as const };
+    } catch (error) {
+      lastReason = error instanceof Error ? error.message : "Live apply failed";
+    } finally {
+      try {
+        ws.close();
+      } catch {
+        // no-op
+      }
     }
   }
+
+  return { attempted: true, applied: false as const, reason: lastReason };
 }
 
 function getQueueModeInfo(): QueueModeInfo {
