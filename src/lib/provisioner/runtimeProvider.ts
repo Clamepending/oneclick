@@ -460,6 +460,7 @@ async function launchViaEcs(input: LaunchInput) {
           name: initContainerName,
           image,
           essential: false,
+          user: "0",
           command: ["config", "set", "gateway.bind", "lan"],
           mountPoints: [
             {
@@ -483,6 +484,7 @@ async function launchViaEcs(input: LaunchInput) {
           name: containerName,
           image,
           essential: true,
+          user: "0",
           command: command.length > 0 ? command : undefined,
           environment,
           dependsOn: [
