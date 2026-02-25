@@ -482,31 +482,33 @@ async function launchViaEcs(input: LaunchInput) {
       : undefined,
   });
 
-  const configInitContainers = [
-    buildConfigInitContainer(
-      authInitContainerName,
-      [
-        "sh",
-        "-lc",
+  const authInitContainer = input.anthropicApiKey?.trim()
+    ? buildConfigInitContainer(
+        authInitContainerName,
         [
-          "set -e",
-          // Seed per-agent auth store for Anthropic API keys so new agents can reply without manual UI auth setup.
-          "if [ -n \"${ANTHROPIC_API_KEY:-}\" ]; then",
-          `  openclaw onboard --non-interactive --mode local --auth-choice apiKey --anthropic-api-key \"$ANTHROPIC_API_KEY\" --gateway-port ${containerPort} --gateway-bind lan --skip-skills >/tmp/openclaw-onboard.log 2>&1 || (cat /tmp/openclaw-onboard.log >&2; exit 1)`,
-          "else",
-          "  echo 'Skipping auth onboard init (no ANTHROPIC_API_KEY provided)'",
-          "fi",
-        ].join("; "),
-      ],
-      undefined,
-      input.anthropicApiKey?.trim()
-        ? [{ name: "ANTHROPIC_API_KEY", value: input.anthropicApiKey.trim() }]
-        : undefined,
-    ),
+          "onboard",
+          "--non-interactive",
+          "--mode",
+          "local",
+          "--auth-choice",
+          "apiKey",
+          "--anthropic-api-key",
+          input.anthropicApiKey.trim(),
+          "--gateway-port",
+          String(containerPort),
+          "--gateway-bind",
+          "lan",
+          "--skip-skills",
+        ],
+      )
+    : null;
+
+  const configInitContainers = [
+    ...(authInitContainer ? [authInitContainer] : []),
     buildConfigInitContainer(
       bindInitContainerName,
       ["config", "set", "gateway.bind", "lan"],
-      [{ containerName: authInitContainerName, condition: "SUCCESS" }],
+      authInitContainer ? [{ containerName: authInitContainerName, condition: "SUCCESS" }] : undefined,
     ),
     buildConfigInitContainer(
       tokenInitContainerName,
