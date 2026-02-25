@@ -419,12 +419,18 @@ async function launchViaEcs(input: LaunchInput) {
   const awslogsPrefix = readTrimmedEnv("ECS_LOG_STREAM_PREFIX") || "oneclick";
   const telemetryEnv = readTrimmedEnv("OPENCLAW_TELEMETRY");
   const ecsClient = new ECSClient(buildAwsConfigWithTrimmedCreds(region));
+  const allowInsecureControlUi = shouldAllowInsecureControlUi();
   const configVolumeName = "openclaw-config";
   const configMountPath = "/root/.openclaw";
-  const initContainerName = `${containerName}-config-init`.slice(0, 255);
+  const configInitBase = `${containerName}-cfg`;
+  const bindInitContainerName = `${configInitBase}-bind`.slice(0, 255);
+  const insecureOriginFallbackInitName = `${configInitBase}-origin`.slice(0, 255);
+  const insecureAuthInitName = `${configInitBase}-auth`.slice(0, 255);
+  const insecureDeviceAuthInitName = `${configInitBase}-device`.slice(0, 255);
+  const trustedProxiesInitName = `${configInitBase}-proxy`.slice(0, 255);
 
   const environment = [
-    { name: "OPENCLAW_ALLOW_INSECURE_CONTROL_UI", value: shouldAllowInsecureControlUi() ? "true" : "false" },
+    { name: "OPENCLAW_ALLOW_INSECURE_CONTROL_UI", value: allowInsecureControlUi ? "true" : "false" },
     input.telegramBotToken?.trim() ? { name: "TELEGRAM_BOT_TOKEN", value: input.telegramBotToken.trim() } : null,
     input.openaiApiKey?.trim() ? { name: "OPENAI_API_KEY", value: input.openaiApiKey.trim() } : null,
     input.anthropicApiKey?.trim() ? { name: "ANTHROPIC_API_KEY", value: input.anthropicApiKey.trim() } : null,
@@ -441,6 +447,67 @@ async function launchViaEcs(input: LaunchInput) {
     telemetryEnv ? { name: "OPENCLAW_TELEMETRY", value: telemetryEnv } : null,
   ].filter((entry): entry is { name: string; value: string } => Boolean(entry));
 
+  const buildConfigInitContainer = (name: string, command: string[], dependsOn?: Array<{ containerName: string; condition: "SUCCESS" }>) => ({
+    name,
+    image,
+    essential: false,
+    user: "0",
+    command,
+    dependsOn,
+    mountPoints: [
+      {
+        sourceVolume: configVolumeName,
+        containerPath: configMountPath,
+        readOnly: false,
+      },
+    ],
+    logConfiguration: awslogsGroup
+      ? {
+          logDriver: "awslogs" as const,
+          options: {
+            "awslogs-group": awslogsGroup,
+            "awslogs-region": region,
+            "awslogs-stream-prefix": `${awslogsPrefix}-init`,
+          },
+        }
+      : undefined,
+  });
+
+  const configInitContainers = [
+    buildConfigInitContainer(bindInitContainerName, ["config", "set", "gateway.bind", "lan"]),
+    ...(allowInsecureControlUi
+      ? [
+          buildConfigInitContainer(
+            insecureAuthInitName,
+            ["config", "set", "gateway.controlUi.allowInsecureAuth", "true"],
+            [{ containerName: bindInitContainerName, condition: "SUCCESS" }],
+          ),
+          buildConfigInitContainer(
+            insecureDeviceAuthInitName,
+            ["config", "set", "gateway.controlUi.dangerouslyDisableDeviceAuth", "true"],
+            [{ containerName: insecureAuthInitName, condition: "SUCCESS" }],
+          ),
+          buildConfigInitContainer(
+            insecureOriginFallbackInitName,
+            ["config", "set", "gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback", "true"],
+            [{ containerName: insecureDeviceAuthInitName, condition: "SUCCESS" }],
+          ),
+          buildConfigInitContainer(
+            trustedProxiesInitName,
+            ["config", "set", "gateway.trustedProxies", '[\"172.16.0.0/12\"]'],
+            [{ containerName: insecureOriginFallbackInitName, condition: "SUCCESS" }],
+          ),
+        ]
+      : []),
+  ];
+
+  const mainContainerDependsOn = [
+    {
+      containerName: allowInsecureControlUi ? trustedProxiesInitName : bindInitContainerName,
+      condition: "SUCCESS" as const,
+    },
+  ];
+
   const register = await ecsClient.send(
     new RegisterTaskDefinitionCommand({
       family,
@@ -456,30 +523,7 @@ async function launchViaEcs(input: LaunchInput) {
         },
       ],
       containerDefinitions: [
-        {
-          name: initContainerName,
-          image,
-          essential: false,
-          user: "0",
-          command: ["config", "set", "gateway.bind", "lan"],
-          mountPoints: [
-            {
-              sourceVolume: configVolumeName,
-              containerPath: configMountPath,
-              readOnly: false,
-            },
-          ],
-          logConfiguration: awslogsGroup
-            ? {
-                logDriver: "awslogs",
-                options: {
-                  "awslogs-group": awslogsGroup,
-                  "awslogs-region": region,
-                  "awslogs-stream-prefix": `${awslogsPrefix}-init`,
-                },
-              }
-            : undefined,
-        },
+        ...configInitContainers,
         {
           name: containerName,
           image,
@@ -487,12 +531,7 @@ async function launchViaEcs(input: LaunchInput) {
           user: "0",
           command: command.length > 0 ? command : undefined,
           environment,
-          dependsOn: [
-            {
-              containerName: initContainerName,
-              condition: "SUCCESS",
-            },
-          ],
+          dependsOn: mainContainerDependsOn,
           mountPoints: [
             {
               sourceVolume: configVolumeName,
