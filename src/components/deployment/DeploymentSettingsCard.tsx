@@ -74,7 +74,8 @@ export function DeploymentSettingsCard({
       if (body?.liveApply?.attempted && body.liveApply.applied) {
         setMessage("Saved and applied to the running OpenClaw runtime.");
       } else if (body?.liveApply?.attempted) {
-        setMessage("Saved. Live apply did not succeed, so new values are used on next redeploy.");
+        const reason = body.liveApply.reason ? ` (${body.liveApply.reason})` : "";
+        setMessage(`Saved. Live apply did not succeed${reason}, so new values are used on next redeploy.`);
       } else {
         setMessage("Saved. New values are used on next redeploy.");
       }

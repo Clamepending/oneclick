@@ -21,7 +21,8 @@ const payloadSchema = z
         value.openaiApiKey ||
           value.anthropicApiKey ||
           value.openrouterApiKey ||
-          value.telegramBotToken,
+          value.telegramBotToken ||
+          value.redeploy,
       ),
     { message: "At least one setting is required" },
   );
@@ -296,6 +297,10 @@ async function tryHotApplyTelegramToken(input: {
         mode: "operator",
       },
       role: "operator",
+      scopes: ["operator.read", "operator.write"],
+      caps: [],
+      commands: [],
+      permissions: {},
       auth: { token },
       locale: "en-US",
       userAgent: "oneclick-settings",
@@ -309,6 +314,7 @@ async function tryHotApplyTelegramToken(input: {
 
     await rpc("config.patch", {
       baseHash,
+      idempotencyKey: `oneclick-telegram-${Date.now()}`,
       raw: JSON.stringify({
         channels: {
           telegram: {
