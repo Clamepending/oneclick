@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 type Props = {
@@ -17,16 +18,17 @@ export function DeploymentSettingsCard({
   hasOpenrouterApiKey,
   hasTelegramBotToken,
 }: Props) {
+  const router = useRouter();
   const [openaiApiKey, setOpenaiApiKey] = useState("");
   const [anthropicApiKey, setAnthropicApiKey] = useState("");
   const [openrouterApiKey, setOpenrouterApiKey] = useState("");
   const [telegramBotToken, setTelegramBotToken] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [savingMode, setSavingMode] = useState<"save" | "redeploy" | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  async function handleSave() {
-    setSaving(true);
+  async function handleSave(redeploy: boolean) {
+    setSavingMode(redeploy ? "redeploy" : "save");
     setMessage("");
     setError("");
     try {
@@ -35,6 +37,9 @@ export function DeploymentSettingsCard({
       if (anthropicApiKey.trim()) payload.anthropicApiKey = anthropicApiKey.trim();
       if (openrouterApiKey.trim()) payload.openrouterApiKey = openrouterApiKey.trim();
       if (telegramBotToken.trim()) payload.telegramBotToken = telegramBotToken.trim();
+      if (redeploy) {
+        (payload as Record<string, unknown>).redeploy = true;
+      }
       if (!Object.keys(payload).length) {
         throw new Error("Enter at least one setting to save.");
       }
@@ -44,7 +49,9 @@ export function DeploymentSettingsCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const body = (await response.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+      const body = (await response.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; deploymentId?: string; redeployed?: boolean }
+        | null;
       if (!response.ok || !body?.ok) {
         throw new Error(body?.error ?? "Failed to save deployment settings.");
       }
@@ -53,11 +60,16 @@ export function DeploymentSettingsCard({
       setAnthropicApiKey("");
       setOpenrouterApiKey("");
       setTelegramBotToken("");
+      if (redeploy && body?.deploymentId) {
+        setMessage("Saved and redeploy queued. Opening new deployment...");
+        router.push(`/deployments/${body.deploymentId}`);
+        return;
+      }
       setMessage("Saved. New values are used on next redeploy.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save deployment settings.");
     } finally {
-      setSaving(false);
+      setSavingMode(null);
     }
   }
 
@@ -75,7 +87,7 @@ export function DeploymentSettingsCard({
     >
       <h2 style={{ margin: 0, fontSize: 18 }}>Runtime settings</h2>
       <p className="muted" style={{ margin: 0 }}>
-        Values are hidden. If already set, leave blank to keep current values.
+        Values are hidden. If already set, leave blank to keep current values. Save updates settings only; Save + Redeploy applies them to a new runtime immediately.
       </p>
       <label className="muted">
         OpenAI API key {hasOpenaiApiKey ? "(already set)" : "(not set)"}
@@ -126,8 +138,21 @@ export function DeploymentSettingsCard({
         />
       </label>
       <div className="row">
-        <button className="button" type="button" onClick={() => void handleSave()} disabled={saving}>
-          {saving ? "Saving..." : "Save settings"}
+        <button
+          className="button secondary"
+          type="button"
+          onClick={() => void handleSave(false)}
+          disabled={Boolean(savingMode)}
+        >
+          {savingMode === "save" ? "Saving..." : "Save settings"}
+        </button>
+        <button
+          className="button"
+          type="button"
+          onClick={() => void handleSave(true)}
+          disabled={Boolean(savingMode)}
+        >
+          {savingMode === "redeploy" ? "Saving + redeploying..." : "Save + Redeploy"}
         </button>
       </div>
       {message ? (
