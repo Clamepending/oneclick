@@ -3,7 +3,6 @@ import { Queue, Worker } from "bullmq";
 import { randomUUID } from "crypto";
 import net from "node:net";
 import os from "node:os";
-import { Client } from "ssh2";
 import { DescribeServicesCommand, ECSClient, type ECSClientConfig } from "@aws-sdk/client-ecs";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { ensureSchema, pool } from "@/lib/db";
@@ -136,6 +135,7 @@ async function probeTcpPort(host: string, port: number) {
 }
 
 async function probeSshLocalPort(sshTarget: string, port: number) {
+  const { Client } = await import("ssh2");
   const privateKeyRaw = process.env.DEPLOY_SSH_PRIVATE_KEY?.trim();
   if (!privateKeyRaw) {
     throw new Error("DEPLOY_SSH_PRIVATE_KEY is required for SSH runtime health checks.");

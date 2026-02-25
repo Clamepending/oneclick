@@ -13,6 +13,8 @@
     "aws:env": "bash scripts/aws-ecs-print-env.sh",
     "aws:bootstrap:from-env": "bash scripts/aws-ecs-bootstrap-from-env.sh",
     "aws:smoke": "tsx scripts/ecs-smoke-test.ts",
+    "aws:lambda:sqs-consumer:build": "bash scripts/build-sqs-consumer-lambda.sh",
+    "aws:lambda:sqs-consumer:sync-env": "node scripts/aws-sync-sqs-consumer-lambda-env.mjs",
     "cost:guard:sweep": "tsx scripts/cost-guard-sweep.ts",
     "ecs:audit:cleanup": "tsx scripts/ecs-audit-cleanup.ts",
     "env:upsert": "node scripts/upsert-env-file.mjs"
@@ -20,6 +22,7 @@
   "dependencies": {
     "@aws-sdk/client-ec2": "^3.996.0",
     "@aws-sdk/client-ecs": "^3.922.0",
+    "@aws-sdk/client-lambda": "^3.997.0",
     "@aws-sdk/client-sqs": "^3.997.0",
     "bullmq": "^5.58.0",
     "dotenv": "^17.3.1",
