@@ -291,9 +291,9 @@ async function tryHotApplyTelegramToken(input: {
       minProtocol: 3,
       maxProtocol: 3,
       client: {
-        id: "oneclick",
-        version: "1",
-        platform: "server",
+        id: "cli",
+        version: "1.0.0",
+        platform: "linux",
         mode: "operator",
       },
       role: "operator",
@@ -303,7 +303,7 @@ async function tryHotApplyTelegramToken(input: {
       permissions: {},
       auth: { token },
       locale: "en-US",
-      userAgent: "oneclick-settings",
+      userAgent: "openclaw-cli/1.0.0",
     });
 
     const currentConfig = (await rpc("config.get", {})) as { hash?: string } | null;
