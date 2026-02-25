@@ -8,7 +8,6 @@ import {
   enqueueDeploymentJob,
   markDeploymentFailed,
   newDeploymentId,
-  processDeploymentJob,
 } from "@/workers/deployWorker";
 
 type BotIdentityRow = {
@@ -40,27 +39,18 @@ function readBoolEnv(name: string, fallback = false) {
 
 type QueueModeInfo = {
   usable: boolean;
-  provider: "redis" | "sqs";
+  provider: "sqs";
   endpoint: string;
-  reason: "ok" | "missing_redis_url" | "localhost_redis_url" | "missing_sqs_queue_url" | "missing_aws_region";
+  reason: "ok" | "missing_sqs_queue_url" | "missing_aws_region";
 };
 
 function getQueueModeInfo(): QueueModeInfo {
-  const provider = readTrimmedEnv("DEPLOY_QUEUE_PROVIDER").toLowerCase() === "sqs" ? "sqs" : "redis";
-  if (provider === "sqs") {
-    const region = readTrimmedEnv("AWS_REGION");
-    const queueUrl = readTrimmedEnv("SQS_DEPLOYMENT_QUEUE_URL");
-    if (!region) return { usable: false, provider, endpoint: "", reason: "missing_aws_region" };
-    if (!queueUrl) return { usable: false, provider, endpoint: "", reason: "missing_sqs_queue_url" };
-    return { usable: true, provider, endpoint: queueUrl, reason: "ok" };
-  }
-
-  const redisUrl = readTrimmedEnv("REDIS_URL");
-  if (!redisUrl) return { usable: false, provider, endpoint: "", reason: "missing_redis_url" };
-  if (redisUrl.includes("127.0.0.1") || redisUrl.includes("localhost")) {
-    return { usable: false, provider, endpoint: redisUrl, reason: "localhost_redis_url" };
-  }
-  return { usable: true, provider, endpoint: redisUrl, reason: "ok" };
+  const provider = "sqs" as const;
+  const region = readTrimmedEnv("AWS_REGION");
+  const queueUrl = readTrimmedEnv("SQS_DEPLOYMENT_QUEUE_URL");
+  if (!region) return { usable: false, provider, endpoint: "", reason: "missing_aws_region" };
+  if (!queueUrl) return { usable: false, provider, endpoint: "", reason: "missing_sqs_queue_url" };
+  return { usable: true, provider, endpoint: queueUrl, reason: "ok" };
 }
 
 function isVercelRuntime() {
@@ -82,13 +72,7 @@ function queueUnavailableMessage(queueInfo: QueueModeInfo) {
     return "Deployment queue unavailable: AWS_REGION is not configured for SQS queueing.";
   }
   if (queueInfo.reason === "missing_sqs_queue_url") {
-    return "Deployment queue unavailable: SQS_DEPLOYMENT_QUEUE_URL is not configured. Deployments require an SQS queue + consumer in production.";
-  }
-  if (queueInfo.reason === "missing_redis_url") {
-    return "Deployment queue unavailable: REDIS_URL is not configured. Deployments require a running worker + Redis in production.";
-  }
-  if (queueInfo.reason === "localhost_redis_url") {
-    return "Deployment queue unavailable: REDIS_URL points to localhost, which is not usable from Vercel. Configure a hosted Redis and run the deployment worker.";
+    return "Deployment queue unavailable: SQS_DEPLOYMENT_QUEUE_URL is not configured. Deployments require the AWS SQS queue + Lambda consumer.";
   }
   return "Deployment queue unavailable. Please try again shortly.";
 }
@@ -96,7 +80,7 @@ function queueUnavailableMessage(queueInfo: QueueModeInfo) {
 async function failStaleInProgressDeployments(userId: string) {
   const staleAfterMs = Number(process.env.DEPLOY_STALE_STARTING_TIMEOUT_MS ?? "900000");
   const staleMessage =
-    "Deployment timed out while in progress. The deployment worker may be unavailable. Please redeploy.";
+    "Deployment timed out while in progress. The AWS deployment consumer may be unavailable. Please redeploy.";
   await pool.query(
     `WITH stale AS (
        UPDATE deployments
@@ -113,14 +97,6 @@ async function failStaleInProgressDeployments(userId: string) {
      FROM stale`,
     [userId, staleMessage, staleAfterMs],
   );
-}
-
-function startInProcessDeployment(deploymentId: string, userId: string) {
-  setTimeout(() => {
-    void processDeploymentJob({ deploymentId, userId }).catch(async (error) => {
-      await markDeploymentFailed(deploymentId, error);
-    });
-  }, 0);
 }
 
 async function readRequestedBotName(request: Request) {
@@ -342,7 +318,7 @@ export async function POST(request: Request) {
       ],
     );
 
-    if (!queueInfo.usable && vercelRuntime) {
+    if (!queueInfo.usable) {
       const message = queueUnavailableMessage(queueInfo);
       console.warn(`[deploy:${deploymentId}] ${message}`);
       await pool.query(
@@ -361,31 +337,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: message }, { status: 503 });
     }
 
-    if (!queueInfo.usable) {
-      const fallbackMessage = `Queue unavailable (${queueInfo.reason}); using in-process deployment fallback.`;
-      console.warn(`[deploy:${deploymentId}] ${fallbackMessage}`);
-      await pool.query(
-        `INSERT INTO deployment_events (deployment_id, status, message)
-         VALUES ($1, 'starting', $2)`,
-        [deploymentId, fallbackMessage],
-      );
-      startInProcessDeployment(deploymentId, session.user.email);
-      return NextResponse.json({ id: deploymentId, status: "queued" }, { status: 202 });
-    }
-
     try {
       console.info(
         `[deploy:${deploymentId}] enqueueing deployment job via ${queueInfo.provider} ${summarizeQueueEndpoint(queueInfo.endpoint)}`,
       );
       await pool.query(
         `INSERT INTO deployment_events (deployment_id, status, message)
-         VALUES ($1, 'queued', 'Queue available; enqueueing deployment job for worker')`,
+         VALUES ($1, 'queued', 'Queue available; enqueueing deployment job for AWS consumer')`,
         [deploymentId],
       );
       await enqueueDeploymentJob({ deploymentId, userId: session.user.email });
       await pool.query(
         `INSERT INTO deployment_events (deployment_id, status, message)
-         VALUES ($1, 'queued', 'Deployment job enqueued successfully; waiting for worker pickup')`,
+         VALUES ($1, 'queued', 'Deployment job enqueued successfully; waiting for AWS consumer pickup')`,
         [deploymentId],
       );
     } catch (queueError) {
@@ -403,7 +367,7 @@ export async function POST(request: Request) {
       );
       if (retryableQueueConnectivityError && vercelRuntime) {
         const message =
-          "Deploy queue connection failed on production. The deployment worker may be unavailable or Redis may be unreachable. Please try again shortly.";
+          "Deploy queue connection failed on production. The SQS queue or Lambda consumer may be unavailable. Please try again shortly.";
         await pool.query(
           `UPDATE deployments
            SET status = 'failed',
@@ -418,15 +382,6 @@ export async function POST(request: Request) {
           [deploymentId, message],
         );
         return NextResponse.json({ ok: false, error: message }, { status: 503 });
-      }
-      if (retryableQueueConnectivityError) {
-        await pool.query(
-          `INSERT INTO deployment_events (deployment_id, status, message)
-           VALUES ($1, 'starting', 'Falling back to in-process deployment after queue connectivity error')`,
-          [deploymentId],
-        );
-        startInProcessDeployment(deploymentId, session.user.email);
-        return NextResponse.json({ id: deploymentId, status: "queued" }, { status: 202 });
       }
       throw queueError;
     }

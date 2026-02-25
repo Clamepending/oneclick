@@ -1,8 +1,6 @@
 import "dotenv/config";
-import { Queue, Worker } from "bullmq";
 import { randomUUID } from "crypto";
 import net from "node:net";
-import os from "node:os";
 import { DescribeServicesCommand, ECSClient, type ECSClientConfig } from "@aws-sdk/client-ecs";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { ensureSchema, pool } from "@/lib/db";
@@ -14,22 +12,6 @@ export type DeploymentJob = {
   userId: string;
 };
 
-const queueName = "deployment-jobs";
-const workerHeartbeatKey = "oneclick:deploy-worker:heartbeat";
-
-function getQueueConnection() {
-  const redisUrl = process.env.REDIS_URL;
-  if (!redisUrl) {
-    throw new Error("REDIS_URL is required for queue operations.");
-  }
-  return { url: redisUrl };
-}
-
-function getQueueProvider() {
-  const value = (process.env.DEPLOY_QUEUE_PROVIDER ?? "redis").trim().toLowerCase();
-  return value === "sqs" ? "sqs" : "redis";
-}
-
 function getSqsQueueConfig() {
   const region = readTrimmedEnv("AWS_REGION");
   const queueUrl = readTrimmedEnv("SQS_DEPLOYMENT_QUEUE_URL");
@@ -39,23 +21,14 @@ function getSqsQueueConfig() {
 }
 
 export async function enqueueDeploymentJob(job: DeploymentJob) {
-  if (getQueueProvider() === "sqs") {
-    const { region, queueUrl } = getSqsQueueConfig();
-    const client = new SQSClient(buildAwsConfigWithTrimmedCreds(region));
-    await client.send(
-      new SendMessageCommand({
-        QueueUrl: queueUrl,
-        MessageBody: JSON.stringify(job),
-      }),
-    );
-    return;
-  }
-  const queue = new Queue<DeploymentJob>(queueName, { connection: getQueueConnection() });
-  await queue.add("deploy", job, {
-    jobId: job.deploymentId,
-    removeOnComplete: true,
-    removeOnFail: 200,
-  });
+  const { region, queueUrl } = getSqsQueueConfig();
+  const client = new SQSClient(buildAwsConfigWithTrimmedCreds(region));
+  await client.send(
+    new SendMessageCommand({
+      QueueUrl: queueUrl,
+      MessageBody: JSON.stringify(job),
+    }),
+  );
 }
 
 async function appendEvent(deploymentId: string, status: string, message: string) {
@@ -85,14 +58,6 @@ function readTrimmedEnv(name: string) {
   const raw = process.env[name];
   if (!raw) return "";
   return raw.trim().replace(/^"(.*)"$/, "$1").replace(/\\n/g, "").trim();
-}
-
-function readIntEnv(name: string, fallback: number) {
-  const raw = readTrimmedEnv(name);
-  if (!raw) return fallback;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.floor(parsed);
 }
 
 function buildAwsConfigWithTrimmedCreds(region: string): ECSClientConfig {
@@ -498,75 +463,11 @@ export async function markDeploymentFailed(deploymentId: string, error: unknown)
   return message;
 }
 
-export function startDeploymentWorker() {
-  if (getQueueProvider() === "sqs") {
-    throw new Error(
-      "DEPLOY_QUEUE_PROVIDER=sqs is event-driven. Do not run the BullMQ worker; use the SQS consumer (Lambda) instead.",
-    );
-  }
-  const worker = new Worker<DeploymentJob>(
-    queueName,
-    async (bullJob) => {
-      try {
-        await processDeploymentJob(bullJob.data);
-      } catch (error) {
-        await markDeploymentFailed(bullJob.data.deploymentId, error);
-        throw error;
-      }
-    },
-    { connection: getQueueConnection() },
-  );
-
-  worker.on("error", (error) => {
-    console.error("Deployment worker error:", error);
-  });
-
-  const heartbeatTtlSeconds = Math.max(30, readIntEnv("DEPLOY_WORKER_HEARTBEAT_TTL_SECONDS", 90));
-  const heartbeatIntervalMs = Math.max(10_000, readIntEnv("DEPLOY_WORKER_HEARTBEAT_INTERVAL_MS", 20_000));
-  const workerStartedAt = new Date().toISOString();
-
-  const writeHeartbeat = async (state: string) => {
-    try {
-      const client = await worker.client;
-      const payload = JSON.stringify({
-        ts: new Date().toISOString(),
-        state,
-        pid: process.pid,
-        host: os.hostname(),
-        startedAt: workerStartedAt,
-      });
-      await client.set(workerHeartbeatKey, payload, "EX", heartbeatTtlSeconds);
-    } catch (error) {
-      console.warn("Deployment worker heartbeat write failed:", error);
-    }
-  };
-
-  void writeHeartbeat("starting");
-  const heartbeatTimer = setInterval(() => {
-    void writeHeartbeat("idle");
-  }, heartbeatIntervalMs);
-  heartbeatTimer.unref();
-
-  worker.on("ready", () => {
-    void writeHeartbeat("ready");
-  });
-  worker.on("active", () => {
-    void writeHeartbeat("active");
-  });
-  worker.on("completed", () => {
-    void writeHeartbeat("completed");
-  });
-  worker.on("failed", () => {
-    void writeHeartbeat("failed");
-  });
-
-  return worker;
-}
-
 if (process.argv.includes("--run")) {
-  startDeploymentWorker();
-  // Keep process running.
-  setInterval(() => {}, 60_000);
+  console.error(
+    "Local deployment worker is no longer used. Deployments are consumed by AWS Lambda via SQS.",
+  );
+  process.exit(1);
 }
 
 export function newDeploymentId() {

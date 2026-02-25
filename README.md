@@ -38,8 +38,7 @@ Critical keys:
 
 Queueing / deployment orchestration:
 
-- Recommended: `DEPLOY_QUEUE_PROVIDER=sqs` + `SQS_DEPLOYMENT_QUEUE_URL` (AWS SQS)
-- Legacy: `DEPLOY_QUEUE_PROVIDER=redis` + `REDIS_URL` (BullMQ/Redis)
+- `DEPLOY_QUEUE_PROVIDER=sqs` + `SQS_DEPLOYMENT_QUEUE_URL` (AWS SQS + Lambda consumer)
 
 Runtime deployment mode:
 
@@ -58,12 +57,6 @@ Runtime deployment mode:
 ```bash
 npm install
 npm run dev
-```
-
-Worker (separate process):
-
-```bash
-npm run worker -- --run
 ```
 
 ## AWS ECS (minimal manual setup)
@@ -89,7 +82,7 @@ Infra source: `infra/aws/`
 ## Vercel deployment
 
 - This app is Vercel-compatible out of the box.
-- Vercel production now fails fast if the configured queue backend is unavailable (instead of silently doing in-process deploy work).
+- Vercel production fails fast if the SQS queue configuration is unavailable (instead of silently trying in-process deploy work).
 - On Vercel, set:
   - `AUTH_URL=https://your-app.vercel.app`
   - `APP_BASE_URL=https://your-app.vercel.app`
@@ -149,7 +142,6 @@ For Vercel + SSH deployment (one shared VM, one container per user):
 - optional but recommended for shared auth sessions across `app.yourdomain` + `bot.yourdomain`: set `AUTH_COOKIE_DOMAIN=.yourdomain`
 - optional: set `BOT_AUTH_LOGIN_BASE_URL` to your canonical app host (for example `https://app.yourdomain`) so unauthenticated bot subdomain visits always go through one login origin
 - optional: set `CADDY_EMAIL` for certificate issuer contact
-- do not set `REDIS_URL` to localhost; either provide a real remote Redis or leave `REDIS_URL` unset
 - each new deploy for a user destroys that user’s previous container
 - if using `RUNTIME_BASE_DOMAIN`, open droplet ports `80/443` and point wildcard DNS (`*.yourdomain`) to droplet IP
 - deployment step: after launch, enter the customer’s own OpenAI or Anthropic API key in OpenClaw (never use your personal key in customer deployments)
