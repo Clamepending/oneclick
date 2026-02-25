@@ -401,10 +401,13 @@ export async function processDeploymentJob(job: DeploymentJob) {
   const deploymentOpenAiKey = deploymentRow.rows[0]?.openai_api_key?.trim() || null;
   const deploymentAnthropicKey = deploymentRow.rows[0]?.anthropic_api_key?.trim() || null;
   const deploymentOpenRouterKey = deploymentRow.rows[0]?.openrouter_api_key?.trim() || null;
+  const anthropicSubsidyApiKey = process.env.ANTHROPIC_SUBSIDY_API_KEY?.trim() || null;
   const selectedOpenAiKey =
     deploymentOpenAiKey || (onboardingModelProvider === "openai" ? onboardingModelApiKey : null);
   const selectedAnthropicKey =
-    deploymentAnthropicKey || (onboardingModelProvider === "anthropic" ? onboardingModelApiKey : null);
+    deploymentAnthropicKey ||
+    (onboardingModelProvider === "anthropic" ? onboardingModelApiKey : null) ||
+    (onboardingModelProvider === "anthropic" ? anthropicSubsidyApiKey : null);
   const selectedOpenRouterKey = deploymentOpenRouterKey;
   const useSubsidyProxy = !selectedOpenAiKey && !selectedAnthropicKey && !selectedOpenRouterKey;
   const subsidyProxyToken = useSubsidyProxy ? randomUUID().replace(/-/g, "") : null;
@@ -437,6 +440,9 @@ export async function processDeploymentJob(job: DeploymentJob) {
 
   if (useSubsidyProxy && subsidyProxyToken) {
     await appendEvent(job.deploymentId, "starting", "Using server-side subsidy proxy (50 requests/minute cap)");
+  }
+  if (!useSubsidyProxy && selectedAnthropicKey && selectedAnthropicKey === anthropicSubsidyApiKey) {
+    await appendEvent(job.deploymentId, "starting", "Using server-side Anthropic subsidy key");
   }
   await pool.query(
     `UPDATE deployments
