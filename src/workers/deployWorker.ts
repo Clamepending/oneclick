@@ -1,7 +1,14 @@
 import "dotenv/config";
 import { randomUUID } from "crypto";
 import net from "node:net";
-import { DescribeServicesCommand, ECSClient, type ECSClientConfig } from "@aws-sdk/client-ecs";
+import { DescribeNetworkInterfacesCommand, EC2Client } from "@aws-sdk/client-ec2";
+import {
+  DescribeServicesCommand,
+  DescribeTasksCommand,
+  ECSClient,
+  ListTasksCommand,
+  type ECSClientConfig,
+} from "@aws-sdk/client-ecs";
 import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { ensureSchema, pool } from "@/lib/db";
 import { selectHost } from "@/lib/provisioner/hostScheduler";
@@ -153,6 +160,42 @@ async function probeSshLocalPort(sshTarget: string, port: number) {
   });
 }
 
+async function resolveEcsPublicIp(ecsClient: ECSClient, ec2Client: EC2Client, input: { cluster: string; serviceName: string }) {
+  const tasks = await ecsClient.send(
+    new ListTasksCommand({
+      cluster: input.cluster,
+      serviceName: input.serviceName,
+      desiredStatus: "RUNNING",
+      maxResults: 5,
+    }),
+  );
+  if (!tasks.taskArns?.length) return null;
+
+  const described = await ecsClient.send(
+    new DescribeTasksCommand({
+      cluster: input.cluster,
+      tasks: tasks.taskArns,
+    }),
+  );
+
+  const networkInterfaceIds = (described.tasks ?? [])
+    .flatMap((task) => task.attachments ?? [])
+    .filter((attachment) => attachment.type === "ElasticNetworkInterface")
+    .flatMap((attachment) => attachment.details ?? [])
+    .filter((detail) => detail.name === "networkInterfaceId" && Boolean(detail.value))
+    .map((detail) => detail.value as string);
+
+  if (networkInterfaceIds.length === 0) return null;
+
+  const interfaces = await ec2Client.send(
+    new DescribeNetworkInterfacesCommand({
+      NetworkInterfaceIds: Array.from(new Set(networkInterfaceIds)),
+    }),
+  );
+
+  return interfaces.NetworkInterfaces?.find((eni) => eni.Association?.PublicIp)?.Association?.PublicIp ?? null;
+}
+
 async function waitForRuntimeReady(input: {
   readyUrl: string | null;
   deployProvider: string | null;
@@ -168,9 +211,12 @@ async function waitForRuntimeReady(input: {
       throw new Error("AWS_REGION is required for ECS runtime health checks.");
     }
     const ecsClient = new ECSClient(buildAwsConfigWithTrimmedCreds(region));
+    const ec2Client = new EC2Client(buildAwsConfigWithTrimmedCreds(region));
+    const port = Number(readTrimmedEnv("OPENCLAW_CONTAINER_PORT") || "18789");
     const deadline = Date.now() + startupTimeoutMs;
     let lastServiceStatus = "unknown";
     let lastEventMessage = "";
+    let lastProbeError = "";
     while (Date.now() < deadline) {
       const result = await ecsClient.send(
         new DescribeServicesCommand({
@@ -183,16 +229,26 @@ async function waitForRuntimeReady(input: {
       const latestEvent = service?.events?.[0]?.message?.trim() || "";
       if (latestEvent) lastEventMessage = latestEvent;
       if (service && service.status === "ACTIVE" && (service.runningCount ?? 0) > 0) {
-        return;
+        try {
+          const publicIp = await resolveEcsPublicIp(ecsClient, ec2Client, parsedEcsRuntime);
+          if (publicIp) {
+            await probeTcpPort(publicIp, port);
+            return;
+          }
+          lastProbeError = "No public IP yet";
+        } catch (error) {
+          lastProbeError = error instanceof Error ? error.message : String(error);
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
     }
     const extra = [
       `status=${lastServiceStatus}`,
       lastEventMessage ? `lastEvent=${lastEventMessage}` : "",
+      lastProbeError ? `lastProbeError=${lastProbeError}` : "",
     ].filter(Boolean).join(" | ");
     throw new Error(
-      `ECS service ${parsedEcsRuntime.serviceName} did not report a running task within ${startupTimeoutMs}ms${extra ? ` (${extra})` : ""}`,
+      `ECS service ${parsedEcsRuntime.serviceName} did not become reachable on port ${port} within ${startupTimeoutMs}ms${extra ? ` (${extra})` : ""}`,
     );
   }
 

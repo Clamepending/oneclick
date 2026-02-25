@@ -1,5 +1,6 @@
 import { DescribeTasksCommand, ECSClient, ListTasksCommand } from "@aws-sdk/client-ecs";
 import { DescribeNetworkInterfacesCommand, EC2Client } from "@aws-sdk/client-ec2";
+import net from "node:net";
 import { redirect } from "next/navigation";
 import { ensureSchema, pool } from "@/lib/db";
 
@@ -17,6 +18,23 @@ function parseEcsRuntimeId(runtimeId: string | null) {
   const [cluster, serviceName] = body.split("|");
   if (!cluster || !serviceName) return null;
   return { cluster, serviceName };
+}
+
+async function probeTcpPort(host: string, port: number) {
+  await new Promise<void>((resolve, reject) => {
+    const socket = net.createConnection({ host, port, timeout: 2000 }, () => {
+      socket.end();
+      resolve();
+    });
+    socket.on("timeout", () => {
+      socket.destroy();
+      reject(new Error("timeout"));
+    });
+    socket.on("error", (error) => {
+      socket.destroy();
+      reject(error);
+    });
+  });
 }
 
 async function resolveEcsPublicUrl(input: { runtimeId: string; deploymentId: string }) {
@@ -82,6 +100,11 @@ async function resolveEcsPublicUrl(input: { runtimeId: string; deploymentId: str
   if (!publicIp) return null;
 
   const port = Number(readTrimmedEnv("OPENCLAW_CONTAINER_PORT") || "18789");
+  try {
+    await probeTcpPort(publicIp, port);
+  } catch {
+    return null;
+  }
   return `http://${publicIp}:${port}`;
 }
 
