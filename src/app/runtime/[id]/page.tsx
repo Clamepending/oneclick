@@ -165,7 +165,7 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
     return renderPlaceholder(id, "Deployment not found.");
   }
 
-  if (deployment.status === "failed") {
+  if (deployment.status === "failed" || deployment.status === "stopped") {
     return renderPlaceholder(
       id,
       deployment.error || "This deployment is no longer active.",
@@ -186,7 +186,7 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
     }
     return renderPlaceholder(
       id,
-      deployment.status === "failed"
+      deployment.status === "failed" || deployment.status === "stopped"
         ? deployment.error || "Deployment failed before runtime became reachable."
         : "ECS task is still starting. Try again in a moment.",
     );
@@ -206,6 +206,8 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
 
   return renderPlaceholder(
     id,
-    deployment.status === "failed" ? deployment.error || "Deployment failed." : undefined,
+    deployment.status === "failed" || deployment.status === "stopped"
+      ? deployment.error || "Deployment failed."
+      : undefined,
   );
 }

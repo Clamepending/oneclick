@@ -52,6 +52,24 @@ variable "ecs_service_prefix" {
   default     = "oneclick-agent"
 }
 
+variable "enable_efs_runtime_storage" {
+  description = "Create EFS + access point for durable OpenClaw config/workspace on ECS tasks"
+  type        = bool
+  default     = true
+}
+
+variable "efs_performance_mode" {
+  description = "EFS performance mode"
+  type        = string
+  default     = "generalPurpose"
+}
+
+variable "efs_throughput_mode" {
+  description = "EFS throughput mode"
+  type        = string
+  default     = "bursting"
+}
+
 variable "enable_monthly_budget_alerts" {
   description = "Enable AWS Budget monthly cost alerts"
   type        = bool

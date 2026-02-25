@@ -8,7 +8,7 @@ type DeploymentSummary = {
   id: string;
   bot_name: string | null;
   runtime_slug: string | null;
-  status: "queued" | "starting" | "ready" | "failed";
+  status: "queued" | "starting" | "ready" | "failed" | "stopped";
   host_name: string | null;
   runtime_id: string | null;
   deploy_provider: string | null;

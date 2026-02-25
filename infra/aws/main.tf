@@ -22,6 +22,7 @@ data "aws_availability_zones" "available" {
 locals {
   name_prefix = var.project_name
   azs         = slice(data.aws_availability_zones.available.names, 0, var.public_subnet_count)
+  efs_enabled = var.enable_efs_runtime_storage
 }
 
 resource "aws_vpc" "main" {
@@ -98,6 +99,78 @@ resource "aws_security_group" "ecs_tasks" {
 
   tags = {
     Name = "${local.name_prefix}-ecs-tasks"
+  }
+}
+
+resource "aws_security_group" "efs" {
+  count = local.efs_enabled ? 1 : 0
+
+  name        = "${local.name_prefix}-efs"
+  description = "NFS access for ECS tasks to persistent OpenClaw state"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    from_port       = 2049
+    to_port         = 2049
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs_tasks.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${local.name_prefix}-efs"
+  }
+}
+
+resource "aws_efs_file_system" "runtime" {
+  count = local.efs_enabled ? 1 : 0
+
+  creation_token   = "${local.name_prefix}-openclaw-runtime"
+  performance_mode = var.efs_performance_mode
+  throughput_mode  = var.efs_throughput_mode
+  encrypted        = true
+
+  tags = {
+    Name = "${local.name_prefix}-openclaw-runtime"
+  }
+}
+
+resource "aws_efs_mount_target" "runtime" {
+  for_each = local.efs_enabled ? aws_subnet.public : {}
+
+  file_system_id  = aws_efs_file_system.runtime[0].id
+  subnet_id       = each.value.id
+  security_groups = [aws_security_group.efs[0].id]
+}
+
+resource "aws_efs_access_point" "runtime" {
+  count = local.efs_enabled ? 1 : 0
+
+  file_system_id = aws_efs_file_system.runtime[0].id
+
+  posix_user {
+    uid = 1000
+    gid = 1000
+  }
+
+  root_directory {
+    path = "/oneclick"
+
+    creation_info {
+      owner_uid   = 1000
+      owner_gid   = 1000
+      permissions = "0755"
+    }
+  }
+
+  tags = {
+    Name = "${local.name_prefix}-openclaw-runtime"
   }
 }
 
@@ -188,19 +261,22 @@ output "ecr_repository_url" {
 
 output "app_env_recommended" {
   value = {
-    DEPLOY_PROVIDER          = "ecs"
-    DEPLOY_QUEUE_PROVIDER    = "sqs"
-    AWS_REGION               = var.aws_region
-    SQS_DEPLOYMENT_QUEUE_URL = aws_sqs_queue.deployments.url
-    ECS_CLUSTER              = aws_ecs_cluster.main.name
-    ECS_SUBNET_IDS           = join(",", [for s in aws_subnet.public : s.id])
-    ECS_SECURITY_GROUP_IDS   = aws_security_group.ecs_tasks.id
-    ECS_EXECUTION_ROLE_ARN   = aws_iam_role.ecs_execution.arn
-    ECS_TASK_ROLE_ARN        = aws_iam_role.ecs_task.arn
-    ECS_LOG_GROUP            = aws_cloudwatch_log_group.ecs.name
-    ECS_LOG_STREAM_PREFIX    = var.ecs_log_stream_prefix
-    ECS_ASSIGN_PUBLIC_IP     = "true"
-    ECS_SERVICE_PREFIX       = var.ecs_service_prefix
-    OPENCLAW_CONTAINER_PORT  = tostring(var.runtime_container_port)
+    DEPLOY_PROVIDER            = "ecs"
+    DEPLOY_QUEUE_PROVIDER      = "sqs"
+    AWS_REGION                 = var.aws_region
+    SQS_DEPLOYMENT_QUEUE_URL   = aws_sqs_queue.deployments.url
+    ECS_CLUSTER                = aws_ecs_cluster.main.name
+    ECS_SUBNET_IDS             = join(",", [for s in aws_subnet.public : s.id])
+    ECS_SECURITY_GROUP_IDS     = aws_security_group.ecs_tasks.id
+    ECS_EXECUTION_ROLE_ARN     = aws_iam_role.ecs_execution.arn
+    ECS_TASK_ROLE_ARN          = aws_iam_role.ecs_task.arn
+    ECS_LOG_GROUP              = aws_cloudwatch_log_group.ecs.name
+    ECS_LOG_STREAM_PREFIX      = var.ecs_log_stream_prefix
+    ECS_ASSIGN_PUBLIC_IP       = "true"
+    ECS_SERVICE_PREFIX         = var.ecs_service_prefix
+    OPENCLAW_CONTAINER_PORT    = tostring(var.runtime_container_port)
+    ECS_EFS_FILE_SYSTEM_ID     = local.efs_enabled ? aws_efs_file_system.runtime[0].id : ""
+    ECS_EFS_ACCESS_POINT_ID    = local.efs_enabled ? aws_efs_access_point.runtime[0].id : ""
+    ECS_EFS_TRANSIT_ENCRYPTION = "ENABLED"
   }
 }

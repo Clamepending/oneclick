@@ -47,7 +47,7 @@ export async function POST(request: Request) {
       const adminMessage = "Runtime deleted by admin from the admin dashboard.";
       await pool.query(
         `UPDATE deployments
-         SET status = 'failed',
+         SET status = 'stopped',
              runtime_id = NULL,
              ready_url = NULL,
              error = $1,
@@ -57,7 +57,7 @@ export async function POST(request: Request) {
       );
       await pool.query(
         `INSERT INTO deployment_events (deployment_id, status, message)
-         VALUES ($1, 'failed', $2)`,
+         VALUES ($1, 'stopped', $2)`,
         [ownerDeploymentId, adminMessage],
       );
     }

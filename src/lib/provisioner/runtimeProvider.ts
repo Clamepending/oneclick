@@ -418,6 +418,11 @@ async function launchViaEcs(input: LaunchInput) {
   const awslogsGroup = readTrimmedEnv("ECS_LOG_GROUP");
   const awslogsPrefix = readTrimmedEnv("ECS_LOG_STREAM_PREFIX") || "oneclick";
   const telemetryEnv = readTrimmedEnv("OPENCLAW_TELEMETRY");
+  const efsFileSystemId = readTrimmedEnv("ECS_EFS_FILE_SYSTEM_ID");
+  const efsAccessPointId = readTrimmedEnv("ECS_EFS_ACCESS_POINT_ID");
+  const efsTransitEncryption = (readTrimmedEnv("ECS_EFS_TRANSIT_ENCRYPTION") || "ENABLED").toUpperCase();
+  const efsTransitEncryptionMode: "ENABLED" | "DISABLED" =
+    efsTransitEncryption === "DISABLED" ? "DISABLED" : "ENABLED";
   const ecsClient = new ECSClient(buildAwsConfigWithTrimmedCreds(region));
   const allowInsecureControlUi = shouldAllowInsecureControlUi();
   const gatewayToken = getGatewayToken();
@@ -553,6 +558,28 @@ async function launchViaEcs(input: LaunchInput) {
     },
   ];
 
+  const taskVolumes = efsFileSystemId
+    ? [
+        {
+          name: configVolumeName,
+          efsVolumeConfiguration: {
+            fileSystemId: efsFileSystemId,
+            transitEncryption: efsTransitEncryptionMode,
+            authorizationConfig: efsAccessPointId
+              ? {
+                  accessPointId: efsAccessPointId,
+                  iam: "DISABLED" as const,
+                }
+              : undefined,
+          },
+        },
+      ]
+    : [
+        {
+          name: configVolumeName,
+        },
+      ];
+
   const register = await ecsClient.send(
     new RegisterTaskDefinitionCommand({
       family,
@@ -562,11 +589,7 @@ async function launchViaEcs(input: LaunchInput) {
       memory,
       executionRoleArn,
       taskRoleArn: taskRoleArn || undefined,
-      volumes: [
-        {
-          name: configVolumeName,
-        },
-      ],
+      volumes: taskVolumes,
       containerDefinitions: [
         ...configInitContainers,
         {

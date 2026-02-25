@@ -1,4 +1,4 @@
-export type DeploymentStatus = "queued" | "starting" | "ready" | "failed";
+export type DeploymentStatus = "queued" | "starting" | "ready" | "failed" | "stopped";
 
 export type Deployment = {
   id: string;

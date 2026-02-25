@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 type Props = {
   deploymentId: string;
-  status?: "queued" | "starting" | "ready" | "failed";
+  status?: "queued" | "starting" | "ready" | "failed" | "stopped";
   compact?: boolean;
   botName?: string | null;
 };

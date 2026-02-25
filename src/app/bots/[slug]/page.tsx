@@ -13,7 +13,7 @@ type BotIdentityRow = {
 type DeploymentRow = {
   id: string;
   bot_name: string | null;
-  status: "queued" | "starting" | "ready" | "failed";
+  status: "queued" | "starting" | "ready" | "failed" | "stopped";
   host_name: string | null;
   runtime_id: string | null;
   deploy_provider: string | null;
@@ -26,6 +26,7 @@ type DeploymentRow = {
 function getStatusMeta(status: DeploymentRow["status"]) {
   if (status === "ready") return { label: "READY", color: "#1f9d55", bg: "rgba(31,157,85,0.18)" };
   if (status === "failed") return { label: "FAILED", color: "#ff6b6b", bg: "rgba(255,107,107,0.2)" };
+  if (status === "stopped") return { label: "STOPPED", color: "#c3c9d4", bg: "rgba(195,201,212,0.18)" };
   if (status === "starting") return { label: "STARTING", color: "#f5c542", bg: "rgba(245,197,66,0.2)" };
   return { label: "QUEUED", color: "#7ea7ff", bg: "rgba(126,167,255,0.2)" };
 }
@@ -152,7 +153,7 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
                       Updated: <code>{new Date(deployment.updated_at).toLocaleString()}</code>
                     </p>
                   </div>
-                  {deployment.status === "failed" && deployment.error ? (
+                  {(deployment.status === "failed" || deployment.status === "stopped") && deployment.error ? (
                     <p style={{ color: "#ff8e8e", margin: 0 }}>{deployment.error}</p>
                   ) : null}
                   <div className="row">

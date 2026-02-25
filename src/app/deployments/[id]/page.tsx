@@ -9,7 +9,7 @@ import { DeploymentSettingsCard } from "@/components/deployment/DeploymentSettin
 type DeploymentResponse = {
   id: string;
   botName?: string | null;
-  status: "queued" | "starting" | "ready" | "failed";
+  status: "queued" | "starting" | "ready" | "failed" | "stopped";
   hostName?: string | null;
   runtimeId?: string | null;
   deployProvider?: string | null;
@@ -36,6 +36,7 @@ type EventResponse = {
 function getStatusMeta(status?: DeploymentResponse["status"]) {
   if (status === "ready") return { label: "READY", color: "#1f9d55", bg: "rgba(31,157,85,0.18)" };
   if (status === "failed") return { label: "FAILED", color: "#ff6b6b", bg: "rgba(255,107,107,0.2)" };
+  if (status === "stopped") return { label: "STOPPED", color: "#c3c9d4", bg: "rgba(195,201,212,0.18)" };
   if (status === "starting") return { label: "STARTING", color: "#f5c542", bg: "rgba(245,197,66,0.2)" };
   if (status === "queued") return { label: "QUEUED", color: "#7ea7ff", bg: "rgba(126,167,255,0.2)" };
   return { label: "LOADING", color: "#b7bfd3", bg: "rgba(183,191,211,0.2)" };
@@ -74,7 +75,7 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
           setDeployment(dData);
           setEvents(eData.items);
           setError("");
-          if (dData.status === "ready" || dData.status === "failed") {
+          if (dData.status === "ready" || dData.status === "failed" || dData.status === "stopped") {
             if (timer) clearInterval(timer);
             timer = null;
           }
@@ -101,6 +102,7 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
     if (!deployment) return "Loading deployment...";
     if (deployment.status === "ready") return "Deployment ready";
     if (deployment.status === "failed") return "Deployment failed";
+    if (deployment.status === "stopped") return "Deployment stopped";
     return "Deployment in progress";
   }, [deployment]);
   const statusMeta = getStatusMeta(deployment?.status);
@@ -191,7 +193,7 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
             hasTelegramBotToken={Boolean(deployment.settings?.hasTelegramBotToken)}
           />
         ) : null}
-        {deployment?.status === "failed" ? (
+        {(deployment?.status === "failed" || deployment?.status === "stopped") ? (
           <p style={{ color: "#ff8e8e" }}>{deployment.error ?? "Deployment failed."}</p>
         ) : null}
         {error ? <p style={{ color: "#ff8e8e" }}>{error}</p> : null}
