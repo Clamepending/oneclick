@@ -303,6 +303,8 @@ async function tryHotApplyTelegramToken(input: {
 
     try {
       await openPromise;
+      const { label: authLabel, ...authPayload } = authVariant;
+
       await rpc("connect", {
         minProtocol: 3,
         maxProtocol: 3,
@@ -317,7 +319,7 @@ async function tryHotApplyTelegramToken(input: {
         caps: [],
         commands: [],
         permissions: {},
-        auth: authVariant,
+        auth: authPayload,
         locale: "en-US",
         userAgent: profile.userAgent,
       });
@@ -345,7 +347,7 @@ async function tryHotApplyTelegramToken(input: {
       return { attempted: true, applied: true as const };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Live apply failed";
-      lastReason = `${profile.clientId}/${profile.mode}/${authVariant.label}: ${message}`;
+      lastReason = `${profile.clientId}/${profile.mode}/${authLabel}: ${message}`;
     } finally {
       try {
         ws.close();
