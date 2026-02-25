@@ -205,7 +205,7 @@ async function waitForRuntimeReady(input: {
   const pollIntervalMs = 3000;
   const parsedEcsRuntime = input.deployProvider === "ecs" ? parseEcsRuntimeId(input.runtimeId) : null;
   if (parsedEcsRuntime) {
-    const startupTimeoutMs = Number(readTrimmedEnv("ECS_STARTUP_TIMEOUT_MS") || "300000");
+    const startupTimeoutMs = Number(readTrimmedEnv("ECS_STARTUP_TIMEOUT_MS") || "600000");
     const region = readTrimmedEnv("AWS_REGION");
     if (!region) {
       throw new Error("AWS_REGION is required for ECS runtime health checks.");

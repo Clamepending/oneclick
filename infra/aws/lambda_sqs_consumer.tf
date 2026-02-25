@@ -45,6 +45,9 @@ data "aws_iam_policy_document" "sqs_deploy_consumer_lambda_inline" {
       "ecs:UpdateService",
       "ecs:DeleteService",
       "ecs:DescribeServices",
+      "ecs:ListTasks",
+      "ecs:DescribeTasks",
+      "ec2:DescribeNetworkInterfaces",
     ]
     resources = ["*"]
   }
