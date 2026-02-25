@@ -420,7 +420,7 @@ async function launchViaEcs(input: LaunchInput) {
   const telemetryEnv = readTrimmedEnv("OPENCLAW_TELEMETRY");
   const ecsClient = new ECSClient(buildAwsConfigWithTrimmedCreds(region));
   const configVolumeName = "openclaw-config";
-  const configMountPath = "/home/node/.openclaw";
+  const configMountPath = "/root/.openclaw";
   const initContainerName = `${containerName}-config-init`.slice(0, 255);
 
   const environment = [
