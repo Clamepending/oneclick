@@ -499,6 +499,10 @@ async function launchViaEcs(input: LaunchInput) {
           String(containerPort),
           "--gateway-bind",
           "lan",
+          "--skip-daemon",
+          "--skip-channels",
+          "--skip-health",
+          "--skip-ui",
           "--skip-skills",
         ],
       )
