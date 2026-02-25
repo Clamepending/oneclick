@@ -162,9 +162,7 @@ async function waitForRuntimeReady(input: {
   const pollIntervalMs = 3000;
   const parsedEcsRuntime = input.deployProvider === "ecs" ? parseEcsRuntimeId(input.runtimeId) : null;
   if (parsedEcsRuntime) {
-    const startupTimeoutMs = Number(
-      readTrimmedEnv("ECS_STARTUP_TIMEOUT_MS") || readTrimmedEnv("OPENCLAW_STARTUP_TIMEOUT_MS") || "300000",
-    );
+    const startupTimeoutMs = Number(readTrimmedEnv("ECS_STARTUP_TIMEOUT_MS") || "300000");
     const region = readTrimmedEnv("AWS_REGION");
     if (!region) {
       throw new Error("AWS_REGION is required for ECS runtime health checks.");
@@ -229,6 +227,26 @@ export async function processDeploymentJob(job: DeploymentJob) {
   const startedAt = Date.now();
   console.info(`[deploy:${job.deploymentId}] starting job for user ${job.userId}`);
   await ensureSchema();
+  const claim = await pool.query(
+    `UPDATE deployments
+     SET status = 'starting',
+         updated_at = NOW()
+     WHERE id = $1
+       AND user_id = $2
+       AND status = 'queued'
+     RETURNING id`,
+    [job.deploymentId, job.userId],
+  );
+  if (claim.rowCount === 0) {
+    const current = await pool.query<{ status: string | null }>(
+      `SELECT status FROM deployments WHERE id = $1 LIMIT 1`,
+      [job.deploymentId],
+    );
+    console.info(
+      `[deploy:${job.deploymentId}] skipping duplicate/late queue delivery; current status=${current.rows[0]?.status ?? "missing"}`,
+    );
+    return;
+  }
   await appendEvent(job.deploymentId, "starting", "Scheduling runtime host");
   const provider = readTrimmedEnv("DEPLOY_PROVIDER") || "mock";
   const providerRequiresHost = provider === "ssh" || provider === "mock";
