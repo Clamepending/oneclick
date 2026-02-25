@@ -211,10 +211,16 @@ async function tryHotApplyTelegramToken(input: {
     { clientId: "dashboard", mode: "dashboard", userAgent: "openclaw-dashboard/1.0.0" },
     { clientId: "cli", mode: "cli", userAgent: "openclaw-cli/1.0.0" },
   ];
+  const authVariants: Array<{ token?: string; password?: string; label: string }> = [
+    { token, label: "token" },
+    { password: token, label: "password" },
+    { token, password: token, label: "token+password" },
+  ];
 
   let lastReason = "Live apply failed";
 
   for (const profile of profiles) {
+    for (const authVariant of authVariants) {
     const ws = new WebSocket(toWsUrl(gatewayUrl));
     const pending = new Map<
       string,
@@ -311,7 +317,7 @@ async function tryHotApplyTelegramToken(input: {
         caps: [],
         commands: [],
         permissions: {},
-        auth: { token },
+        auth: authVariant,
         locale: "en-US",
         userAgent: profile.userAgent,
       });
@@ -338,13 +344,15 @@ async function tryHotApplyTelegramToken(input: {
 
       return { attempted: true, applied: true as const };
     } catch (error) {
-      lastReason = error instanceof Error ? error.message : "Live apply failed";
+      const message = error instanceof Error ? error.message : "Live apply failed";
+      lastReason = `${profile.clientId}/${profile.mode}/${authVariant.label}: ${message}`;
     } finally {
       try {
         ws.close();
       } catch {
         // no-op
       }
+    }
     }
   }
 
