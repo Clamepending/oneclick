@@ -179,6 +179,18 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
     );
   }
 
+  const readyUrl = deployment.ready_url?.trim();
+  if (readyUrl) {
+    try {
+      const url = new URL(readyUrl);
+      if (url.pathname !== `/runtime/${id}`) {
+        redirect(url.toString());
+      }
+    } catch {
+      // Keep placeholder for invalid URLs.
+    }
+  }
+
   const provider = (deployment.deploy_provider ?? "").trim();
   if (provider === "ecs" && deployment.runtime_id) {
     let resolved: string | null = null;
@@ -197,18 +209,6 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
         ? deployment.error || "Deployment failed before runtime became reachable."
         : "ECS task is still starting. Try again in a moment.",
     );
-  }
-
-  const readyUrl = deployment.ready_url?.trim();
-  if (readyUrl) {
-    try {
-      const url = new URL(readyUrl);
-      if (url.pathname !== `/runtime/${id}`) {
-        redirect(url.toString());
-      }
-    } catch {
-      // Keep placeholder for invalid URLs.
-    }
   }
 
   return renderPlaceholder(
