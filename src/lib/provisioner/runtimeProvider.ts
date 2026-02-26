@@ -543,6 +543,12 @@ async function launchViaEcs(input: LaunchInput) {
         subsidyProxyToken: input.subsidyProxyToken,
         containerPort,
       });
+      const usesSubsidyFallback =
+        Boolean(input.subsidyProxyToken?.trim()) &&
+        Boolean(input.subsidyProxyBaseUrl?.trim()) &&
+        !input.openaiApiKey?.trim() &&
+        !input.anthropicApiKey?.trim() &&
+        !input.openrouterApiKey?.trim();
       const scriptSteps = [
         "set -e",
         "mkdir -p /tmp/oneclick-bin",
@@ -575,7 +581,12 @@ async function launchViaEcs(input: LaunchInput) {
         );
       }
       if (onboardCommand) {
-        scriptSteps.push(onboardCommand);
+        if (usesSubsidyFallback) {
+          // Subsidy proxy reachability can be transient during cold starts; don't block gateway startup on auth bootstrap.
+          scriptSteps.push(`( ${onboardCommand} >/tmp/oneclick-onboard.log 2>&1 || true ) &`);
+        } else {
+          scriptSteps.push(onboardCommand);
+        }
       }
       if (deploymentFlavor === "advanced") {
         const advancedMessage = shellQuote(getAdvancedBootstrapMessage());
