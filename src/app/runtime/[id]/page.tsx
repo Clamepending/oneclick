@@ -181,13 +181,14 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
 
   const readyUrl = deployment.ready_url?.trim();
   if (readyUrl) {
+    let parsedReadyUrl: URL | null = null;
     try {
-      const url = new URL(readyUrl);
-      if (url.pathname !== `/runtime/${id}`) {
-        redirect(url.toString());
-      }
+      parsedReadyUrl = new URL(readyUrl);
     } catch {
       // Keep placeholder for invalid URLs.
+    }
+    if (parsedReadyUrl && parsedReadyUrl.pathname !== `/runtime/${id}`) {
+      redirect(parsedReadyUrl.toString());
     }
   }
 
