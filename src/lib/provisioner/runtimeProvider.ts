@@ -617,7 +617,7 @@ async function launchViaEcs(input: LaunchInput) {
       scriptSteps.push(
         `exec node /app/dist/index.js gateway run --allow-unconfigured --bind lan --token ${shellQuote(gatewayToken)}`,
       );
-      return [scriptSteps.join("; ")];
+      return [scriptSteps.join("\n")];
     }
 
     if (!efsEnabled) return command.length > 0 ? command : undefined;
