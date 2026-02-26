@@ -25,6 +25,7 @@ export default function OnboardingPage() {
   const [planTier, setPlanTier] = useState<"free" | "paid">("free");
   const [deploymentFlavor, setDeploymentFlavor] = useState<"basic" | "advanced">("basic");
   const [loading, setLoading] = useState(false);
+  const [savingStep, setSavingStep] = useState(false);
   const [error, setError] = useState("");
   const [freeSelectable, setFreeSelectable] = useState(true);
   const [freeActiveDeployments, setFreeActiveDeployments] = useState(0);
@@ -107,21 +108,26 @@ export default function OnboardingPage() {
   }
 
   async function handleNext() {
+    if (savingStep || loading) return;
     setError("");
     if (step === 2 && !hasRequiredKeys) {
       setError("Model API key and Telegram bot token are required before continuing.");
       return;
     }
+    setSavingStep(true);
     try {
       await saveStep(step);
       setStep((s) => Math.min(3, s + 1));
     } catch (e) {
       const message = e instanceof Error ? e.message : "Could not save this step. Please try again.";
       setError(message);
+    } finally {
+      setSavingStep(false);
     }
   }
 
   async function handleDeploy() {
+    if (loading || savingStep) return;
     setLoading(true);
     setError("");
     if (!hasRequiredKeys) {
@@ -186,13 +192,18 @@ export default function OnboardingPage() {
 
       <div className="row" style={{ marginTop: 12 }}>
         {step > 1 ? (
-          <button className="button secondary" onClick={() => setStep((s) => s - 1)} type="button">
+          <button
+            className="button secondary"
+            onClick={() => setStep((s) => s - 1)}
+            type="button"
+            disabled={savingStep || loading}
+          >
             Back
           </button>
         ) : null}
         {step < 3 ? (
-          <button className="button" onClick={handleNext} type="button">
-            {step === 2 && !hasRequiredKeys ? "Add required keys to continue" : "Next"}
+          <button className="button" onClick={handleNext} type="button" disabled={savingStep || loading}>
+            {savingStep ? "Saving..." : step === 2 && !hasRequiredKeys ? "Add required keys to continue" : "Next"}
           </button>
         ) : null}
       </div>
