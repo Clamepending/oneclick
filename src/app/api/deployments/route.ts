@@ -36,29 +36,26 @@ function getClientIp(request: Request) {
 
 type QueueModeInfo = {
   usable: boolean;
-  redisUrl: string;
+  endpoint: string;
   reason:
     | "ok"
-    | "missing_redis_url"
-    | "localhost_redis_url";
+    | "missing_sqs_queue_url"
+    | "missing_aws_region";
 };
 
 function getQueueModeInfo(): QueueModeInfo {
-  const redisUrl = readTrimmedEnv("REDIS_URL");
-  if (!redisUrl) {
-    return { usable: false, redisUrl: "", reason: "missing_redis_url" };
-  }
-  if (redisUrl.includes("127.0.0.1") || redisUrl.includes("localhost")) {
-    return { usable: false, redisUrl, reason: "localhost_redis_url" };
-  }
-  return { usable: true, redisUrl, reason: "ok" };
+  const region = readTrimmedEnv("AWS_REGION");
+  const queueUrl = readTrimmedEnv("SQS_DEPLOYMENT_QUEUE_URL");
+  if (!region) return { usable: false, endpoint: "", reason: "missing_aws_region" };
+  if (!queueUrl) return { usable: false, endpoint: "", reason: "missing_sqs_queue_url" };
+  return { usable: true, endpoint: queueUrl, reason: "ok" };
 }
 
 function isVercelRuntime() {
   return readBoolEnv("VERCEL", false) || readTrimmedEnv("VERCEL_ENV") !== "";
 }
 
-function summarizeRedisUrl(raw: string) {
+function summarizeQueueEndpoint(raw: string) {
   if (!raw) return "none";
   try {
     const url = new URL(raw);
@@ -69,11 +66,11 @@ function summarizeRedisUrl(raw: string) {
 }
 
 function queueUnavailableMessage(queueInfo: QueueModeInfo) {
-  if (queueInfo.reason === "missing_redis_url") {
-    return "Deployment queue unavailable: REDIS_URL is not configured. Deployments require a running worker + Redis in production.";
+  if (queueInfo.reason === "missing_aws_region") {
+    return "Deployment queue unavailable: AWS_REGION is not configured for SQS queueing.";
   }
-  if (queueInfo.reason === "localhost_redis_url") {
-    return "Deployment queue unavailable: REDIS_URL points to localhost, which is not usable from Vercel. Configure a hosted Redis and run the deployment worker.";
+  if (queueInfo.reason === "missing_sqs_queue_url") {
+    return "Deployment queue unavailable: SQS_DEPLOYMENT_QUEUE_URL is not configured.";
   }
   return "Deployment queue unavailable. Please try again shortly.";
 }
@@ -546,7 +543,7 @@ export async function POST(request: Request) {
        VALUES ($1, 'queued', $2)`,
       [
         deploymentId,
-        `Queue routing: provider=${vercelRuntime ? "vercel" : "node"} queueUsable=${queueInfo.usable ? "yes" : "no"} redis=${summarizeRedisUrl(queueInfo.redisUrl)} reason=${queueInfo.reason}`,
+        `Queue routing: runtime=${vercelRuntime ? "vercel" : "node"} queueProvider=sqs queueUsable=${queueInfo.usable ? "yes" : "no"} endpoint=${summarizeQueueEndpoint(queueInfo.endpoint)} reason=${queueInfo.reason}`,
       ],
     );
 
@@ -583,16 +580,16 @@ export async function POST(request: Request) {
     }
 
     try {
-      console.info(`[deploy:${deploymentId}] enqueueing deployment job via Redis ${summarizeRedisUrl(queueInfo.redisUrl)}`);
+      console.info(`[deploy:${deploymentId}] enqueueing deployment job via SQS ${summarizeQueueEndpoint(queueInfo.endpoint)}`);
       await pool.query(
         `INSERT INTO deployment_events (deployment_id, status, message)
-         VALUES ($1, 'queued', 'Queue available; enqueueing deployment job for worker')`,
+         VALUES ($1, 'queued', 'Queue available; enqueueing deployment job for AWS consumer')`,
         [deploymentId],
       );
       await enqueueDeploymentJob({ deploymentId, userId: session.user.email });
       await pool.query(
         `INSERT INTO deployment_events (deployment_id, status, message)
-         VALUES ($1, 'queued', 'Deployment job enqueued successfully; waiting for worker pickup')`,
+         VALUES ($1, 'queued', 'Deployment job enqueued successfully; waiting for AWS consumer pickup')`,
         [deploymentId],
       );
     } catch (queueError) {
@@ -610,7 +607,7 @@ export async function POST(request: Request) {
       );
       if (retryableQueueConnectivityError && vercelRuntime) {
         const message =
-          "Deploy queue connection failed on production. The deployment worker may be unavailable or Redis may be unreachable. Please try again shortly.";
+          "Deploy queue connection failed on production. The AWS deploy queue or consumer may be unavailable. Please try again shortly.";
         await pool.query(
           `UPDATE deployments
            SET status = 'failed',

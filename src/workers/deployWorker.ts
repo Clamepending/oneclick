@@ -3,6 +3,7 @@ import { Queue, Worker } from "bullmq";
 import { randomUUID } from "crypto";
 import net from "node:net";
 import { Client } from "ssh2";
+import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { DescribeNetworkInterfacesCommand, EC2Client } from "@aws-sdk/client-ec2";
 import {
   DescribeServicesCommand,
@@ -32,6 +33,20 @@ function getQueueConnection() {
 }
 
 export async function enqueueDeploymentJob(job: DeploymentJob) {
+  const sqsQueueUrl = readTrimmedEnv("SQS_DEPLOYMENT_QUEUE_URL");
+  const awsRegion = readTrimmedEnv("AWS_REGION");
+  if (sqsQueueUrl && awsRegion) {
+    const sqs = new SQSClient(buildAwsConfigWithTrimmedCreds(awsRegion));
+    const isFifo = sqsQueueUrl.toLowerCase().endsWith(".fifo");
+    await sqs.send(
+      new SendMessageCommand({
+        QueueUrl: sqsQueueUrl,
+        MessageBody: JSON.stringify(job),
+        ...(isFifo ? { MessageGroupId: "deployments", MessageDeduplicationId: job.deploymentId } : {}),
+      }),
+    );
+    return;
+  }
   const queue = new Queue<DeploymentJob>(queueName, { connection: getQueueConnection() });
   await queue.add("deploy", job, {
     jobId: job.deploymentId,
