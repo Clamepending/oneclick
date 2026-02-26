@@ -36,9 +36,9 @@ Critical keys:
 - `HOST_POOL_JSON`
 - `OPENCLAW_IMAGE`
 
-Queueing / deployment orchestration:
+Optional for background queue mode:
 
-- `DEPLOY_QUEUE_PROVIDER=sqs` + `SQS_DEPLOYMENT_QUEUE_URL` (AWS SQS + Lambda consumer)
+- `REDIS_URL` (required only if using separate worker process)
 
 Runtime deployment mode:
 
@@ -49,6 +49,7 @@ Runtime deployment mode:
 - `DEPLOY_SSH_KNOWN_HOSTS` is optional but recommended for strict host verification.
 - `OPENCLAW_TELEGRAM_BOT_TOKEN` is required when users select Telegram during onboarding; this token is injected at container launch.
 - `OPENCLAW_ALLOW_INSECURE_CONTROL_UI=true` allows Control UI over plain HTTP for prototype environments (less secure; prefer HTTPS in production)
+- `OPENCLAW_REQUIRE_PINNED_IMAGE=true` (recommended for production) rejects floating OpenClaw images such as `:latest`
 - `NEXT_PUBLIC_DEPLOY_POLL_INTERVAL_MS` controls dashboard polling in browser (default `10000`)
 - `PG_POOL_MAX`/`PG_IDLE_TIMEOUT_MS`/`PG_CONNECTION_TIMEOUT_MS` tune DB pool usage for serverless (defaults are safe for small Supabase poolers)
 
@@ -58,6 +59,29 @@ Runtime deployment mode:
 npm install
 npm run dev
 ```
+
+Worker (separate process):
+
+```bash
+npm run worker -- --run
+```
+
+## Cost Guardrails (recommended)
+
+Application-level hard limits (cheap + effective):
+
+- `DEPLOYMENTS_PAUSED=true` to block all new deployments
+- `DEPLOY_MAX_IN_PROGRESS_GLOBAL` to cap total `queued/starting` deployments
+- `DEPLOY_MAX_READY_GLOBAL` to cap total running bots (`ready`)
+- `DEPLOY_MAX_READY_PER_USER` to cap running bots per user
+
+Age-based auto-stop sweep (optional):
+
+- Set `DEPLOY_AUTO_STOP_READY_AFTER_MINUTES` (for example `180`)
+- Dry run: `DEPLOY_COST_GUARD_DRY_RUN=true npm run cost:guard:sweep`
+- Real run: `npm run cost:guard:sweep`
+
+This sweep stops `ready` deployments older than the configured age and marks them failed with a cost-guard reason.
 
 ## AWS ECS (minimal manual setup)
 
@@ -79,10 +103,50 @@ Then copy values from `.env.aws-ecs` into your app runtime env (`.env.local`, Ve
 
 Infra source: `infra/aws/`
 
+### ECS runtime smoke test (recommended)
+
+After changing `OPENCLAW_IMAGE` (or any ECS runtime settings), run:
+
+```bash
+npm run aws:smoke
+```
+
+This now validates:
+
+- ECS service create/update/delete path
+- Task reaches `running`
+- OpenClaw Control UI shell is served
+- Control UI JS asset loads
+- `__openclaw/control-ui-config.json` responds
+
+Optional Telegram probe validation (helps catch runtime Telegram regressions):
+
+```bash
+ECS_SMOKE_TELEGRAM_TOKEN=<your-bot-token> npm run aws:smoke
+```
+
+### Optional AWS Budget Alerts
+
+The Terraform stack supports opt-in monthly cost alerts via AWS Budgets.
+
+In `infra/aws/terraform.tfvars`, set for example:
+
+```hcl
+enable_monthly_budget_alerts = true
+monthly_budget_limit_usd = 25
+budget_alert_email_addresses = ["you@example.com"]
+```
+
+Then re-run:
+
+```bash
+npm run aws:bootstrap
+```
+
 ## Vercel deployment
 
 - This app is Vercel-compatible out of the box.
-- Vercel production fails fast if the SQS queue configuration is unavailable (instead of silently trying in-process deploy work).
+- If `REDIS_URL` is not set, deployments are processed in-process (no separate worker required).
 - On Vercel, set:
   - `AUTH_URL=https://your-app.vercel.app`
   - `APP_BASE_URL=https://your-app.vercel.app`
@@ -142,6 +206,7 @@ For Vercel + SSH deployment (one shared VM, one container per user):
 - optional but recommended for shared auth sessions across `app.yourdomain` + `bot.yourdomain`: set `AUTH_COOKIE_DOMAIN=.yourdomain`
 - optional: set `BOT_AUTH_LOGIN_BASE_URL` to your canonical app host (for example `https://app.yourdomain`) so unauthenticated bot subdomain visits always go through one login origin
 - optional: set `CADDY_EMAIL` for certificate issuer contact
+- do not set `REDIS_URL` to localhost; either provide a real remote Redis or leave `REDIS_URL` unset
 - each new deploy for a user destroys that user’s previous container
 - if using `RUNTIME_BASE_DOMAIN`, open droplet ports `80/443` and point wildcard DNS (`*.yourdomain`) to droplet IP
 - deployment step: after launch, enter the customer’s own OpenAI or Anthropic API key in OpenClaw (never use your personal key in customer deployments)

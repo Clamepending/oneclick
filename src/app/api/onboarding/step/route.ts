@@ -10,7 +10,8 @@ const stepPayload = z.object({
   telegramBotToken: z.string().trim().min(1).max(200).nullable().optional(),
   modelProvider: z.enum(["openai", "anthropic"]).nullable().optional(),
   modelApiKey: z.string().trim().min(1).max(200).nullable().optional(),
-  plan: z.enum(["free"]).optional(),
+  plan: z.enum(["free", "paid"]).optional(),
+  deploymentFlavor: z.enum(["basic", "advanced"]).optional(),
 });
 
 export async function POST(request: Request) {
@@ -25,7 +26,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: "Invalid payload" }, { status: 400 });
     }
 
-    const { step, botName, channel, telegramBotToken, modelProvider, modelApiKey, plan } = parsed.data;
+    const { step, botName, channel, telegramBotToken, modelProvider, modelApiKey, plan, deploymentFlavor } =
+      parsed.data;
     await ensureSchema();
 
     await pool.query(
@@ -43,10 +45,11 @@ export async function POST(request: Request) {
            model_provider = $4,
            model_api_key = $5,
            plan = COALESCE($6, plan),
-           current_step = GREATEST(current_step, $7),
-           completed = CASE WHEN $7 >= 3 THEN TRUE ELSE completed END,
+           deployment_flavor = COALESCE($7, deployment_flavor),
+           current_step = GREATEST(current_step, $8),
+           completed = CASE WHEN $8 >= 3 THEN TRUE ELSE completed END,
            updated_at = NOW()
-       WHERE user_id = $8`,
+       WHERE user_id = $9`,
       [
         botName ?? null,
         channel ?? null,
@@ -54,6 +57,7 @@ export async function POST(request: Request) {
         modelProvider ?? null,
         modelApiKey ?? null,
         plan ?? null,
+        deploymentFlavor ?? null,
         step,
         session.user.email,
       ],

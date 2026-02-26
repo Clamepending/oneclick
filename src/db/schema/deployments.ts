@@ -1,4 +1,4 @@
-export type DeploymentStatus = "queued" | "starting" | "ready" | "failed" | "stopped";
+export type DeploymentStatus = "queued" | "starting" | "ready" | "failed" | "stopped" | "deactivated";
 
 export type Deployment = {
   id: string;
@@ -8,6 +8,12 @@ export type Deployment = {
   hostName: string | null;
   runtimeId: string | null;
   deployProvider: string | null;
+  planTier: "free" | "paid" | null;
+  trialStartedAt: string | null;
+  trialExpiresAt: string | null;
+  deactivatedAt: string | null;
+  deactivationReason: string | null;
+  monthlyPriceCents: number | null;
   subsidyProxyToken: string | null;
   openaiApiKey: string | null;
   anthropicApiKey: string | null;

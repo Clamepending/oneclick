@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import { Client } from "ssh2";
 import {
   CreateServiceCommand,
   DeleteServiceCommand,
@@ -8,6 +9,7 @@ import {
   UpdateServiceCommand,
 } from "@aws-sdk/client-ecs";
 import { getRuntimeBaseDomain } from "@/lib/subdomainConfig";
+import { getEcsPlanResources, normalizeDeploymentFlavor, normalizePlanTier, type DeploymentFlavor, type PlanTier } from "@/lib/plans";
 import {
   getOpenClawImage,
   getOpenClawPort,
@@ -27,6 +29,8 @@ type LaunchInput = {
   openrouterApiKey?: string | null;
   subsidyProxyBaseUrl?: string | null;
   subsidyProxyToken?: string | null;
+  planTier?: PlanTier | null;
+  deploymentFlavor?: DeploymentFlavor | null;
   host?: Host;
 };
 
@@ -153,6 +157,12 @@ function buildAssignedPort(deploymentId: string) {
   return base + offset;
 }
 
+function buildEcsOpenClawStateDir(input: { userId: string; deploymentId: string }) {
+  const user = sanitizeSegment(input.userId);
+  const deployment = sanitizeSegment(input.deploymentId);
+  return `${user}/${deployment}`;
+}
+
 function parseSshTarget(dockerHost: string) {
   // Expected format: ssh://user@hostname
   if (!dockerHost.startsWith("ssh://")) return null;
@@ -208,6 +218,51 @@ function splitStartCommand(command: string) {
     .filter(Boolean);
 }
 
+function buildOpenClawOnboardCommand(input: {
+  anthropicApiKey?: string | null;
+  openaiApiKey?: string | null;
+  openrouterApiKey?: string | null;
+  subsidyProxyToken?: string | null;
+  containerPort: number;
+}) {
+  const anthropicApiKey = input.anthropicApiKey?.trim() || "";
+  const openaiApiKey = input.openaiApiKey?.trim() || "";
+  const openrouterApiKey = input.openrouterApiKey?.trim() || "";
+  const subsidyProxyToken = input.subsidyProxyToken?.trim() || "";
+
+  const authArg = anthropicApiKey
+    ? `--anthropic-api-key ${shellQuote(anthropicApiKey)}`
+    : openaiApiKey
+      ? `--openai-api-key ${shellQuote(openaiApiKey)}`
+      : openrouterApiKey
+        ? `--openai-api-key ${shellQuote(openrouterApiKey)}`
+        : subsidyProxyToken
+          ? `--openai-api-key ${shellQuote(subsidyProxyToken)}`
+          : "";
+
+  if (!authArg) return "";
+
+  return [
+    "node /app/dist/index.js onboard",
+    "--non-interactive",
+    "--accept-risk",
+    "--mode local",
+    "--auth-choice apiKey",
+    authArg,
+    `--gateway-port ${input.containerPort}`,
+    "--gateway-bind lan",
+    "--skip-daemon",
+    "--skip-channels",
+    "--skip-health",
+    "--skip-ui",
+    "--skip-skills",
+  ].join(" ");
+}
+
+function getAdvancedBootstrapMessage() {
+  return "Please follow the instructions to join ottoauth: curl -s https://ottoauth.vercel.app/skill.md";
+}
+
 function buildEcsReadyUrl(input: { deploymentId: string; userId: string; serviceName: string }) {
   const template = readTrimmedEnv("ECS_READY_URL_TEMPLATE");
   if (!template) {
@@ -220,7 +275,6 @@ function buildEcsReadyUrl(input: { deploymentId: string; userId: string; service
 }
 
 async function runSshCommand(sshTarget: string, command: string) {
-  const { Client } = await import("ssh2");
   const { user, host } = parseUserAndHost(sshTarget);
   const privateKeyRaw = process.env.DEPLOY_SSH_PRIVATE_KEY?.trim();
   if (!privateKeyRaw) {
@@ -337,12 +391,20 @@ async function launchViaSsh(input: LaunchInput) {
   const gatewayToken = getGatewayToken();
   const hostPort = buildAssignedPort(input.deploymentId);
   const telegramBotToken = input.telegramBotToken?.trim() || "";
+  const telegramEnabled = telegramBotToken ? "true" : "false";
   const openaiApiKey = input.openaiApiKey?.trim() || "";
   const anthropicApiKey = input.anthropicApiKey?.trim() || "";
   const openrouterApiKey = input.openrouterApiKey?.trim() || "";
   const subsidyProxyBaseUrl = input.subsidyProxyBaseUrl?.trim() || "";
   const subsidyProxyToken = input.subsidyProxyToken?.trim() || "";
   const resourceFlags = getDockerResourceFlags();
+  const onboardCommand = buildOpenClawOnboardCommand({
+    anthropicApiKey,
+    openaiApiKey,
+    openrouterApiKey,
+    subsidyProxyToken,
+    containerPort,
+  });
 
   const safeUser = sanitizeSegment(input.userId);
   const safeDeployment = sanitizeSegment(input.deploymentId);
@@ -359,17 +421,26 @@ async function launchViaSsh(input: LaunchInput) {
     `chown -R 1000:1000 "${userDir}" "${workspaceDir}" || true`,
     `docker pull "${image}"`,
     `docker rm -f "${containerName}" >/dev/null 2>&1 || true`,
-    `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.bind lan`,
-    `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.auth.token ${shellQuote(gatewayToken)}`,
+          `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.bind lan`,
+          `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.auth.token ${shellQuote(gatewayToken)}`,
     ...(allowInsecureControlUi
       ? [
           `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.controlUi.allowInsecureAuth true`,
           `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.controlUi.dangerouslyDisableDeviceAuth true`,
-          `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback true`,
           `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.trustedProxies '["172.16.0.0/12"]'`,
         ]
       : []),
-    `docker run -d --name "${containerName}" --restart unless-stopped --memory=${resourceFlags.memory} --memory-swap=${resourceFlags.memory} --cpus=${resourceFlags.cpus} --pids-limit=${resourceFlags.pids} --shm-size=${resourceFlags.shmSize} --log-opt max-size=${resourceFlags.logMaxSize} --log-opt max-file=${resourceFlags.logMaxFiles}${resourceFlags.writableLayerSize ? ` --storage-opt size=${resourceFlags.writableLayerSize}` : ""} -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace"${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""}${!openaiApiKey && !anthropicApiKey && !openrouterApiKey && subsidyProxyBaseUrl && subsidyProxyToken ? ` -e OPENAI_API_KEY=${shellQuote(subsidyProxyToken)} -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)}` : ""} -p "${hostPort}:${containerPort}" "${image}" ${startCommand}`,
+    ...(telegramBotToken
+      ? [
+          `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set plugins.entries.telegram.enabled true`,
+        ]
+      : []),
+    ...(onboardCommand
+      ? [
+          `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace"${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""}${subsidyProxyBaseUrl && subsidyProxyToken && !openaiApiKey && !anthropicApiKey && !openrouterApiKey ? ` -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)}` : ""} "${image}" sh -lc ${shellQuote(onboardCommand)}`,
+        ]
+      : []),
+    `docker run -d --name "${containerName}" --restart unless-stopped --memory=${resourceFlags.memory} --memory-swap=${resourceFlags.memory} --cpus=${resourceFlags.cpus} --pids-limit=${resourceFlags.pids} --shm-size=${resourceFlags.shmSize} --log-opt max-size=${resourceFlags.logMaxSize} --log-opt max-file=${resourceFlags.logMaxFiles}${resourceFlags.writableLayerSize ? ` --storage-opt size=${resourceFlags.writableLayerSize}` : ""} -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" -e TELEGRAM_ENABLED=${telegramEnabled}${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""}${!openaiApiKey && !anthropicApiKey && !openrouterApiKey && subsidyProxyBaseUrl && subsidyProxyToken ? ` -e OPENAI_API_KEY=${shellQuote(subsidyProxyToken)} -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)}` : ""} -p "${hostPort}:${containerPort}" "${image}" ${startCommand}`,
   ].join(" && ");
 
   await runSshCommand(sshTarget, remoteScript);
@@ -406,11 +477,14 @@ async function launchViaEcs(input: LaunchInput) {
     ? "DISABLED"
     : "ENABLED";
   const image = getOpenClawImage();
+  const gatewayToken = getGatewayToken();
   const containerPort = getOpenClawPort();
   const startCommand = getOpenClawStartCommand();
   const command = splitStartCommand(startCommand);
-  const cpu = readTrimmedEnv("ECS_TASK_CPU") || "512";
-  const memory = readTrimmedEnv("ECS_TASK_MEMORY") || "1024";
+  const isPhioranexOpenClawImage = image.toLowerCase().includes("ghcr.io/phioranex/openclaw-docker");
+  const planTier = normalizePlanTier(input.planTier);
+  const deploymentFlavor = normalizeDeploymentFlavor(input.deploymentFlavor);
+  const { cpu, memory } = getEcsPlanResources(planTier);
   const platformVersion = readTrimmedEnv("ECS_PLATFORM_VERSION");
   const serviceName = `${servicePrefix}-${sanitizeNamePart(input.userId, 16)}-${sanitizeNamePart(input.deploymentId, 10)}`.slice(0, 63);
   const family = `${servicePrefix}-${sanitizeNamePart(input.userId, 18)}-${sanitizeNamePart(input.deploymentId, 12)}`.slice(0, 255);
@@ -421,24 +495,18 @@ async function launchViaEcs(input: LaunchInput) {
   const efsFileSystemId = readTrimmedEnv("ECS_EFS_FILE_SYSTEM_ID");
   const efsAccessPointId = readTrimmedEnv("ECS_EFS_ACCESS_POINT_ID");
   const efsTransitEncryption = (readTrimmedEnv("ECS_EFS_TRANSIT_ENCRYPTION") || "ENABLED").toUpperCase();
+  const efsContainerMountPath = readTrimmedEnv("ECS_EFS_CONTAINER_MOUNT_PATH") || "/mnt/oneclick-efs";
+  const workspaceSuffix = readTrimmedEnv("OPENCLAW_WORKSPACE_SUFFIX") || "workspace";
+  const efsEnabled = Boolean(efsFileSystemId);
   const efsTransitEncryptionMode: "ENABLED" | "DISABLED" =
     efsTransitEncryption === "DISABLED" ? "DISABLED" : "ENABLED";
+  const configVolumeName = "openclaw-data";
   const ecsClient = new ECSClient(buildAwsConfigWithTrimmedCreds(region));
-  const allowInsecureControlUi = shouldAllowInsecureControlUi();
-  const gatewayToken = getGatewayToken();
-  const configVolumeName = "openclaw-config";
-  const configMountPath = "/root/.openclaw";
-  const configInitBase = `${containerName}-cfg`;
-  const authInitContainerName = `${configInitBase}-onboard`.slice(0, 255);
-  const bindInitContainerName = `${configInitBase}-bind`.slice(0, 255);
-  const tokenInitContainerName = `${configInitBase}-token`.slice(0, 255);
-  const insecureOriginFallbackInitName = `${configInitBase}-origin`.slice(0, 255);
-  const insecureAuthInitName = `${configInitBase}-auth`.slice(0, 255);
-  const insecureDeviceAuthInitName = `${configInitBase}-device`.slice(0, 255);
-  const trustedProxiesInitName = `${configInitBase}-proxy`.slice(0, 255);
 
   const environment = [
-    { name: "OPENCLAW_ALLOW_INSECURE_CONTROL_UI", value: allowInsecureControlUi ? "true" : "false" },
+    { name: "OPENCLAW_GATEWAY_TOKEN", value: gatewayToken },
+    { name: "OPENCLAW_ALLOW_INSECURE_CONTROL_UI", value: shouldAllowInsecureControlUi() ? "true" : "false" },
+    { name: "TELEGRAM_ENABLED", value: input.telegramBotToken?.trim() ? "true" : "false" },
     input.telegramBotToken?.trim() ? { name: "TELEGRAM_BOT_TOKEN", value: input.telegramBotToken.trim() } : null,
     input.openaiApiKey?.trim() ? { name: "OPENAI_API_KEY", value: input.openaiApiKey.trim() } : null,
     input.anthropicApiKey?.trim() ? { name: "ANTHROPIC_API_KEY", value: input.anthropicApiKey.trim() } : null,
@@ -455,108 +523,98 @@ async function launchViaEcs(input: LaunchInput) {
     telemetryEnv ? { name: "OPENCLAW_TELEMETRY", value: telemetryEnv } : null,
   ].filter((entry): entry is { name: string; value: string } => Boolean(entry));
 
-  const buildConfigInitContainer = (
-    name: string,
-    command: string[],
-    dependsOn?: Array<{ containerName: string; condition: "SUCCESS" }>,
-    environment?: Array<{ name: string; value: string }>,
-  ) => ({
-    name,
-    image,
-    essential: false,
-    user: "0",
-    command,
-    dependsOn,
-    environment,
-    mountPoints: [
-      {
-        sourceVolume: configVolumeName,
-        containerPath: configMountPath,
-        readOnly: false,
-      },
-    ],
-    logConfiguration: awslogsGroup
-      ? {
-          logDriver: "awslogs" as const,
-          options: {
-            "awslogs-group": awslogsGroup,
-            "awslogs-region": region,
-            "awslogs-stream-prefix": `${awslogsPrefix}-init`,
-          },
-        }
-      : undefined,
-  });
+  const containerMountPoints = efsEnabled
+    ? [
+        {
+          sourceVolume: configVolumeName,
+          containerPath: efsContainerMountPath,
+          readOnly: false,
+        },
+      ]
+    : undefined;
 
-  const authInitContainer = input.anthropicApiKey?.trim()
-    ? buildConfigInitContainer(
-        authInitContainerName,
-        [
-          "onboard",
-          "--non-interactive",
-          "--accept-risk",
-          "--mode",
-          "local",
-          "--auth-choice",
-          "apiKey",
-          "--anthropic-api-key",
-          input.anthropicApiKey.trim(),
-          "--gateway-port",
-          String(containerPort),
-          "--gateway-bind",
-          "lan",
-          "--skip-daemon",
-          "--skip-channels",
-          "--skip-health",
-          "--skip-ui",
-          "--skip-skills",
-        ],
-      )
-    : null;
+  const entryPointOverride = isPhioranexOpenClawImage ? ["sh", "-lc"] : undefined;
+  const commandOverride = (() => {
+    if (isPhioranexOpenClawImage) {
+      const onboardCommand = buildOpenClawOnboardCommand({
+        anthropicApiKey: input.anthropicApiKey,
+        openaiApiKey: input.openaiApiKey,
+        openrouterApiKey: input.openrouterApiKey,
+        subsidyProxyToken: input.subsidyProxyToken,
+        containerPort,
+      });
+      const scriptSteps = [
+        "set -e",
+        "mkdir -p /tmp/oneclick-bin",
+        `printf '%s\\n' '#!/bin/sh' 'exec node /app/dist/index.js "$@"' > /tmp/oneclick-bin/openclaw`,
+        "chmod +x /tmp/oneclick-bin/openclaw",
+        'export PATH="/tmp/oneclick-bin:$PATH"',
+      ];
+      if (efsEnabled) {
+        const stateSuffix = buildEcsOpenClawStateDir({ userId: input.userId, deploymentId: input.deploymentId });
+        const stateDir = `${efsContainerMountPath}/${stateSuffix}`;
+        const workspaceDir = `${stateDir}/${workspaceSuffix}`;
+        scriptSteps.push(
+          `mkdir -p ${shellQuote(workspaceDir)}`,
+          "rm -rf /home/node/.openclaw || true",
+          `ln -s ${shellQuote(stateDir)} /home/node/.openclaw`,
+        );
+      }
+      scriptSteps.push(
+        "node /app/dist/index.js config set gateway.bind lan",
+        `node /app/dist/index.js config set gateway.auth.token ${shellQuote(gatewayToken)}`,
+      );
+      if (input.telegramBotToken?.trim()) {
+        scriptSteps.push("node /app/dist/index.js config set plugins.entries.telegram.enabled true");
+      }
+      if (shouldAllowInsecureControlUi()) {
+        scriptSteps.push(
+          "node /app/dist/index.js config set gateway.controlUi.allowInsecureAuth true",
+          "node /app/dist/index.js config set gateway.controlUi.dangerouslyDisableDeviceAuth true",
+          `node /app/dist/index.js config set gateway.trustedProxies ${shellQuote('["172.16.0.0/12"]')}`,
+        );
+      }
+      if (onboardCommand) {
+        scriptSteps.push(onboardCommand);
+      }
+      if (deploymentFlavor === "advanced") {
+        const advancedMessage = shellQuote(getAdvancedBootstrapMessage());
+        scriptSteps.push(
+          "BOOTSTRAP_SENTINEL=/home/node/.openclaw/.oneclick-advanced-ottoauth-sent",
+          [
+            "( if [ ! -f \"$BOOTSTRAP_SENTINEL\" ]; then",
+            "for i in $(seq 1 60); do",
+            "if openclaw health >/dev/null 2>&1; then break; fi;",
+            "sleep 5;",
+            "done;",
+            "sleep 2;",
+            `openclaw agent --session-id main --message ${advancedMessage} >/tmp/oneclick-advanced-bootstrap.log 2>&1 && touch \"$BOOTSTRAP_SENTINEL\" || true;`,
+            "fi ) &",
+          ].join(" "),
+        );
+      }
+      scriptSteps.push(
+        `exec node /app/dist/index.js gateway run --allow-unconfigured --bind lan --token ${shellQuote(gatewayToken)}`,
+      );
+      return [scriptSteps.join("; ")];
+    }
 
-  const configInitContainers = [
-    ...(authInitContainer ? [authInitContainer] : []),
-    buildConfigInitContainer(
-      bindInitContainerName,
-      ["config", "set", "gateway.bind", "lan"],
-      authInitContainer ? [{ containerName: authInitContainerName, condition: "SUCCESS" }] : undefined,
-    ),
-    buildConfigInitContainer(
-      tokenInitContainerName,
-      ["config", "set", "gateway.auth.token", gatewayToken],
-      [{ containerName: bindInitContainerName, condition: "SUCCESS" }],
-    ),
-    ...(allowInsecureControlUi
-      ? [
-          buildConfigInitContainer(
-            insecureAuthInitName,
-            ["config", "set", "gateway.controlUi.allowInsecureAuth", "true"],
-            [{ containerName: tokenInitContainerName, condition: "SUCCESS" }],
-          ),
-          buildConfigInitContainer(
-            insecureDeviceAuthInitName,
-            ["config", "set", "gateway.controlUi.dangerouslyDisableDeviceAuth", "true"],
-            [{ containerName: insecureAuthInitName, condition: "SUCCESS" }],
-          ),
-          buildConfigInitContainer(
-            insecureOriginFallbackInitName,
-            ["config", "set", "gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback", "true"],
-            [{ containerName: insecureDeviceAuthInitName, condition: "SUCCESS" }],
-          ),
-          buildConfigInitContainer(
-            trustedProxiesInitName,
-            ["config", "set", "gateway.trustedProxies", '[\"172.16.0.0/12\"]'],
-            [{ containerName: insecureOriginFallbackInitName, condition: "SUCCESS" }],
-          ),
-        ]
-      : []),
-  ];
-
-  const mainContainerDependsOn = [
-    {
-      containerName: allowInsecureControlUi ? trustedProxiesInitName : tokenInitContainerName,
-      condition: "SUCCESS" as const,
-    },
-  ];
+    if (!efsEnabled) return command.length > 0 ? command : undefined;
+    const stateSuffix = buildEcsOpenClawStateDir({ userId: input.userId, deploymentId: input.deploymentId });
+    const stateDir = `${efsContainerMountPath}/${stateSuffix}`;
+    const workspaceDir = `${stateDir}/${workspaceSuffix}`;
+    return [
+      "sh",
+      "-lc",
+      [
+        "set -e",
+        `mkdir -p ${shellQuote(workspaceDir)}`,
+        `rm -rf /home/node/.openclaw || true`,
+        `ln -s ${shellQuote(stateDir)} /home/node/.openclaw`,
+        `exec ${startCommand}`,
+      ].join("; "),
+    ];
+  })();
 
   const taskVolumes = efsFileSystemId
     ? [
@@ -591,22 +649,14 @@ async function launchViaEcs(input: LaunchInput) {
       taskRoleArn: taskRoleArn || undefined,
       volumes: taskVolumes,
       containerDefinitions: [
-        ...configInitContainers,
         {
           name: containerName,
           image,
+          entryPoint: entryPointOverride,
           essential: true,
-          user: "0",
-          command: command.length > 0 ? command : undefined,
+          command: commandOverride,
           environment,
-          dependsOn: mainContainerDependsOn,
-          mountPoints: [
-            {
-              sourceVolume: configVolumeName,
-              containerPath: configMountPath,
-              readOnly: false,
-            },
-          ],
+          mountPoints: containerMountPoints,
           portMappings: [
             {
               containerPort,

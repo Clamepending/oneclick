@@ -1,6 +1,8 @@
 import "dotenv/config";
+import { Queue, Worker } from "bullmq";
 import { randomUUID } from "crypto";
 import net from "node:net";
+import { Client } from "ssh2";
 import { DescribeNetworkInterfacesCommand, EC2Client } from "@aws-sdk/client-ec2";
 import {
   DescribeServicesCommand,
@@ -9,33 +11,33 @@ import {
   ListTasksCommand,
   type ECSClientConfig,
 } from "@aws-sdk/client-ecs";
-import { SendMessageCommand, SQSClient } from "@aws-sdk/client-sqs";
 import { ensureSchema, pool } from "@/lib/db";
+import { normalizeDeploymentFlavor, normalizePlanTier, type DeploymentFlavor, type PlanTier } from "@/lib/plans";
 import { selectHost } from "@/lib/provisioner/hostScheduler";
 import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runtimeProvider";
 
-export type DeploymentJob = {
+type DeploymentJob = {
   deploymentId: string;
   userId: string;
 };
 
-function getSqsQueueConfig() {
-  const region = readTrimmedEnv("AWS_REGION");
-  const queueUrl = readTrimmedEnv("SQS_DEPLOYMENT_QUEUE_URL");
-  if (!region) throw new Error("AWS_REGION is required for SQS deployment queue operations.");
-  if (!queueUrl) throw new Error("SQS_DEPLOYMENT_QUEUE_URL is required when DEPLOY_QUEUE_PROVIDER=sqs.");
-  return { region, queueUrl };
+const queueName = "deployment-jobs";
+
+function getQueueConnection() {
+  const redisUrl = process.env.REDIS_URL;
+  if (!redisUrl) {
+    throw new Error("REDIS_URL is required for queue operations.");
+  }
+  return { url: redisUrl };
 }
 
 export async function enqueueDeploymentJob(job: DeploymentJob) {
-  const { region, queueUrl } = getSqsQueueConfig();
-  const client = new SQSClient(buildAwsConfigWithTrimmedCreds(region));
-  await client.send(
-    new SendMessageCommand({
-      QueueUrl: queueUrl,
-      MessageBody: JSON.stringify(job),
-    }),
-  );
+  const queue = new Queue<DeploymentJob>(queueName, { connection: getQueueConnection() });
+  await queue.add("deploy", job, {
+    jobId: job.deploymentId,
+    removeOnComplete: true,
+    removeOnFail: 200,
+  });
 }
 
 async function appendEvent(deploymentId: string, status: string, message: string) {
@@ -107,7 +109,6 @@ async function probeTcpPort(host: string, port: number) {
 }
 
 async function probeSshLocalPort(sshTarget: string, port: number) {
-  const { Client } = await import("ssh2");
   const privateKeyRaw = process.env.DEPLOY_SSH_PRIVATE_KEY?.trim();
   if (!privateKeyRaw) {
     throw new Error("DEPLOY_SSH_PRIVATE_KEY is required for SSH runtime health checks.");
@@ -205,7 +206,9 @@ async function waitForRuntimeReady(input: {
   const pollIntervalMs = 3000;
   const parsedEcsRuntime = input.deployProvider === "ecs" ? parseEcsRuntimeId(input.runtimeId) : null;
   if (parsedEcsRuntime) {
-    const startupTimeoutMs = Number(readTrimmedEnv("ECS_STARTUP_TIMEOUT_MS") || "600000");
+    const ecsStartupTimeoutMs = Number(
+      readTrimmedEnv("ECS_STARTUP_TIMEOUT_MS") || readTrimmedEnv("OPENCLAW_STARTUP_TIMEOUT_MS") || "300000",
+    );
     const region = readTrimmedEnv("AWS_REGION");
     if (!region) {
       throw new Error("AWS_REGION is required for ECS runtime health checks.");
@@ -213,7 +216,7 @@ async function waitForRuntimeReady(input: {
     const ecsClient = new ECSClient(buildAwsConfigWithTrimmedCreds(region));
     const ec2Client = new EC2Client(buildAwsConfigWithTrimmedCreds(region));
     const port = Number(readTrimmedEnv("OPENCLAW_CONTAINER_PORT") || "18789");
-    const deadline = Date.now() + startupTimeoutMs;
+    const deadline = Date.now() + ecsStartupTimeoutMs;
     let lastServiceStatus = "unknown";
     let lastEventMessage = "";
     let lastProbeError = "";
@@ -226,7 +229,7 @@ async function waitForRuntimeReady(input: {
       );
       const service = result.services?.[0];
       if (service?.status) lastServiceStatus = service.status;
-      const latestEvent = service?.events?.[0]?.message?.trim() || "";
+      const latestEvent = service?.events?.[0]?.message?.trim();
       if (latestEvent) lastEventMessage = latestEvent;
       if (service && service.status === "ACTIVE" && (service.runningCount ?? 0) > 0) {
         try {
@@ -242,13 +245,13 @@ async function waitForRuntimeReady(input: {
       }
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
     }
-    const extra = [
+    const details = [
       `status=${lastServiceStatus}`,
       lastEventMessage ? `lastEvent=${lastEventMessage}` : "",
       lastProbeError ? `lastProbeError=${lastProbeError}` : "",
     ].filter(Boolean).join(" | ");
     throw new Error(
-      `ECS service ${parsedEcsRuntime.serviceName} did not become reachable on port ${port} within ${startupTimeoutMs}ms${extra ? ` (${extra})` : ""}`,
+      `ECS service ${parsedEcsRuntime.serviceName} did not become reachable on port ${port} within ${ecsStartupTimeoutMs}ms${details ? ` (${details})` : ""}`,
     );
   }
 
@@ -280,29 +283,7 @@ async function waitForRuntimeReady(input: {
 }
 
 export async function processDeploymentJob(job: DeploymentJob) {
-  const startedAt = Date.now();
-  console.info(`[deploy:${job.deploymentId}] starting job for user ${job.userId}`);
   await ensureSchema();
-  const claim = await pool.query(
-    `UPDATE deployments
-     SET status = 'starting',
-         updated_at = NOW()
-     WHERE id = $1
-       AND user_id = $2
-       AND status = 'queued'
-     RETURNING id`,
-    [job.deploymentId, job.userId],
-  );
-  if (claim.rowCount === 0) {
-    const current = await pool.query<{ status: string | null }>(
-      `SELECT status FROM deployments WHERE id = $1 LIMIT 1`,
-      [job.deploymentId],
-    );
-    console.info(
-      `[deploy:${job.deploymentId}] skipping duplicate/late queue delivery; current status=${current.rows[0]?.status ?? "missing"}`,
-    );
-    return;
-  }
   await appendEvent(job.deploymentId, "starting", "Scheduling runtime host");
   const provider = readTrimmedEnv("DEPLOY_PROVIDER") || "mock";
   const providerRequiresHost = provider === "ssh" || provider === "mock";
@@ -369,18 +350,21 @@ export async function processDeploymentJob(job: DeploymentJob) {
 
   const deploymentRow = await pool.query<{
     bot_name: string | null;
-    model_provider: string | null;
     openai_api_key: string | null;
     anthropic_api_key: string | null;
     openrouter_api_key: string | null;
     telegram_bot_token: string | null;
+    plan_tier: string | null;
+    deployment_flavor: string | null;
   }>(
-    `SELECT bot_name, model_provider, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token
+    `SELECT bot_name, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token, plan_tier, deployment_flavor
      FROM deployments
      WHERE id = $1
      LIMIT 1`,
     [job.deploymentId],
   );
+  const planTier = normalizePlanTier(deploymentRow.rows[0]?.plan_tier) as PlanTier;
+  const deploymentFlavor = normalizeDeploymentFlavor(deploymentRow.rows[0]?.deployment_flavor) as DeploymentFlavor;
   const onboarding = await pool.query<{
     bot_name: string | null;
     channel: string | null;
@@ -399,40 +383,15 @@ export async function processDeploymentJob(job: DeploymentJob) {
   const selectedChannel = onboarding.rows[0]?.channel?.trim() || "none";
   const onboardingModelProvider = onboarding.rows[0]?.model_provider?.trim() || "";
   const onboardingModelApiKey = onboarding.rows[0]?.model_api_key?.trim() || "";
-  const deploymentModelProvider = deploymentRow.rows[0]?.model_provider?.trim() || "";
-  const effectiveModelProvider = deploymentModelProvider || onboardingModelProvider;
   const deploymentOpenAiKey = deploymentRow.rows[0]?.openai_api_key?.trim() || null;
   const deploymentAnthropicKey = deploymentRow.rows[0]?.anthropic_api_key?.trim() || null;
   const deploymentOpenRouterKey = deploymentRow.rows[0]?.openrouter_api_key?.trim() || null;
-  const anthropicSubsidyApiKey = process.env.ANTHROPIC_SUBSIDY_API_KEY?.trim() || null;
-  let selectedOpenAiKey =
-    deploymentOpenAiKey || (effectiveModelProvider === "openai" ? onboardingModelApiKey : null);
-  let selectedAnthropicKey =
-    deploymentAnthropicKey ||
-    (effectiveModelProvider === "anthropic" ? onboardingModelApiKey : null);
+  const selectedOpenAiKey =
+    deploymentOpenAiKey || (onboardingModelProvider === "openai" ? onboardingModelApiKey : null);
+  const selectedAnthropicKey =
+    deploymentAnthropicKey || (onboardingModelProvider === "anthropic" ? onboardingModelApiKey : null);
   const selectedOpenRouterKey = deploymentOpenRouterKey;
-  if (!selectedAnthropicKey && effectiveModelProvider === "anthropic" && anthropicSubsidyApiKey) {
-    selectedAnthropicKey = anthropicSubsidyApiKey;
-  }
-  if (
-    !selectedOpenAiKey &&
-    !selectedAnthropicKey &&
-    !selectedOpenRouterKey &&
-    effectiveModelProvider !== "openai" &&
-    anthropicSubsidyApiKey
-  ) {
-    selectedAnthropicKey = anthropicSubsidyApiKey;
-  }
-  if (effectiveModelProvider === "anthropic" && !selectedAnthropicKey && !selectedOpenRouterKey) {
-    throw new Error(
-      "Anthropic model selected, but no Anthropic key is available. Configure an Anthropic API key or set ANTHROPIC_SUBSIDY_API_KEY.",
-    );
-  }
-  const useSubsidyProxy =
-    !selectedOpenAiKey &&
-    !selectedAnthropicKey &&
-    !selectedOpenRouterKey &&
-    effectiveModelProvider === "openai";
+  const useSubsidyProxy = !selectedOpenAiKey && !selectedAnthropicKey && !selectedOpenRouterKey;
   const subsidyProxyToken = useSubsidyProxy ? randomUUID().replace(/-/g, "") : null;
   const onboardingTelegramBotToken = onboarding.rows[0]?.telegram_bot_token?.trim() || null;
   const deploymentTelegramBotToken = deploymentRow.rows[0]?.telegram_bot_token?.trim() || null;
@@ -447,9 +406,6 @@ export async function processDeploymentJob(job: DeploymentJob) {
     : null;
   if (runtimeSlugSource) {
     await appendEvent(job.deploymentId, "starting", `Using runtime subdomain slug "${runtimeSlugSource}"`);
-  }
-  if (effectiveModelProvider) {
-    await appendEvent(job.deploymentId, "starting", `Model provider snapshot: ${effectiveModelProvider}`);
   }
   if (selectedChannel === "telegram") {
     await appendEvent(
@@ -466,11 +422,6 @@ export async function processDeploymentJob(job: DeploymentJob) {
 
   if (useSubsidyProxy && subsidyProxyToken) {
     await appendEvent(job.deploymentId, "starting", "Using server-side subsidy proxy (50 requests/minute cap)");
-  }
-  if (!useSubsidyProxy && selectedAnthropicKey && selectedAnthropicKey === anthropicSubsidyApiKey) {
-    await appendEvent(job.deploymentId, "starting", effectiveModelProvider
-      ? "Using server-side Anthropic subsidy key"
-      : "Using server-side Anthropic subsidy key (default fallback)");
   }
   await pool.query(
     `UPDATE deployments
@@ -491,6 +442,8 @@ export async function processDeploymentJob(job: DeploymentJob) {
     openrouterApiKey: selectedOpenRouterKey,
     subsidyProxyToken,
     subsidyProxyBaseUrl,
+    planTier,
+    deploymentFlavor,
   });
   await pool.query(
     `UPDATE deployments
@@ -502,19 +455,12 @@ export async function processDeploymentJob(job: DeploymentJob) {
     [runtime.readyUrl, runtime.runtimeId, runtime.deployProvider, job.deploymentId],
   );
   await appendEvent(job.deploymentId, "starting", "Runtime launched; persisted runtime metadata");
-  console.info(
-    `[deploy:${job.deploymentId}] runtime launched provider=${runtime.deployProvider} runtimeId=${runtime.runtimeId}`,
-  );
   await appendEvent(job.deploymentId, "starting", "Waiting for runtime health check");
-  const healthCheckStartedAt = Date.now();
   await waitForRuntimeReady({
     readyUrl: runtime.readyUrl,
     deployProvider: runtime.deployProvider,
     runtimeId: runtime.runtimeId,
   });
-  console.info(
-    `[deploy:${job.deploymentId}] runtime health check passed in ${Date.now() - healthCheckStartedAt}ms`,
-  );
 
   await pool.query(
     `UPDATE deployments
@@ -524,7 +470,9 @@ export async function processDeploymentJob(job: DeploymentJob) {
     [job.deploymentId],
   );
   await appendEvent(job.deploymentId, "ready", "Runtime is ready");
-  console.info(`[deploy:${job.deploymentId}] ready in ${Date.now() - startedAt}ms`);
+  if (deploymentFlavor === "advanced") {
+    await appendEvent(job.deploymentId, "ready", "Advanced mode bootstrap queued: agent will receive OttoAuth setup prompt.");
+  }
   if (selectedOpenAiKey || selectedAnthropicKey || selectedOpenRouterKey) {
     await appendEvent(job.deploymentId, "ready", "Configured runtime API credentials from deployment settings.");
   }
@@ -532,37 +480,6 @@ export async function processDeploymentJob(job: DeploymentJob) {
 
 export async function markDeploymentFailed(deploymentId: string, error: unknown) {
   const message = error instanceof Error ? error.message : "Unexpected deployment failure";
-  console.warn(`[deploy:${deploymentId}] failed: ${message}`);
-
-  const deployment = await pool.query<{
-    runtime_id: string | null;
-    deploy_provider: string | null;
-    status: string;
-  }>(
-    `SELECT runtime_id, deploy_provider, status
-     FROM deployments
-     WHERE id = $1
-     LIMIT 1`,
-    [deploymentId],
-  );
-
-  const row = deployment.rows[0];
-  if (row?.runtime_id && (row.deploy_provider ?? "").trim() === "ecs") {
-    try {
-      console.info(`[deploy:${deploymentId}] cleaning up failed ECS runtime ${row.runtime_id}`);
-      await destroyUserRuntime({
-        runtimeId: row.runtime_id,
-        deployProvider: row.deploy_provider,
-      });
-      await appendEvent(deploymentId, "failed", "Cleaned up failed ECS runtime.");
-    } catch (cleanupError) {
-      const cleanupMessage =
-        cleanupError instanceof Error ? cleanupError.message : "Unknown ECS cleanup failure";
-      console.warn(`[deploy:${deploymentId}] ECS cleanup failed: ${cleanupMessage}`);
-      await appendEvent(deploymentId, "failed", `ECS cleanup failed: ${cleanupMessage}`);
-    }
-  }
-
   await pool.query(
     `UPDATE deployments SET status = 'failed', error = $1, updated_at = NOW() WHERE id = $2`,
     [message, deploymentId],
@@ -571,11 +488,31 @@ export async function markDeploymentFailed(deploymentId: string, error: unknown)
   return message;
 }
 
-if (process.argv.includes("--run")) {
-  console.error(
-    "Local deployment worker is no longer used. Deployments are consumed by AWS Lambda via SQS.",
+export function startDeploymentWorker() {
+  const worker = new Worker<DeploymentJob>(
+    queueName,
+    async (bullJob) => {
+      try {
+        await processDeploymentJob(bullJob.data);
+      } catch (error) {
+        await markDeploymentFailed(bullJob.data.deploymentId, error);
+        throw error;
+      }
+    },
+    { connection: getQueueConnection() },
   );
-  process.exit(1);
+
+  worker.on("error", (error) => {
+    console.error("Deployment worker error:", error);
+  });
+
+  return worker;
+}
+
+if (process.argv.includes("--run")) {
+  startDeploymentWorker();
+  // Keep process running.
+  setInterval(() => {}, 60_000);
 }
 
 export function newDeploymentId() {

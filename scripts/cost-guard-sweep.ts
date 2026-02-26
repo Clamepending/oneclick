@@ -1,4 +1,6 @@
-import dotenv from "dotenv";
+import "dotenv/config";
+import { ensureSchema, pool } from "@/lib/db";
+import { destroyUserRuntime } from "@/lib/provisioner/runtimeProvider";
 
 type ReadyDeployment = {
   id: string;
@@ -31,7 +33,6 @@ function readBoolEnv(name: string, fallback = false) {
 }
 
 async function appendEvent(deploymentId: string, status: string, message: string) {
-  const { pool } = await import("@/lib/db");
   await pool.query(
     `INSERT INTO deployment_events (deployment_id, status, message)
      VALUES ($1, $2, $3)`,
@@ -40,10 +41,6 @@ async function appendEvent(deploymentId: string, status: string, message: string
 }
 
 async function main() {
-  dotenv.config({ path: ".env", quiet: true });
-  dotenv.config({ path: ".env.local", override: false, quiet: true });
-  const { ensureSchema, pool } = await import("@/lib/db");
-  const { destroyUserRuntime } = await import("@/lib/provisioner/runtimeProvider");
   const ttlMinutes = readIntEnv("DEPLOY_AUTO_STOP_READY_AFTER_MINUTES", 0);
   const sweepLimit = readIntEnv("DEPLOY_COST_GUARD_SWEEP_LIMIT", 25);
   const dryRun = readBoolEnv("DEPLOY_COST_GUARD_DRY_RUN", false);
@@ -118,7 +115,6 @@ void main()
   })
   .finally(async () => {
     try {
-      const { pool } = await import("@/lib/db");
       await pool.end();
     } catch {
       // Ignore pool shutdown errors during script exit.

@@ -5,14 +5,22 @@ import Link from "next/link";
 import { ProgressTimeline } from "@/components/deployment/ProgressTimeline";
 import { DeploymentActions } from "@/components/deployment/DeploymentActions";
 import { DeploymentSettingsCard } from "@/components/deployment/DeploymentSettingsCard";
+import { deploymentModeDisplayName, normalizeDeploymentFlavor, normalizePlanTier } from "@/lib/plans";
 
 type DeploymentResponse = {
   id: string;
   botName?: string | null;
-  status: "queued" | "starting" | "ready" | "failed" | "stopped";
+  status: "queued" | "starting" | "ready" | "failed" | "stopped" | "deactivated";
   hostName?: string | null;
   runtimeId?: string | null;
   deployProvider?: string | null;
+  planTier?: "free" | "paid" | null;
+  deploymentFlavor?: "basic" | "advanced" | null;
+  trialStartedAt?: string | null;
+  trialExpiresAt?: string | null;
+  deactivatedAt?: string | null;
+  deactivationReason?: string | null;
+  monthlyPriceCents?: number | null;
   readyUrl?: string | null;
   error?: string | null;
   createdAt?: string;
@@ -37,6 +45,7 @@ function getStatusMeta(status?: DeploymentResponse["status"]) {
   if (status === "ready") return { label: "READY", color: "#1f9d55", bg: "rgba(31,157,85,0.18)" };
   if (status === "failed") return { label: "FAILED", color: "#ff6b6b", bg: "rgba(255,107,107,0.2)" };
   if (status === "stopped") return { label: "STOPPED", color: "#c3c9d4", bg: "rgba(195,201,212,0.18)" };
+  if (status === "deactivated") return { label: "DEACTIVATED", color: "#ff9f43", bg: "rgba(255,159,67,0.2)" };
   if (status === "starting") return { label: "STARTING", color: "#f5c542", bg: "rgba(245,197,66,0.2)" };
   if (status === "queued") return { label: "QUEUED", color: "#7ea7ff", bg: "rgba(126,167,255,0.2)" };
   return { label: "LOADING", color: "#b7bfd3", bg: "rgba(183,191,211,0.2)" };
@@ -75,7 +84,7 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
           setDeployment(dData);
           setEvents(eData.items);
           setError("");
-          if (dData.status === "ready" || dData.status === "failed" || dData.status === "stopped") {
+          if (dData.status === "ready" || dData.status === "failed" || dData.status === "stopped" || dData.status === "deactivated") {
             if (timer) clearInterval(timer);
             timer = null;
           }
@@ -103,6 +112,7 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
     if (deployment.status === "ready") return "Deployment ready";
     if (deployment.status === "failed") return "Deployment failed";
     if (deployment.status === "stopped") return "Deployment stopped";
+    if (deployment.status === "deactivated") return "Deployment deactivated";
     return "Deployment in progress";
   }, [deployment]);
   const statusMeta = getStatusMeta(deployment?.status);
@@ -129,6 +139,11 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
         <p className="muted" style={{ marginTop: -6 }}>
           {statusTitle}
         </p>
+        {(deployment?.status === "queued" || deployment?.status === "starting") ? (
+          <p className="muted" style={{ marginTop: 0 }}>
+            Deployments usually take ~10 minutes on AWS ECS/Fargate (image pull + startup).
+          </p>
+        ) : null}
         {deployment ? (
           <div style={{ display: "grid", gap: 6 }}>
             <p className="muted">
@@ -140,6 +155,25 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
             <p className="muted">
               Provider: <code>{deployment.deployProvider ?? "unknown"}</code>
             </p>
+            <p className="muted">
+              Plan:{" "}
+              <code>
+                {deployment.planTier === "paid"
+                  ? `${deploymentModeDisplayName(
+                      normalizePlanTier(deployment.planTier),
+                      normalizeDeploymentFlavor(deployment.deploymentFlavor),
+                    )}${deployment.monthlyPriceCents ? ` ($${(deployment.monthlyPriceCents / 100).toFixed(0)}/mo)` : ""}`
+                  : deploymentModeDisplayName(
+                      normalizePlanTier(deployment.planTier),
+                      normalizeDeploymentFlavor(deployment.deploymentFlavor),
+                    )}
+              </code>
+            </p>
+            {deployment.trialExpiresAt ? (
+              <p className="muted">
+                Trial expires: <code>{new Date(deployment.trialExpiresAt).toLocaleString()}</code>
+              </p>
+            ) : null}
             <p className="muted">
               Runtime ID: <code>{deployment.runtimeId ?? "pending"}</code>
             </p>
@@ -182,11 +216,16 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
             deploymentId={deployment.id}
             status={deployment.status}
             botName={deployment.botName}
+            planTier={deployment.planTier === "paid" ? "paid" : "free"}
+            deploymentFlavor={normalizeDeploymentFlavor(deployment.deploymentFlavor)}
           />
         ) : null}
         {deployment?.status === "ready" ? (
           <DeploymentSettingsCard
             deploymentId={deployment.id}
+            botName={deployment.botName}
+            planTier={deployment.planTier}
+            deploymentFlavor={normalizeDeploymentFlavor(deployment.deploymentFlavor)}
             hasOpenaiApiKey={Boolean(deployment.settings?.hasOpenaiApiKey)}
             hasAnthropicApiKey={Boolean(deployment.settings?.hasAnthropicApiKey)}
             hasOpenrouterApiKey={Boolean(deployment.settings?.hasOpenrouterApiKey)}
@@ -197,7 +236,7 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
             Runtime settings will appear after the container is ready.
           </p>
         ) : null}
-        {(deployment?.status === "failed" || deployment?.status === "stopped") ? (
+        {deployment?.status === "failed" || deployment?.status === "stopped" || deployment?.status === "deactivated" ? (
           <p style={{ color: "#ff8e8e" }}>{deployment.error ?? "Deployment failed."}</p>
         ) : null}
         {error ? <p style={{ color: "#ff8e8e" }}>{error}</p> : null}

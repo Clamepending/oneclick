@@ -105,21 +105,3 @@ variable "budget_alert_threshold_percent_3" {
   type        = number
   default     = 100
 }
-
-variable "enable_sqs_deploy_consumer_lambda" {
-  description = "Create Lambda consumer for deployment jobs from SQS"
-  type        = bool
-  default     = true
-}
-
-variable "sqs_deploy_consumer_lambda_memory_mb" {
-  description = "Memory size for the SQS deployment consumer Lambda"
-  type        = number
-  default     = 512
-}
-
-variable "sqs_deploy_consumer_lambda_timeout_seconds" {
-  description = "Timeout for the SQS deployment consumer Lambda"
-  type        = number
-  default     = 900
-}

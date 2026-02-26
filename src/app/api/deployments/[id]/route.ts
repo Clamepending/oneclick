@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
 import { destroyUserRuntime } from "@/lib/provisioner/runtimeProvider";
+import { deactivateExpiredFreeTrialsForUser } from "@/lib/trialEnforcement";
 
 async function checkRuntimeHealth(readyUrl: string) {
   try {
@@ -42,6 +43,7 @@ export async function GET(
 
   const { id } = await context.params;
   await ensureSchema();
+  await deactivateExpiredFreeTrialsForUser(session.user.email);
 
   const result = await pool.query<{
     id: string;
@@ -54,6 +56,13 @@ export async function GET(
     anthropic_api_key: string | null;
     openrouter_api_key: string | null;
     telegram_bot_token: string | null;
+    plan_tier: string | null;
+    deployment_flavor: string | null;
+    trial_started_at: string | null;
+    trial_expires_at: string | null;
+    deactivated_at: string | null;
+    deactivation_reason: string | null;
+    monthly_price_cents: number | null;
     ready_url: string | null;
     error: string | null;
     created_at: string;
@@ -61,6 +70,7 @@ export async function GET(
   }>(
     `SELECT id, bot_name, status, host_name, runtime_id, deploy_provider,
             openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token,
+            plan_tier, deployment_flavor, trial_started_at, trial_expires_at, deactivated_at, deactivation_reason, monthly_price_cents,
             ready_url, error, created_at, updated_at
      FROM deployments
      WHERE id = $1 AND user_id = $2`,
@@ -104,6 +114,13 @@ export async function GET(
     hostName: item.host_name,
     runtimeId: item.runtime_id,
     deployProvider: item.deploy_provider,
+    planTier: item.plan_tier,
+    deploymentFlavor: item.deployment_flavor,
+    trialStartedAt: item.trial_started_at,
+    trialExpiresAt: item.trial_expires_at,
+    deactivatedAt: item.deactivated_at,
+    deactivationReason: item.deactivation_reason,
+    monthlyPriceCents: item.monthly_price_cents,
     settings: {
       hasOpenaiApiKey: Boolean(item.openai_api_key?.trim()),
       hasAnthropicApiKey: Boolean(item.anthropic_api_key?.trim()),
@@ -129,6 +146,7 @@ export async function DELETE(
 
   const { id } = await context.params;
   await ensureSchema();
+  await deactivateExpiredFreeTrialsForUser(session.user.email);
 
   const result = await pool.query<{
     id: string;

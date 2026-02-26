@@ -3,15 +3,21 @@ import { auth, signIn } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
 import { BotDashboard } from "@/components/deployment/BotDashboard";
 import { buildBotDashboardUrl } from "@/lib/bots/botDashboardUrl";
+import { deactivateExpiredFreeTrialsForUser } from "@/lib/trialEnforcement";
 
 type DeploymentSummary = {
   id: string;
   bot_name: string | null;
   runtime_slug: string | null;
-  status: "queued" | "starting" | "ready" | "failed" | "stopped";
+  status: "queued" | "starting" | "ready" | "failed" | "stopped" | "deactivated";
   host_name: string | null;
   runtime_id: string | null;
   deploy_provider: string | null;
+  plan_tier: string | null;
+  deployment_flavor: string | null;
+  trial_expires_at: string | null;
+  deactivated_at: string | null;
+  monthly_price_cents: number | null;
   has_openai_api_key: boolean;
   has_anthropic_api_key: boolean;
   has_openrouter_api_key: boolean;
@@ -51,6 +57,7 @@ export default async function HomePage() {
   if (session.user.email) {
     try {
       await ensureSchema();
+      await deactivateExpiredFreeTrialsForUser(session.user.email);
       const result = await pool.query<DeploymentSummary>(
         `SELECT
            d.id,
@@ -60,6 +67,11 @@ export default async function HomePage() {
            d.host_name,
            d.runtime_id,
            d.deploy_provider,
+           d.plan_tier,
+           d.deployment_flavor,
+           d.trial_expires_at,
+           d.deactivated_at,
+           d.monthly_price_cents,
            CASE WHEN COALESCE(d.openai_api_key, '') <> '' THEN TRUE ELSE FALSE END AS has_openai_api_key,
            CASE WHEN COALESCE(d.anthropic_api_key, '') <> '' THEN TRUE ELSE FALSE END AS has_anthropic_api_key,
            CASE WHEN COALESCE(d.openrouter_api_key, '') <> '' THEN TRUE ELSE FALSE END AS has_openrouter_api_key,
@@ -111,6 +123,11 @@ export default async function HomePage() {
               hostName: deployment.host_name,
               runtimeId: deployment.runtime_id,
               deployProvider: deployment.deploy_provider,
+              planTier: deployment.plan_tier,
+              deploymentFlavor: deployment.deployment_flavor,
+              trialExpiresAt: deployment.trial_expires_at,
+              deactivatedAt: deployment.deactivated_at,
+              monthlyPriceCents: deployment.monthly_price_cents,
               hasOpenaiApiKey: deployment.has_openai_api_key,
               hasAnthropicApiKey: deployment.has_anthropic_api_key,
               hasOpenrouterApiKey: deployment.has_openrouter_api_key,

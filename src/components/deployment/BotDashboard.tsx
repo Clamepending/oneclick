@@ -4,16 +4,21 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { DeploymentActions } from "@/components/deployment/DeploymentActions";
+import { deploymentModeDisplayName, normalizeDeploymentFlavor, normalizePlanTier } from "@/lib/plans";
 
 type DeploymentSummary = {
   id: string;
   botName: string | null;
   runtimeSlug?: string | null;
   botDashboardUrl?: string | null;
-  status: "queued" | "starting" | "ready" | "failed" | "stopped";
+  status: "queued" | "starting" | "ready" | "failed" | "stopped" | "deactivated";
   hostName: string | null;
   runtimeId: string | null;
   deployProvider: string | null;
+  planTier?: string | null;
+  deploymentFlavor?: string | null;
+  trialExpiresAt?: string | null;
+  monthlyPriceCents?: number | null;
   hasOpenaiApiKey: boolean;
   hasAnthropicApiKey: boolean;
   hasOpenrouterApiKey: boolean;
@@ -36,12 +41,24 @@ function getStatusMeta(status: DeploymentSummary["status"]) {
   if (status === "ready") return { label: "READY", color: "#1f9d55", bg: "rgba(31,157,85,0.18)" };
   if (status === "failed") return { label: "FAILED", color: "#ff6b6b", bg: "rgba(255,107,107,0.2)" };
   if (status === "stopped") return { label: "STOPPED", color: "#c3c9d4", bg: "rgba(195,201,212,0.18)" };
+  if (status === "deactivated") return { label: "DEACTIVATED", color: "#ff9f43", bg: "rgba(255,159,67,0.2)" };
   if (status === "starting") return { label: "STARTING", color: "#f5c542", bg: "rgba(245,197,66,0.2)" };
   return { label: "QUEUED", color: "#7ea7ff", bg: "rgba(126,167,255,0.2)" };
 }
 
 export function BotDashboard({ deployments }: Props) {
   const router = useRouter();
+  const freeActiveDeployments = useMemo(
+    () =>
+      deployments.filter(
+        (deployment) =>
+          ["queued", "starting", "ready"].includes(deployment.status) &&
+          (deployment.planTier?.trim().toLowerCase() ?? "free") !== "paid",
+      ).length,
+    [deployments],
+  );
+  const freeActiveLimit = 1;
+  const freeSelectable = freeActiveDeployments < freeActiveLimit;
   const groups = useMemo<BotGroup[]>(() => {
     const byBot = new Map<string, DeploymentSummary[]>();
     for (const deployment of deployments) {
@@ -234,6 +251,23 @@ export function BotDashboard({ deployments }: Props) {
                     Provider: <code>{deployment.deployProvider ?? "pending"}</code>
                   </p>
                   <p className="muted" style={{ margin: 0 }}>
+                    Plan:{" "}
+                    <code>
+                      {deploymentModeDisplayName(
+                        normalizePlanTier(deployment.planTier),
+                        normalizeDeploymentFlavor(deployment.deploymentFlavor),
+                      )}
+                      {deployment.planTier === "paid" && deployment.monthlyPriceCents
+                        ? ` ($${(deployment.monthlyPriceCents / 100).toFixed(0)}/mo)`
+                        : ""}
+                    </code>
+                  </p>
+                  {deployment.trialExpiresAt ? (
+                    <p className="muted" style={{ margin: 0 }}>
+                      Trial expires: <code>{new Date(deployment.trialExpiresAt).toLocaleString()}</code>
+                    </p>
+                  ) : null}
+                  <p className="muted" style={{ margin: 0 }}>
                     Runtime: <code>{deployment.runtimeId ?? "pending"}</code>
                   </p>
                   <p className="muted" style={{ margin: 0 }}>
@@ -243,8 +277,13 @@ export function BotDashboard({ deployments }: Props) {
                     Updated: <code>{new Date(deployment.updatedAt).toLocaleString()}</code>
                   </p>
                 </div>
-                {(deployment.status === "failed" || deployment.status === "stopped") && deployment.error ? (
-                  <p style={{ color: "#ff8e8e", margin: 0 }}>{deployment.error}</p>
+                {(deployment.status === "failed" || deployment.status === "stopped" || deployment.status === "deactivated") && deployment.error ? (
+                  <p style={{ color: "var(--danger)", margin: 0 }}>{deployment.error}</p>
+                ) : null}
+                {(deployment.status === "queued" || deployment.status === "starting") ? (
+                  <p className="muted" style={{ margin: 0 }}>
+                    Deployments usually take ~10 minutes on AWS ECS/Fargate (image pull + startup).
+                  </p>
                 ) : null}
                 <div className="row">
                   <Link className="button secondary" href={`/deployments/${deployment.id}`}>
@@ -261,6 +300,11 @@ export function BotDashboard({ deployments }: Props) {
                   status={deployment.status}
                   compact
                   botName={deployment.botName}
+                  planTier={deployment.planTier === "paid" ? "paid" : "free"}
+                  deploymentFlavor={normalizeDeploymentFlavor(deployment.deploymentFlavor)}
+                  freeSelectable={freeSelectable}
+                  freeActiveDeployments={freeActiveDeployments}
+                  freeActiveLimit={freeActiveLimit}
                 />
               </div>
             );

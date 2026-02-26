@@ -1,10 +1,13 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 type Props = {
   deploymentId: string;
+  botName?: string | null;
+  planTier?: "free" | "paid" | null;
+  deploymentFlavor?: "basic" | "advanced" | null;
   hasOpenaiApiKey: boolean;
   hasAnthropicApiKey: boolean;
   hasOpenrouterApiKey: boolean;
@@ -13,6 +16,9 @@ type Props = {
 
 export function DeploymentSettingsCard({
   deploymentId,
+  botName,
+  planTier,
+  deploymentFlavor,
   hasOpenaiApiKey,
   hasAnthropicApiKey,
   hasOpenrouterApiKey,
@@ -23,12 +29,17 @@ export function DeploymentSettingsCard({
   const [anthropicApiKey, setAnthropicApiKey] = useState("");
   const [openrouterApiKey, setOpenrouterApiKey] = useState("");
   const [telegramBotToken, setTelegramBotToken] = useState("");
-  const [savingMode, setSavingMode] = useState<"save" | "redeploy" | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savingAndRedeploying, setSavingAndRedeploying] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  async function handleSave(redeploy: boolean) {
-    setSavingMode(redeploy ? "redeploy" : "save");
+  async function handleSave(redeployAfterSave = false) {
+    if (redeployAfterSave) {
+      setSavingAndRedeploying(true);
+    } else {
+      setSaving(true);
+    }
     setMessage("");
     setError("");
     try {
@@ -37,9 +48,6 @@ export function DeploymentSettingsCard({
       if (anthropicApiKey.trim()) payload.anthropicApiKey = anthropicApiKey.trim();
       if (openrouterApiKey.trim()) payload.openrouterApiKey = openrouterApiKey.trim();
       if (telegramBotToken.trim()) payload.telegramBotToken = telegramBotToken.trim();
-      if (redeploy) {
-        (payload as Record<string, unknown>).redeploy = true;
-      }
       if (!Object.keys(payload).length) {
         throw new Error("Enter at least one setting to save.");
       }
@@ -62,13 +70,34 @@ export function DeploymentSettingsCard({
         throw new Error(body?.error ?? "Failed to save deployment settings.");
       }
 
+      let redeployId: string | null = null;
+      if (redeployAfterSave) {
+        const redeployResponse = await fetch("/api/deployments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            botName: botName ?? undefined,
+            planTier: planTier === "paid" ? "paid" : "free",
+            deploymentFlavor: planTier === "paid" ? "basic" : deploymentFlavor === "advanced" ? "advanced" : "basic",
+          }),
+        });
+        const redeployBody = (await redeployResponse.json().catch(() => null)) as
+          | { id?: string; error?: string }
+          | null;
+        if (!redeployResponse.ok || !redeployBody?.id) {
+          throw new Error(redeployBody?.error ?? "Saved settings, but failed to redeploy.");
+        }
+        redeployId = redeployBody.id;
+      }
+
       setOpenaiApiKey("");
       setAnthropicApiKey("");
       setOpenrouterApiKey("");
       setTelegramBotToken("");
-      if (redeploy && body?.deploymentId) {
-        setMessage("Saved and redeploy queued. Opening new deployment...");
-        router.push(`/deployments/${body.deploymentId}`);
+      if (redeployId) {
+        setMessage("Saved and started redeploy. Opening the new deployment...");
+        router.push(`/deployments/${redeployId}`);
+        router.refresh();
         return;
       }
       if (body?.liveApply?.attempted && body.liveApply.applied) {
@@ -82,7 +111,8 @@ export function DeploymentSettingsCard({
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save deployment settings.");
     } finally {
-      setSavingMode(null);
+      setSaving(false);
+      setSavingAndRedeploying(false);
     }
   }
 
@@ -154,18 +184,18 @@ export function DeploymentSettingsCard({
         <button
           className="button"
           type="button"
-          onClick={() => void handleSave(false)}
-          disabled={Boolean(savingMode)}
+          onClick={() => void handleSave()}
+          disabled={saving || savingAndRedeploying}
         >
-          {savingMode === "save" ? "Saving..." : "Save"}
+          {saving ? "Saving..." : "Save"}
         </button>
         <button
           className="button secondary"
           type="button"
           onClick={() => void handleSave(true)}
-          disabled={Boolean(savingMode)}
+          disabled={saving || savingAndRedeploying}
         >
-          {savingMode === "redeploy" ? "Redeploying..." : "Redeploy"}
+          {savingAndRedeploying ? "Redeploying..." : "Redeploy"}
         </button>
       </div>
       {message ? (

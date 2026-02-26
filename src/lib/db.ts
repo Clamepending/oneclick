@@ -46,7 +46,6 @@ export async function ensureSchema() {
       runtime_id TEXT,
       deploy_provider TEXT,
       subsidy_proxy_token TEXT,
-      model_provider TEXT,
       openai_api_key TEXT,
       anthropic_api_key TEXT,
       openrouter_api_key TEXT,
@@ -62,17 +61,31 @@ export async function ensureSchema() {
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS deploy_provider TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS bot_name TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS subsidy_proxy_token TEXT;`);
-  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS model_provider TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS openai_api_key TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS anthropic_api_key TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS openrouter_api_key TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS telegram_bot_token TEXT;`);
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS plan_tier TEXT NOT NULL DEFAULT 'free';`);
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMPTZ;`);
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS trial_expires_at TIMESTAMPTZ;`);
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMPTZ;`);
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS deactivation_reason TEXT;`);
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS monthly_price_cents INT;`);
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS deployment_flavor TEXT NOT NULL DEFAULT 'basic';`);
   await pool.query(`ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS model_provider TEXT;`);
   await pool.query(`ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS model_api_key TEXT;`);
   await pool.query(`ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS telegram_bot_token TEXT;`);
+  await pool.query(`ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMPTZ;`);
+  await pool.query(`ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS trial_expires_at TIMESTAMPTZ;`);
+  await pool.query(`ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS deployment_flavor TEXT NOT NULL DEFAULT 'basic';`);
 
   await pool.query(`
     CREATE INDEX IF NOT EXISTS deployments_user_id_idx ON deployments (user_id);
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS deployments_trial_expiry_idx
+    ON deployments (trial_expires_at)
+    WHERE plan_tier = 'free';
   `);
 
   await pool.query(`

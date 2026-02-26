@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
 import { DeploymentActions } from "@/components/deployment/DeploymentActions";
+import { deactivateExpiredFreeTrialsForUser } from "@/lib/trialEnforcement";
 
 type BotIdentityRow = {
   bot_name: string;
@@ -13,10 +14,12 @@ type BotIdentityRow = {
 type DeploymentRow = {
   id: string;
   bot_name: string | null;
-  status: "queued" | "starting" | "ready" | "failed" | "stopped";
+  status: "queued" | "starting" | "ready" | "failed" | "stopped" | "deactivated";
   host_name: string | null;
   runtime_id: string | null;
   deploy_provider: string | null;
+  plan_tier: string | null;
+  deployment_flavor: string | null;
   ready_url: string | null;
   error: string | null;
   created_at: string;
@@ -27,6 +30,7 @@ function getStatusMeta(status: DeploymentRow["status"]) {
   if (status === "ready") return { label: "READY", color: "#1f9d55", bg: "rgba(31,157,85,0.18)" };
   if (status === "failed") return { label: "FAILED", color: "#ff6b6b", bg: "rgba(255,107,107,0.2)" };
   if (status === "stopped") return { label: "STOPPED", color: "#c3c9d4", bg: "rgba(195,201,212,0.18)" };
+  if (status === "deactivated") return { label: "DEACTIVATED", color: "#ff9f43", bg: "rgba(255,159,67,0.2)" };
   if (status === "starting") return { label: "STARTING", color: "#f5c542", bg: "rgba(245,197,66,0.2)" };
   return { label: "QUEUED", color: "#7ea7ff", bg: "rgba(126,167,255,0.2)" };
 }
@@ -45,6 +49,7 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
   }
 
   await ensureSchema();
+  await deactivateExpiredFreeTrialsForUser(userId);
 
   const identityResult = await pool.query<BotIdentityRow>(
     `SELECT bot_name, bot_name_normalized, runtime_slug
@@ -68,6 +73,8 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
        host_name,
        runtime_id,
        deploy_provider,
+       plan_tier,
+       deployment_flavor,
        ready_url,
        error,
        created_at,
@@ -79,6 +86,13 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
      LIMIT 50`,
     [userId, identity.bot_name_normalized],
   );
+  const freeActiveDeployments = deploymentsResult.rows.filter(
+    (deployment) =>
+      ["queued", "starting", "ready"].includes(deployment.status) &&
+      (deployment.plan_tier?.trim().toLowerCase() ?? "free") !== "paid",
+  ).length;
+  const freeActiveLimit = 1;
+  const freeSelectable = freeActiveDeployments < freeActiveLimit;
 
   return (
     <main className="container">
@@ -153,7 +167,7 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
                       Updated: <code>{new Date(deployment.updated_at).toLocaleString()}</code>
                     </p>
                   </div>
-                  {(deployment.status === "failed" || deployment.status === "stopped") && deployment.error ? (
+                  {(deployment.status === "failed" || deployment.status === "stopped" || deployment.status === "deactivated") && deployment.error ? (
                     <p style={{ color: "#ff8e8e", margin: 0 }}>{deployment.error}</p>
                   ) : null}
                   <div className="row">
@@ -166,7 +180,17 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
                       </a>
                     ) : null}
                   </div>
-                  <DeploymentActions deploymentId={deployment.id} status={deployment.status} compact botName={deployment.bot_name} />
+                  <DeploymentActions
+                    deploymentId={deployment.id}
+                    status={deployment.status}
+                    compact
+                    botName={deployment.bot_name}
+                    planTier={deployment.plan_tier === "paid" ? "paid" : "free"}
+                    deploymentFlavor={deployment.deployment_flavor?.trim().toLowerCase() === "advanced" ? "advanced" : "basic"}
+                    freeSelectable={freeSelectable}
+                    freeActiveDeployments={freeActiveDeployments}
+                    freeActiveLimit={freeActiveLimit}
+                  />
                 </div>
               );
             })}

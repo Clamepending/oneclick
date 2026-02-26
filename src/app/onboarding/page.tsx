@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { NameStep } from "@/components/onboarding/NameStep";
 import { ChannelStep } from "@/components/onboarding/ChannelStep";
@@ -22,13 +22,43 @@ export default function OnboardingPage() {
   const [provider, setProvider] = useState<"openai" | "anthropic">("openai");
   const [apiKey, setApiKey] = useState("");
   const [telegramBotToken, setTelegramBotToken] = useState("");
+  const [planTier, setPlanTier] = useState<"free" | "paid">("free");
+  const [deploymentFlavor, setDeploymentFlavor] = useState<"basic" | "advanced">("basic");
   const [loading, setLoading] = useState(false);
-  const [isAdvancing, setIsAdvancing] = useState(false);
   const [error, setError] = useState("");
-  const [isNavigating, startNavTransition] = useTransition();
+  const [freeSelectable, setFreeSelectable] = useState(true);
+  const [freeActiveDeployments, setFreeActiveDeployments] = useState(0);
+  const [freeActiveLimit, setFreeActiveLimit] = useState(1);
 
   useEffect(() => {
-    void fetch("/api/onboarding/start", { method: "POST" });
+    let cancelled = false;
+    void (async () => {
+      await fetch("/api/onboarding/start", { method: "POST" });
+      const response = await fetch("/api/deployments/eligibility", { cache: "no-store" }).catch(() => null);
+      if (!response?.ok) return;
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            plans?: {
+              free?: { selectable?: boolean; activeCount?: number; activeLimit?: number };
+            };
+          }
+        | null;
+      if (cancelled) return;
+      const free = payload?.plans?.free;
+      const selectable = Boolean(free?.selectable ?? true);
+      const activeCount = Number(free?.activeCount ?? 0);
+      const activeLimit = Number(free?.activeLimit ?? 1);
+      setFreeSelectable(selectable);
+      setFreeActiveDeployments(Number.isFinite(activeCount) ? activeCount : 0);
+      setFreeActiveLimit(Number.isFinite(activeLimit) && activeLimit > 0 ? activeLimit : 1);
+      if (!selectable) {
+        setPlanTier("paid");
+        setDeploymentFlavor("basic");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const title = useMemo(() => `Step ${step} of 3`, [step]);
@@ -65,7 +95,8 @@ export default function OnboardingPage() {
         telegramBotToken: telegramBotToken.trim() || null,
         modelProvider: apiKey.trim() ? provider : null,
         modelApiKey: apiKey.trim() || null,
-        plan: "free",
+        plan: planTier,
+        deploymentFlavor,
       }),
     });
     if (!response.ok) {
@@ -76,15 +107,12 @@ export default function OnboardingPage() {
 
   async function handleNext() {
     setError("");
-    setIsAdvancing(true);
     try {
       await saveStep(step);
       setStep((s) => Math.min(3, s + 1));
     } catch (e) {
       const message = e instanceof Error ? e.message : "Could not save this step. Please try again.";
       setError(message);
-    } finally {
-      setIsAdvancing(false);
     }
   }
 
@@ -93,14 +121,16 @@ export default function OnboardingPage() {
     setError("");
     try {
       await saveStep(3);
-      const response = await fetch("/api/deployments", { method: "POST" });
+      const response = await fetch("/api/deployments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planTier, deploymentFlavor }),
+      });
       const body = await parseDeployResponse(response);
       if (!response.ok || !body.id) {
         throw new Error(body.error ?? body.message ?? "Deployment failed to start");
       }
-      startNavTransition(() => {
-        router.push(`/deployments/${body.id}`);
-      });
+      router.push(`/deployments/${body.id}`);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Deployment failed to start";
       setError(message);
@@ -125,9 +155,18 @@ export default function OnboardingPage() {
       )}
       {step === 3 && (
         <PlanStep
+          planTier={planTier}
+          deploymentFlavor={deploymentFlavor}
+          onSelectionChange={({ planTier: nextPlanTier, deploymentFlavor: nextFlavor }) => {
+            setPlanTier(nextPlanTier);
+            setDeploymentFlavor(nextFlavor);
+          }}
           onDeploy={handleDeploy}
-          loading={loading || isNavigating}
+          loading={loading}
           hasApiKey={Boolean(apiKey.trim())}
+          freeSelectable={freeSelectable}
+          freeActiveDeployments={freeActiveDeployments}
+          freeActiveLimit={freeActiveLimit}
         />
       )}
 
@@ -142,8 +181,8 @@ export default function OnboardingPage() {
           </button>
         ) : null}
         {step < 3 ? (
-          <button className="button" onClick={handleNext} type="button" disabled={isAdvancing}>
-            {isAdvancing ? "Saving..." : "Next"}
+          <button className="button" onClick={handleNext} type="button">
+            Next
           </button>
         ) : null}
       </div>

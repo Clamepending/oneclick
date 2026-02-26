@@ -13,8 +13,41 @@ function readBool(name: string, fallback: boolean) {
   return fallback;
 }
 
+let warnedAboutFloatingImage = false;
+
+function isDigestRef(image: string) {
+  return /@sha256:[a-f0-9]{64}$/i.test(image.trim());
+}
+
+function isFloatingImageRef(image: string) {
+  const trimmed = image.trim();
+  if (!trimmed) return true;
+  if (isDigestRef(trimmed)) return false;
+
+  const lastSlash = trimmed.lastIndexOf("/");
+  const lastColon = trimmed.lastIndexOf(":");
+  const hasExplicitTag = lastColon > lastSlash;
+  if (!hasExplicitTag) return true;
+
+  const tag = trimmed.slice(lastColon + 1).trim().toLowerCase();
+  return !tag || tag === "latest";
+}
+
 export function getOpenClawImage() {
-  return readEnv("OPENCLAW_IMAGE") || "alpine/openclaw:latest";
+  const image = readEnv("OPENCLAW_IMAGE") || "alpine/openclaw:latest";
+  const requirePinned = readBool("OPENCLAW_REQUIRE_PINNED_IMAGE", false);
+  if (isFloatingImageRef(image)) {
+    const message =
+      `OPENCLAW_IMAGE must be pinned (tag or digest, not floating/latest). Current value: ${image}`;
+    if (requirePinned) {
+      throw new Error(`${message}. Set a stable image tag/digest or disable OPENCLAW_REQUIRE_PINNED_IMAGE.`);
+    }
+    if (!warnedAboutFloatingImage) {
+      warnedAboutFloatingImage = true;
+      console.warn(`[oneclick] ${message}`);
+    }
+  }
+  return image;
 }
 
 export function getOpenClawPort() {

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { config as loadEnv } from "dotenv";
+import { DescribeNetworkInterfacesCommand, EC2Client } from "@aws-sdk/client-ec2";
 import { DescribeServicesCommand, DescribeTasksCommand, ECSClient, ListTasksCommand } from "@aws-sdk/client-ecs";
 import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runtimeProvider";
 
@@ -78,6 +79,113 @@ async function printServiceDiagnostics(region: string, cluster: string, serviceN
   }
 }
 
+async function resolveServicePublicIp(region: string, cluster: string, serviceName: string) {
+  const ecs = new ECSClient({ region });
+  const ec2 = new EC2Client({ region });
+  const tasks = await ecs.send(
+    new ListTasksCommand({
+      cluster,
+      serviceName,
+      desiredStatus: "RUNNING",
+      maxResults: 5,
+    }),
+  );
+  if (!tasks.taskArns?.length) return null;
+
+  const described = await ecs.send(
+    new DescribeTasksCommand({
+      cluster,
+      tasks: tasks.taskArns,
+    }),
+  );
+
+  const networkInterfaceIds = (described.tasks ?? [])
+    .flatMap((task) => task.attachments ?? [])
+    .filter((attachment) => attachment.type === "ElasticNetworkInterface")
+    .flatMap((attachment) => attachment.details ?? [])
+    .filter((detail) => detail.name === "networkInterfaceId" && Boolean(detail.value))
+    .map((detail) => detail.value as string);
+
+  if (networkInterfaceIds.length === 0) return null;
+
+  const interfaces = await ec2.send(
+    new DescribeNetworkInterfacesCommand({
+      NetworkInterfaceIds: Array.from(new Set(networkInterfaceIds)),
+    }),
+  );
+
+  return interfaces.NetworkInterfaces?.find((eni) => eni.Association?.PublicIp)?.Association?.PublicIp ?? null;
+}
+
+async function fetchText(url: string) {
+  const res = await fetch(url);
+  const text = await res.text();
+  return { res, text };
+}
+
+function mustMatch(text: string, pattern: RegExp, label: string) {
+  const match = text.match(pattern);
+  if (!match) {
+    throw new Error(`Runtime smoke check failed: missing ${label}`);
+  }
+  return match;
+}
+
+async function runRuntimeHttpSmoke(baseUrl: string) {
+  console.log(`Runtime HTTP smoke: ${baseUrl}`);
+
+  const shell = await fetchText(`${baseUrl}/`);
+  if (!shell.res.ok) {
+    throw new Error(`Runtime shell request failed (${shell.res.status})`);
+  }
+  if (!shell.text.includes("<openclaw-app></openclaw-app>")) {
+    throw new Error("Runtime shell is not serving OpenClaw Control UI markup.");
+  }
+
+  const assetMatch = mustMatch(
+    shell.text,
+    /<script type="module"[^>]*src="(\.\/assets\/[^"]+\.js)"/i,
+    "control-ui asset script",
+  );
+  const assetPath = assetMatch[1];
+  const asset = await fetchText(`${baseUrl}/${assetPath.replace(/^\.\//, "")}`);
+  if (!asset.res.ok) {
+    throw new Error(`Runtime control-ui asset request failed (${asset.res.status})`);
+  }
+  if (!asset.text.includes("openclaw-control-ui")) {
+    throw new Error("Runtime control-ui JS asset did not include expected client identifier.");
+  }
+
+  const config = await fetch(`${baseUrl}/__openclaw/control-ui-config.json`);
+  if (!config.ok) {
+    throw new Error(`Runtime control-ui config request failed (${config.status})`);
+  }
+  const configJson = (await config.json()) as Record<string, unknown>;
+  if (typeof configJson.basePath !== "string") {
+    throw new Error("Runtime control-ui config missing basePath.");
+  }
+
+  console.log("Runtime HTTP smoke passed.");
+}
+
+async function runOptionalTelegramSmoke() {
+  const token = process.env.ECS_SMOKE_TELEGRAM_TOKEN?.trim();
+  if (!token) return;
+  console.log("Telegram smoke: validating bot token + deleteWebhook...");
+
+  const getMe = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+  if (!getMe.ok) {
+    throw new Error(`Telegram getMe failed (${getMe.status})`);
+  }
+
+  const deleteWebhook = await fetch(`https://api.telegram.org/bot${token}/deleteWebhook`, { method: "POST" });
+  if (!deleteWebhook.ok) {
+    throw new Error(`Telegram deleteWebhook failed (${deleteWebhook.status})`);
+  }
+
+  console.log("Telegram smoke passed.");
+}
+
 function parseEcsRuntimeId(runtimeId: string) {
   if (!runtimeId.startsWith("ecs:")) throw new Error(`Unexpected runtime id: ${runtimeId}`);
   const body = runtimeId.slice(4);
@@ -90,6 +198,7 @@ async function main() {
   const region = requireEnv("AWS_REGION");
   const pollCount = Number(process.env.ECS_SMOKE_POLL_COUNT ?? "36");
   const pollIntervalMs = Number(process.env.ECS_SMOKE_POLL_INTERVAL_MS ?? "5000");
+  const runtimePort = Number(process.env.OPENCLAW_CONTAINER_PORT ?? "18789");
   const deploymentId = `smoke-${Date.now()}`;
   const userId = `smoke-${randomUUID().slice(0, 8)}`;
   let runtimeId: string | null = null;
@@ -138,6 +247,13 @@ async function main() {
     if (!runningTaskObserved) {
       console.warn("Warning: service did not report running task within poll window (may still be starting).");
       await printServiceDiagnostics(region, parsed.cluster, parsed.serviceName);
+    } else {
+      const publicIp = await resolveServicePublicIp(region, parsed.cluster, parsed.serviceName);
+      if (!publicIp) {
+        throw new Error("Smoke test could not resolve ECS task public IP after service reached running state.");
+      }
+      await runRuntimeHttpSmoke(`http://${publicIp}:${runtimePort}`);
+      await runOptionalTelegramSmoke();
     }
 
     console.log("Destroying ECS runtime...");
