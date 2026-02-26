@@ -32,6 +32,17 @@ function isStaleInProgressDeployment(item: { status: string; updated_at: string 
   return Date.now() - updatedAtMs > staleAfterMs;
 }
 
+function isIgnorableRuntimeDestroyError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("not found") ||
+    message.includes("does not exist") ||
+    message.includes("serviceinactive") ||
+    message.includes("servicenotfound")
+  );
+}
+
 export async function GET(
   _request: Request,
   context: { params: Promise<{ id: string }> },
@@ -184,19 +195,18 @@ export async function DELETE(
     deployment.status = "failed";
   }
 
-  if (deployment.status === "queued" || deployment.status === "starting") {
-    return NextResponse.json(
-      { ok: false, error: "Cannot delete a deployment that is still in progress." },
-      { status: 409 },
-    );
-  }
-
   try {
     if (deployment.runtime_id) {
-      await destroyUserRuntime({
-        runtimeId: deployment.runtime_id,
-        deployProvider: deployment.deploy_provider,
-      });
+      try {
+        await destroyUserRuntime({
+          runtimeId: deployment.runtime_id,
+          deployProvider: deployment.deploy_provider,
+        });
+      } catch (error) {
+        if (!isIgnorableRuntimeDestroyError(error)) {
+          throw error;
+        }
+      }
     }
 
     await pool.query(`DELETE FROM deployment_events WHERE deployment_id = $1`, [id]);

@@ -36,7 +36,7 @@ export function DeploymentActions({
     planTier === "paid" ? "paid_basic" : !freeSelectable ? "paid_basic" : deploymentFlavor === "advanced" ? "free_advanced" : "free_basic",
   );
 
-  const canDelete = status !== "queued";
+  const canDelete = status !== "deactivated";
 
   async function handleRedeploy() {
     setError("");
@@ -83,10 +83,12 @@ export function DeploymentActions({
 
   async function handleDelete() {
     if (!canDelete) {
-      setError("This deployment is still queued and cannot be deleted yet.");
+      setError("This deployment can no longer be deleted.");
       return;
     }
-    const confirmed = window.confirm("Delete this bot deployment? This will destroy its runtime.");
+    const confirmed = window.confirm(
+      "Delete this bot deployment? If it is still starting, OneClick will stop startup and destroy its runtime.",
+    );
     if (!confirmed) return;
 
     setError("");
@@ -156,21 +158,19 @@ export function DeploymentActions({
             {isUpgrading ? "Upgrading..." : "Upgrade to Paid ($20/mo)"}
           </button>
         ) : null}
-        {isReady ? (
-          <button
-            className="button secondary"
-            type="button"
-            onClick={() => void handleDelete()}
-            disabled={isRedeploying || isDeleting || isUpgrading || !canDelete}
-            title={!canDelete ? "Queued deployments cannot be deleted yet" : undefined}
-          >
-            {isDeleting ? "Deleting..." : "Delete bot"}
-          </button>
-        ) : null}
+        <button
+          className="button secondary"
+          type="button"
+          onClick={() => void handleDelete()}
+          disabled={isRedeploying || isDeleting || isUpgrading || !canDelete}
+          title={!canDelete ? "This deployment can no longer be deleted" : undefined}
+        >
+          {isDeleting ? "Deleting..." : "Delete bot"}
+        </button>
       </div>
       {!isReady ? (
         <p className="muted" style={{ margin: 0 }}>
-          Redeploy and delete actions appear after the deployment is ready.
+          Redeploy appears after the deployment is ready. Delete is available while queued/starting if you need to stop it.
         </p>
       ) : null}
       {error ? (
