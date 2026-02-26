@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { Client } from "ssh2";
 import {
   CreateServiceCommand,
@@ -8,6 +8,15 @@ import {
   RegisterTaskDefinitionCommand,
   UpdateServiceCommand,
 } from "@aws-sdk/client-ecs";
+import {
+  CreateRuleCommand,
+  CreateTargetGroupCommand,
+  DeleteRuleCommand,
+  DeleteTargetGroupCommand,
+  DescribeRulesCommand,
+  DescribeTargetGroupsCommand,
+  ElasticLoadBalancingV2Client,
+} from "@aws-sdk/client-elastic-load-balancing-v2";
 import { getRuntimeBaseDomain } from "@/lib/subdomainConfig";
 import { getEcsPlanResources, normalizeDeploymentFlavor, normalizePlanTier, type DeploymentFlavor, type PlanTier } from "@/lib/plans";
 import {
@@ -94,6 +103,190 @@ function buildAwsConfigWithTrimmedCreds(region: string): ECSClientConfig {
 
 function shellQuote(value: string) {
   return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function sha1Hex(value: string) {
+  return createHash("sha1").update(value).digest("hex");
+}
+
+type EcsAlbConfig = {
+  enabled: boolean;
+  httpsListenerArn: string;
+  baseDomain: string;
+  vpcId: string;
+  healthCheckPath: string;
+  healthCheckMatcher: string;
+  rulePriorityMin: number;
+  rulePriorityMax: number;
+};
+
+function getEcsAlbConfig(): EcsAlbConfig {
+  const enabled = (readTrimmedEnv("ECS_RUNTIME_ALB_ENABLED") || "").toLowerCase() === "true";
+  return {
+    enabled,
+    httpsListenerArn: readTrimmedEnv("ECS_RUNTIME_ALB_HTTPS_LISTENER_ARN"),
+    baseDomain: readTrimmedEnv("ECS_RUNTIME_ALB_BASE_DOMAIN"),
+    vpcId: readTrimmedEnv("ECS_VPC_ID"),
+    healthCheckPath: readTrimmedEnv("ECS_RUNTIME_ALB_HEALTH_PATH") || "/__openclaw/control-ui-config.json",
+    healthCheckMatcher: readTrimmedEnv("ECS_RUNTIME_ALB_HEALTH_MATCHER") || "200-499",
+    rulePriorityMin: Number(readTrimmedEnv("ECS_RUNTIME_ALB_RULE_PRIORITY_MIN") || "10000"),
+    rulePriorityMax: Number(readTrimmedEnv("ECS_RUNTIME_ALB_RULE_PRIORITY_MAX") || "49999"),
+  };
+}
+
+function requireEcsAlbEnabledConfig(config: EcsAlbConfig) {
+  if (!config.enabled) return;
+  if (!config.httpsListenerArn) throw new Error("ECS_RUNTIME_ALB_HTTPS_LISTENER_ARN is required when ECS_RUNTIME_ALB_ENABLED=true.");
+  if (!config.baseDomain) throw new Error("ECS_RUNTIME_ALB_BASE_DOMAIN is required when ECS_RUNTIME_ALB_ENABLED=true.");
+  if (!config.vpcId) throw new Error("ECS_VPC_ID is required when ECS_RUNTIME_ALB_ENABLED=true.");
+}
+
+function buildEcsAlbHostLabel(serviceName: string) {
+  return `oc-${sha1Hex(serviceName).slice(0, 16)}`;
+}
+
+function buildEcsAlbHostName(serviceName: string, baseDomain: string) {
+  const domain = baseDomain.replace(/^\*\./, "").replace(/^\./, "").trim();
+  return `${buildEcsAlbHostLabel(serviceName)}.${domain}`;
+}
+
+function buildEcsAlbTargetGroupName(serviceName: string) {
+  return `oc-${sha1Hex(`tg:${serviceName}`).slice(0, 28)}`.slice(0, 32);
+}
+
+function buildAlbRulePriority(serviceName: string, min: number, max: number) {
+  const span = Math.max(1, max - min + 1);
+  const hashInt = Number.parseInt(sha1Hex(`rule:${serviceName}`).slice(0, 8), 16);
+  return min + (hashInt % span);
+}
+
+async function ensureEcsAlbRouting(input: {
+  region: string;
+  serviceName: string;
+  containerName: string;
+  containerPort: number;
+}) {
+  const alb = getEcsAlbConfig();
+  if (!alb.enabled) return null;
+  requireEcsAlbEnabledConfig(alb);
+
+  const client = new ElasticLoadBalancingV2Client(buildAwsConfigWithTrimmedCreds(input.region));
+  const targetGroupName = buildEcsAlbTargetGroupName(input.serviceName);
+  const hostName = buildEcsAlbHostName(input.serviceName, alb.baseDomain);
+
+  let targetGroupArn: string | null = null;
+  try {
+    const described = await client.send(new DescribeTargetGroupsCommand({ Names: [targetGroupName] }));
+    targetGroupArn = described.TargetGroups?.[0]?.TargetGroupArn ?? null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+    if (!message.includes("not found") && !message.includes("target group") && !message.includes("targetgroupnotfound")) {
+      throw error;
+    }
+  }
+  if (!targetGroupArn) {
+    const created = await client.send(
+      new CreateTargetGroupCommand({
+        Name: targetGroupName,
+        Protocol: "HTTP",
+        Port: input.containerPort,
+        VpcId: alb.vpcId,
+        TargetType: "ip",
+        HealthCheckProtocol: "HTTP",
+        HealthCheckPort: "traffic-port",
+        HealthCheckEnabled: true,
+        HealthCheckPath: alb.healthCheckPath,
+        Matcher: { HttpCode: alb.healthCheckMatcher },
+      }),
+    );
+    targetGroupArn = created.TargetGroups?.[0]?.TargetGroupArn ?? null;
+  }
+  if (!targetGroupArn) {
+    throw new Error("Failed to create or resolve ECS runtime ALB target group.");
+  }
+
+  const rules = await client.send(new DescribeRulesCommand({ ListenerArn: alb.httpsListenerArn }));
+  const existingRule = (rules.Rules ?? []).find((rule) =>
+    (rule.Conditions ?? []).some(
+      (condition) =>
+        condition.Field === "host-header" &&
+        (condition.HostHeaderConfig?.Values ?? []).some((value) => value.trim().toLowerCase() === hostName.toLowerCase()),
+    ),
+  );
+
+  if (!existingRule) {
+    const usedPriorities = new Set(
+      (rules.Rules ?? [])
+        .map((rule) => rule.Priority)
+        .filter((priority): priority is string => Boolean(priority) && priority !== "default")
+        .map((priority) => Number(priority))
+        .filter((priority) => Number.isFinite(priority)),
+    );
+    let priority = buildAlbRulePriority(input.serviceName, alb.rulePriorityMin, alb.rulePriorityMax);
+    const maxAttempts = alb.rulePriorityMax - alb.rulePriorityMin + 1;
+    for (let i = 0; i < maxAttempts && usedPriorities.has(priority); i += 1) {
+      priority += 1;
+      if (priority > alb.rulePriorityMax) priority = alb.rulePriorityMin;
+    }
+    if (usedPriorities.has(priority)) {
+      throw new Error("No free ALB listener rule priority available in configured ECS_RUNTIME_ALB_RULE_PRIORITY range.");
+    }
+    await client.send(
+      new CreateRuleCommand({
+        ListenerArn: alb.httpsListenerArn,
+        Priority: priority,
+        Conditions: [
+          {
+            Field: "host-header",
+            HostHeaderConfig: { Values: [hostName] },
+          },
+        ],
+        Actions: [
+          {
+            Type: "forward",
+            TargetGroupArn: targetGroupArn,
+          },
+        ],
+      }),
+    );
+  }
+
+  return {
+    hostName,
+    targetGroupArn,
+  };
+}
+
+async function cleanupEcsAlbRouting(input: { region: string; serviceName: string }) {
+  const alb = getEcsAlbConfig();
+  if (!alb.enabled || !alb.httpsListenerArn || !alb.baseDomain) return;
+  const client = new ElasticLoadBalancingV2Client(buildAwsConfigWithTrimmedCreds(input.region));
+  const hostName = buildEcsAlbHostName(input.serviceName, alb.baseDomain);
+  try {
+    const rules = await client.send(new DescribeRulesCommand({ ListenerArn: alb.httpsListenerArn }));
+    for (const rule of rules.Rules ?? []) {
+      const matchesHost = (rule.Conditions ?? []).some(
+        (condition) =>
+          condition.Field === "host-header" &&
+          (condition.HostHeaderConfig?.Values ?? []).some((value) => value.trim().toLowerCase() === hostName.toLowerCase()),
+      );
+      if (matchesHost && rule.RuleArn) {
+        await client.send(new DeleteRuleCommand({ RuleArn: rule.RuleArn }));
+      }
+    }
+  } catch {
+    // best-effort cleanup
+  }
+  try {
+    const targetGroupName = buildEcsAlbTargetGroupName(input.serviceName);
+    const described = await client.send(new DescribeTargetGroupsCommand({ Names: [targetGroupName] }));
+    const tgArn = described.TargetGroups?.[0]?.TargetGroupArn;
+    if (tgArn) {
+      await client.send(new DeleteTargetGroupCommand({ TargetGroupArn: tgArn }));
+    }
+  } catch {
+    // best-effort cleanup
+  }
 }
 
 function readEnvLimit(key: string, fallback: string) {
@@ -503,6 +696,12 @@ async function launchViaEcs(input: LaunchInput) {
     efsTransitEncryption === "DISABLED" ? "DISABLED" : "ENABLED";
   const configVolumeName = "openclaw-data";
   const ecsClient = new ECSClient(buildAwsConfigWithTrimmedCreds(region));
+  const albRouting = await ensureEcsAlbRouting({
+    region,
+    serviceName,
+    containerName,
+    containerPort,
+  });
 
   const environment = [
     { name: "OPENCLAW_GATEWAY_TOKEN", value: gatewayToken },
@@ -587,6 +786,14 @@ async function launchViaEcs(input: LaunchInput) {
           scriptSteps.push("echo '[oneclick] skipping onboard bootstrap for subsidy fallback' >&2");
         } else {
           scriptSteps.push(onboardCommand);
+          if (shouldAllowInsecureControlUi()) {
+            // `onboard` rewrites config and can reset controlUi flags; re-apply after onboarding.
+            scriptSteps.push(
+              "echo '[oneclick] reapply control UI auth flags after onboard' >&2",
+              "node /app/dist/index.js config set gateway.controlUi.allowInsecureAuth true",
+              "node /app/dist/index.js config set gateway.controlUi.dangerouslyDisableDeviceAuth true",
+            );
+          }
         }
       }
       if (deploymentFlavor === "advanced") {
@@ -712,6 +919,16 @@ async function launchViaEcs(input: LaunchInput) {
             assignPublicIp,
           },
         },
+        loadBalancers: albRouting
+          ? [
+              {
+                targetGroupArn: albRouting.targetGroupArn,
+                containerName,
+                containerPort,
+              },
+            ]
+          : undefined,
+        healthCheckGracePeriodSeconds: albRouting ? 300 : undefined,
       }),
     );
   } catch (error) {
@@ -728,9 +945,27 @@ async function launchViaEcs(input: LaunchInput) {
         service: serviceName,
         taskDefinition: taskDefinitionArn,
         desiredCount: 1,
+        loadBalancers: albRouting
+          ? [
+              {
+                targetGroupArn: albRouting.targetGroupArn,
+                containerName,
+                containerPort,
+              },
+            ]
+          : undefined,
+        healthCheckGracePeriodSeconds: albRouting ? 300 : undefined,
       }),
     );
   }
+
+  const readyUrlBase = albRouting
+    ? `https://${albRouting.hostName}/`
+    : buildEcsReadyUrl({
+        deploymentId: input.deploymentId,
+        userId: input.userId,
+        serviceName,
+      });
 
   return {
     runtimeId: runtimeIdFromEcs(cluster, serviceName),
@@ -739,15 +974,8 @@ async function launchViaEcs(input: LaunchInput) {
     port: containerPort,
     hostPort: null,
     startCommand,
-    hostName: `ecs:${cluster}`,
-    readyUrl: withGatewayToken(
-      buildEcsReadyUrl({
-        deploymentId: input.deploymentId,
-        userId: input.userId,
-        serviceName,
-      }),
-      gatewayToken,
-    ),
+    hostName: albRouting?.hostName ?? `ecs:${cluster}`,
+    readyUrl: withGatewayToken(readyUrlBase, gatewayToken),
   };
 }
 
@@ -804,6 +1032,7 @@ export async function destroyUserRuntime(input: DestroyInput) {
         force: true,
       }),
     );
+    await cleanupEcsAlbRouting({ region, serviceName: parsed.serviceName });
     return;
   }
   // For mock provider, destroy is a no-op.

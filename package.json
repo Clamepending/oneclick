@@ -20,6 +20,7 @@
     "@aws-sdk/client-cloudwatch-logs": "^3.998.0",
     "@aws-sdk/client-ec2": "^3.996.0",
     "@aws-sdk/client-ecs": "^3.922.0",
+    "@aws-sdk/client-elastic-load-balancing-v2": "^3.998.0",
     "@aws-sdk/client-lambda": "^3.998.0",
     "@aws-sdk/client-sqs": "^3.998.0",
     "bullmq": "^5.58.0",
