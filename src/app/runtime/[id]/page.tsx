@@ -96,16 +96,23 @@ async function resolveEcsPublicUrl(input: { runtimeId: string; deploymentId: str
     }),
   );
 
-  const publicIp = interfaces.NetworkInterfaces?.find((eni) => eni.Association?.PublicIp)?.Association?.PublicIp;
-  if (!publicIp) return null;
-
   const port = Number(readTrimmedEnv("OPENCLAW_CONTAINER_PORT") || "18789");
-  try {
-    await probeTcpPort(publicIp, port);
-  } catch {
-    return null;
+  const publicIps = Array.from(
+    new Set(
+      (interfaces.NetworkInterfaces ?? [])
+        .map((eni) => eni.Association?.PublicIp?.trim())
+        .filter((ip): ip is string => Boolean(ip)),
+    ),
+  );
+  for (const publicIp of publicIps) {
+    try {
+      await probeTcpPort(publicIp, port);
+      return `http://${publicIp}:${port}`;
+    } catch {
+      // Try the next task ENI; ECS may be rolling and the first task can still be booting.
+    }
   }
-  return `http://${publicIp}:${port}`;
+  return null;
 }
 
 function renderPlaceholder(id: string, details?: string) {

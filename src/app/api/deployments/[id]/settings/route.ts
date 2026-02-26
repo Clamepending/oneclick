@@ -119,16 +119,23 @@ async function resolveEcsPublicUrl(runtimeId: string) {
     }),
   );
 
-  const publicIp = interfaces.NetworkInterfaces?.find((eni) => eni.Association?.PublicIp)?.Association?.PublicIp;
-  if (!publicIp) return null;
-
   const port = Number(readTrimmedEnv("OPENCLAW_CONTAINER_PORT") || "18789");
-  try {
-    await probeTcpPort(publicIp, port);
-  } catch {
-    return null;
+  const publicIps = Array.from(
+    new Set(
+      (interfaces.NetworkInterfaces ?? [])
+        .map((eni) => eni.Association?.PublicIp?.trim())
+        .filter((ip): ip is string => Boolean(ip)),
+    ),
+  );
+  for (const publicIp of publicIps) {
+    try {
+      await probeTcpPort(publicIp, port);
+      return `http://${publicIp}:${port}`;
+    } catch {
+      // Try another running task IP while ECS is rolling.
+    }
   }
-  return `http://${publicIp}:${port}`;
+  return null;
 }
 
 function mergeResolvedRuntimeUrl(resolvedBaseUrl: string, storedReadyUrl: string | null) {
