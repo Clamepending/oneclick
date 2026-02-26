@@ -578,6 +578,7 @@ async function launchViaEcs(input: LaunchInput) {
       if (shouldAllowInsecureControlUi()) {
         scriptSteps.push(
           "node /app/dist/index.js config set gateway.controlUi.allowInsecureAuth true",
+          "node /app/dist/index.js config set gateway.controlUi.dangerouslyDisableDeviceAuth true",
         );
       }
       if (onboardCommand) {
