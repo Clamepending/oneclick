@@ -270,9 +270,11 @@ export function BotDashboard({ deployments }: Props) {
                   <p className="muted" style={{ margin: 0 }}>
                     Runtime: <code>{deployment.runtimeId ?? "pending"}</code>
                   </p>
-                  <p className="muted" style={{ margin: 0 }}>
-                    Host: <code>{deployment.hostName ?? "pending"}</code>
-                  </p>
+                  {deployment.deployProvider !== "ecs" ? (
+                    <p className="muted" style={{ margin: 0 }}>
+                      Host: <code>{deployment.hostName ?? "pending"}</code>
+                    </p>
+                  ) : null}
                   <p className="muted" style={{ margin: 0 }}>
                     Updated: <code>{new Date(deployment.updatedAt).toLocaleString()}</code>
                   </p>
@@ -295,6 +297,11 @@ export function BotDashboard({ deployments }: Props) {
                     </a>
                   ) : null}
                 </div>
+                {deployment.status === "ready" && deployment.readyUrl && deployment.deployProvider === "ecs" ? (
+                  <p className="muted" style={{ margin: 0 }}>
+                    Open via the HTTPS runtime URL only. Raw ECS IP/port URLs can fail Control UI auth.
+                  </p>
+                ) : null}
                 <DeploymentActions
                   deploymentId={deployment.id}
                   status={deployment.status}

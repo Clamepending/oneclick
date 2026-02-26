@@ -177,9 +177,11 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
             <p className="muted">
               Runtime ID: <code>{deployment.runtimeId ?? "pending"}</code>
             </p>
-            <p className="muted">
-              Host: <code>{deployment.hostName ?? "pending"}</code>
-            </p>
+            {deployment.deployProvider !== "ecs" ? (
+              <p className="muted">
+                Host: <code>{deployment.hostName ?? "pending"}</code>
+              </p>
+            ) : null}
             {deployment.health ? (
               <p className="muted">
                 Health:{" "}
@@ -205,6 +207,11 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
                 Open OpenClaw
               </a>
             </p>
+            {deployment.deployProvider === "ecs" ? (
+              <p className="muted" style={{ margin: 0 }}>
+                Use this HTTPS runtime URL. Direct ECS IP/port URLs can trigger Control UI device-identity errors.
+              </p>
+            ) : null}
             <p className="muted" style={{ margin: 0 }}>
               If you skipped API key setup during onboarding, add your customer&apos;s OpenAI or Anthropic key in
               runtime settings (never use a personal key).

@@ -160,9 +160,11 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
                     <p className="muted" style={{ margin: 0 }}>
                       Runtime: <code>{deployment.runtime_id ?? "pending"}</code>
                     </p>
-                    <p className="muted" style={{ margin: 0 }}>
-                      Host: <code>{deployment.host_name ?? "pending"}</code>
-                    </p>
+                    {deployment.deploy_provider !== "ecs" ? (
+                      <p className="muted" style={{ margin: 0 }}>
+                        Host: <code>{deployment.host_name ?? "pending"}</code>
+                      </p>
+                    ) : null}
                     <p className="muted" style={{ margin: 0 }}>
                       Updated: <code>{new Date(deployment.updated_at).toLocaleString()}</code>
                     </p>
@@ -175,9 +177,16 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
                       View deployment details
                     </Link>
                     {deployment.status === "ready" && deployment.ready_url ? (
-                      <a className="button" href={deployment.ready_url} target="_blank" rel="noreferrer">
-                        Open OpenClaw
-                      </a>
+                      <>
+                        <a className="button" href={deployment.ready_url} target="_blank" rel="noreferrer">
+                          Open OpenClaw
+                        </a>
+                        {deployment.deploy_provider === "ecs" ? (
+                          <p className="muted" style={{ margin: 0 }}>
+                            Use the HTTPS runtime URL (button above), not a raw ECS IP/port URL.
+                          </p>
+                        ) : null}
+                      </>
                     ) : null}
                   </div>
                   <DeploymentActions
