@@ -62,6 +62,7 @@ export default function OnboardingPage() {
   }, []);
 
   const title = useMemo(() => `Step ${step} of 3`, [step]);
+  const hasRequiredKeys = Boolean(apiKey.trim()) && Boolean(telegramBotToken.trim());
 
   async function parseErrorMessage(response: Response, fallback: string) {
     const contentType = response.headers.get("content-type") ?? "";
@@ -107,6 +108,10 @@ export default function OnboardingPage() {
 
   async function handleNext() {
     setError("");
+    if (step === 2 && !hasRequiredKeys) {
+      setError("Model API key and Telegram bot token are required before continuing.");
+      return;
+    }
     try {
       await saveStep(step);
       setStep((s) => Math.min(3, s + 1));
@@ -119,6 +124,11 @@ export default function OnboardingPage() {
   async function handleDeploy() {
     setLoading(true);
     setError("");
+    if (!hasRequiredKeys) {
+      setError("Model API key and Telegram bot token are required before starting a deployment.");
+      setLoading(false);
+      return;
+    }
     try {
       await saveStep(3);
       const response = await fetch("/api/deployments", {
@@ -182,7 +192,7 @@ export default function OnboardingPage() {
         ) : null}
         {step < 3 ? (
           <button className="button" onClick={handleNext} type="button">
-            Next
+            {step === 2 && !hasRequiredKeys ? "Add required keys to continue" : "Next"}
           </button>
         ) : null}
       </div>

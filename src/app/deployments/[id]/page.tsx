@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ProgressTimeline } from "@/components/deployment/ProgressTimeline";
 import { DeploymentActions } from "@/components/deployment/DeploymentActions";
-import { DeploymentSettingsCard } from "@/components/deployment/DeploymentSettingsCard";
 import { deploymentModeDisplayName, normalizeDeploymentFlavor, normalizePlanTier } from "@/lib/plans";
 
 type DeploymentResponse = {
@@ -213,8 +212,7 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
               </p>
             ) : null}
             <p className="muted" style={{ margin: 0 }}>
-              If you skipped API key setup during onboarding, add your customer&apos;s OpenAI or Anthropic key in
-              runtime settings (never use a personal key).
+              To change model or Telegram keys, start a new deployment from onboarding. In-place runtime key editing is disabled.
             </p>
           </div>
         ) : null}
@@ -227,20 +225,9 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
             deploymentFlavor={normalizeDeploymentFlavor(deployment.deploymentFlavor)}
           />
         ) : null}
-        {deployment?.status === "ready" ? (
-          <DeploymentSettingsCard
-            deploymentId={deployment.id}
-            botName={deployment.botName}
-            planTier={deployment.planTier}
-            deploymentFlavor={normalizeDeploymentFlavor(deployment.deploymentFlavor)}
-            hasOpenaiApiKey={Boolean(deployment.settings?.hasOpenaiApiKey)}
-            hasAnthropicApiKey={Boolean(deployment.settings?.hasAnthropicApiKey)}
-            hasOpenrouterApiKey={Boolean(deployment.settings?.hasOpenrouterApiKey)}
-            hasTelegramBotToken={Boolean(deployment.settings?.hasTelegramBotToken)}
-          />
-        ) : deployment ? (
+        {deployment ? (
           <p className="muted" style={{ margin: 0 }}>
-            Runtime settings will appear after the container is ready.
+            Keys are fixed at deployment creation time. To change model or Telegram keys, use <Link href="/onboarding">Start another deployment</Link>.
           </p>
         ) : null}
         {deployment?.status === "failed" || deployment?.status === "stopped" || deployment?.status === "deactivated" ? (

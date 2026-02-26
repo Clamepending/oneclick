@@ -19,10 +19,10 @@ export function ChannelStep({
 }: Props) {
   return (
     <div className="card">
-      <h2 style={{ margin: 0 }}>Add your model API key (optional)</h2>
+      <h2 style={{ margin: 0 }}>Add your model API key</h2>
       <p className="muted">
-        Pick your provider and paste a key now so your bot can answer immediately after deploy. You can also skip
-        this and add it later.
+        Pick your provider and paste a key now. A model API key and Telegram bot token are required before starting a
+        deployment.
       </p>
       <div className="row" style={{ gap: 8 }}>
         <button
@@ -42,7 +42,7 @@ export function ChannelStep({
       </div>
       <div style={{ display: "grid", gap: 8 }}>
         <label className="muted" htmlFor="provider-api-key" style={{ display: "block" }}>
-          API key (optional)
+          API key (required)
         </label>
         <input
           id="provider-api-key"
@@ -53,10 +53,10 @@ export function ChannelStep({
           onChange={(event) => onApiKeyChange(event.target.value)}
           autoComplete="off"
         />
-        <p className="muted">Leave blank to skip for now.</p>
+        <p className="muted">Required before you can continue.</p>
       </div>
       <hr style={{ border: 0, borderTop: "1px solid var(--border)", margin: "16px 0" }} />
-      <h3 style={{ margin: "0 0 8px" }}>Connect Telegram (optional)</h3>
+      <h3 style={{ margin: "0 0 8px" }}>Connect Telegram</h3>
       <div
         style={{
           border: "1px solid var(--border)",
@@ -68,7 +68,7 @@ export function ChannelStep({
         }}
       >
         <p className="muted" style={{ marginTop: 0 }}>
-          Want Telegram enabled now? Create your bot in BotFather, copy the token, and paste it below.
+          Create your bot in BotFather, copy the token, and paste it below. Telegram is required for deployment.
         </p>
         <div className="row" style={{ gap: 10 }}>
           <a
@@ -87,7 +87,7 @@ export function ChannelStep({
       </div>
       <div style={{ display: "grid", gap: 8 }}>
         <label className="muted" htmlFor="telegram-bot-token" style={{ display: "block" }}>
-          Telegram bot token (optional)
+          Telegram bot token (required)
         </label>
         <input
           id="telegram-bot-token"
@@ -98,7 +98,7 @@ export function ChannelStep({
           onChange={(event) => onTelegramBotTokenChange(event.target.value)}
           autoComplete="off"
         />
-        <p className="muted">Leave blank to skip Telegram for now.</p>
+        <p className="muted">Required before you can continue.</p>
       </div>
     </div>
   );

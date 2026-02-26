@@ -120,7 +120,7 @@ export function PlanStep({
       <ol className="muted" style={{ marginTop: 0, marginBottom: 12, paddingLeft: 18, display: "grid", gap: 6 }}>
         <li>Start your deployment from this screen.</li>
         <li>Open your runtime once status is ready.</li>
-        <li>{hasApiKey ? "Your API key will already be configured for first launch." : "You can add an API key later in runtime settings."}</li>
+        <li>{hasApiKey ? "Your API key will already be configured for first launch." : "Model API key is required before deployment."}</li>
       </ol>
       <button className="button" type="button" onClick={onDeploy} disabled={loading}>
         {loading
