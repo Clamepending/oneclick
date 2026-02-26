@@ -45,12 +45,12 @@ function readTrimmed(name: string) {
 export function getEcsPlanResources(plan: PlanTier) {
   if (plan === "paid") {
     return {
-      cpu: readTrimmed("ECS_TASK_CPU_PAID") || "512",
-      memory: readTrimmed("ECS_TASK_MEMORY_PAID") || "2048",
+      cpu: readTrimmed("ECS_TASK_CPU_PAID") || "1024",
+      memory: readTrimmed("ECS_TASK_MEMORY_PAID") || "3072",
     };
   }
   return {
-    cpu: readTrimmed("ECS_TASK_CPU_FREE") || readTrimmed("ECS_TASK_CPU") || "256",
-    memory: readTrimmed("ECS_TASK_MEMORY_FREE") || readTrimmed("ECS_TASK_MEMORY") || "1024",
+    cpu: readTrimmed("ECS_TASK_CPU_FREE") || readTrimmed("ECS_TASK_CPU") || "512",
+    memory: readTrimmed("ECS_TASK_MEMORY_FREE") || readTrimmed("ECS_TASK_MEMORY") || "2048",
   };
 }

@@ -492,6 +492,7 @@ async function launchViaEcs(input: LaunchInput) {
   const awslogsGroup = readTrimmedEnv("ECS_LOG_GROUP");
   const awslogsPrefix = readTrimmedEnv("ECS_LOG_STREAM_PREFIX") || "oneclick";
   const telemetryEnv = readTrimmedEnv("OPENCLAW_TELEMETRY");
+  const openclawNodeOptions = readTrimmedEnv("OPENCLAW_NODE_OPTIONS") || "--max-old-space-size=1536";
   const efsFileSystemId = readTrimmedEnv("ECS_EFS_FILE_SYSTEM_ID");
   const efsAccessPointId = readTrimmedEnv("ECS_EFS_ACCESS_POINT_ID");
   const efsTransitEncryption = (readTrimmedEnv("ECS_EFS_TRANSIT_ENCRYPTION") || "ENABLED").toUpperCase();
@@ -520,6 +521,7 @@ async function launchViaEcs(input: LaunchInput) {
     input.subsidyProxyToken?.trim() && input.subsidyProxyBaseUrl?.trim() && !input.openaiApiKey && !input.anthropicApiKey && !input.openrouterApiKey
       ? { name: "OPENAI_API_BASE", value: input.subsidyProxyBaseUrl.trim() }
       : null,
+    openclawNodeOptions ? { name: "NODE_OPTIONS", value: openclawNodeOptions } : null,
     telemetryEnv ? { name: "OPENCLAW_TELEMETRY", value: telemetryEnv } : null,
   ].filter((entry): entry is { name: string; value: string } => Boolean(entry));
 
