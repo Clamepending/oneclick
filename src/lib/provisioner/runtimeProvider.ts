@@ -813,6 +813,24 @@ async function launchViaEcs(input: LaunchInput) {
         );
       }
       scriptSteps.push(
+        "echo '[oneclick] starting control UI device auto-approve loop' >&2",
+        [
+          "( for i in $(seq 1 60); do",
+          "openclaw health >/dev/null 2>&1 && break;",
+          "sleep 2;",
+          "done;",
+          "while :; do",
+          "out=\"$(node /app/dist/index.js devices approve --latest 2>&1 || true)\";",
+          "case \"$out\" in",
+          "\"\"|\"No pending device pairing requests to approve\") ;;",
+          "Approved*) echo \"[oneclick] $out\" >&2 ;;",
+          "*) ;;",
+          "esac;",
+          "sleep 3;",
+          "done ) &",
+        ].join(" "),
+      );
+      scriptSteps.push(
         "echo '[oneclick] starting openclaw gateway' >&2",
         `exec node /app/dist/index.js gateway run --allow-unconfigured --bind lan --token ${shellQuote(gatewayToken)}`,
       );
