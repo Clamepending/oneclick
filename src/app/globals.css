@@ -3,21 +3,21 @@
 }
 
 :root {
-  --bg: #05070d;
-  --bg-alt: #070d16;
-  --surface: rgba(14, 18, 27, 0.88);
-  --surface-strong: #0d121b;
-  --surface-soft: #111827;
-  --border: rgba(255, 108, 118, 0.16);
-  --border-strong: rgba(255, 108, 118, 0.3);
-  --text: #f8eaee;
-  --muted: #b3bccd;
-  --accent: #ff575f;
-  --accent-strong: #ff4a53;
-  --accent-soft: #ff9aa1;
-  --accent-surface: rgba(255, 87, 95, 0.12);
-  --accent-ring: rgba(255, 87, 95, 0.22);
-  --danger: #ff9a9f;
+  --bg: #04050d;
+  --bg-alt: #060817;
+  --surface: rgba(12, 16, 34, 0.88);
+  --surface-strong: #0a0f24;
+  --surface-soft: #111733;
+  --border: rgba(158, 103, 255, 0.2);
+  --border-strong: rgba(158, 103, 255, 0.38);
+  --text: #eef0ff;
+  --muted: #b3b9d4;
+  --accent: #8f45ff;
+  --accent-strong: #6b2df6;
+  --accent-soft: #c09bff;
+  --accent-surface: rgba(143, 69, 255, 0.14);
+  --accent-ring: rgba(143, 69, 255, 0.24);
+  --danger: #ff7a8d;
 }
 
 html,
@@ -26,11 +26,11 @@ body {
   padding: 0;
   font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   background:
-    radial-gradient(circle at 18% 14%, rgba(255, 76, 96, 0.13) 0, rgba(255, 76, 96, 0) 34%),
-    radial-gradient(circle at 72% 10%, rgba(34, 122, 255, 0.08) 0, rgba(34, 122, 255, 0) 38%),
-    radial-gradient(circle at 80% 82%, rgba(255, 106, 116, 0.08) 0, rgba(255, 106, 116, 0) 42%),
-    radial-gradient(circle at 10% 80%, rgba(118, 39, 66, 0.18) 0, rgba(118, 39, 66, 0) 38%),
-    linear-gradient(180deg, #04060b 0%, #040911 50%, #03070d 100%);
+    radial-gradient(circle at 18% 14%, rgba(144, 66, 255, 0.18) 0, rgba(144, 66, 255, 0) 34%),
+    radial-gradient(circle at 74% 12%, rgba(75, 106, 255, 0.12) 0, rgba(75, 106, 255, 0) 40%),
+    radial-gradient(circle at 82% 80%, rgba(175, 98, 255, 0.09) 0, rgba(175, 98, 255, 0) 44%),
+    radial-gradient(circle at 8% 82%, rgba(34, 45, 120, 0.24) 0, rgba(34, 45, 120, 0) 40%),
+    linear-gradient(180deg, #03040a 0%, #050716 50%, #03050f 100%);
   color: var(--text);
   line-height: 1.45;
 }
@@ -54,10 +54,20 @@ body {
 }
 
 .topbar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   font-weight: 700;
   letter-spacing: 0.3px;
   color: var(--accent-soft);
-  text-shadow: 0 0 20px rgba(255, 87, 95, 0.2);
+  text-shadow: 0 0 22px rgba(143, 69, 255, 0.24);
+}
+
+.topbar-brand-logo {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  border-radius: 8px;
 }
 
 a {
@@ -105,12 +115,12 @@ p {
   padding: 10px 16px;
   cursor: pointer;
   transition: transform 120ms ease, filter 120ms ease, box-shadow 120ms ease;
-  box-shadow: 0 10px 22px rgba(255, 74, 83, 0.18);
+  box-shadow: 0 10px 22px rgba(107, 45, 246, 0.24);
 }
 
 .button:hover {
   filter: brightness(1.03);
-  box-shadow: 0 12px 26px rgba(255, 74, 83, 0.26);
+  box-shadow: 0 12px 26px rgba(107, 45, 246, 0.32);
 }
 
 .button:active {
@@ -119,7 +129,7 @@ p {
 
 .button.secondary {
   background: rgba(255, 255, 255, 0.03);
-  color: #f0dde2;
+  color: #ece8ff;
   border: 1px solid var(--border);
   box-shadow: none;
 }
