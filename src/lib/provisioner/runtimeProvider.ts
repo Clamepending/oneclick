@@ -580,18 +580,8 @@ async function launchViaEcs(input: LaunchInput) {
       }
       if (onboardCommand) {
         if (usesSubsidyFallback) {
-          // Don't contend with gateway startup; wait for gateway health, then attempt subsidy auth bootstrap.
-          scriptSteps.push(
-            [
-              "(",
-              "for i in $(seq 1 60); do",
-              "if openclaw health >/dev/null 2>&1; then break; fi;",
-              "sleep 5;",
-              "done;",
-              `${onboardCommand} >/tmp/oneclick-onboard.log 2>&1 || true`,
-              ") &",
-            ].join(" "),
-          );
+          // Subsidy mode relies on env-based OpenAI-compatible auth; onboarding is memory-heavy and can OOM free-tier tasks.
+          scriptSteps.push("echo '[oneclick] skipping onboard bootstrap for subsidy fallback' >&2");
         } else {
           scriptSteps.push(onboardCommand);
         }
@@ -613,6 +603,7 @@ async function launchViaEcs(input: LaunchInput) {
         );
       }
       scriptSteps.push(
+        "echo '[oneclick] starting openclaw gateway' >&2",
         `exec node /app/dist/index.js gateway run --allow-unconfigured --bind lan --token ${shellQuote(gatewayToken)}`,
       );
       return [scriptSteps.join("\n")];
