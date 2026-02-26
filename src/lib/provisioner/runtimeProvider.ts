@@ -813,6 +813,15 @@ async function launchViaEcs(input: LaunchInput) {
         );
       }
       scriptSteps.push(
+        "echo '[oneclick] patch control UI unsupported-schema copy' >&2",
+        [
+          "for f in /app/dist/control-ui/assets/index-*.js; do",
+          "[ -f \"$f\" ] || continue;",
+          "sed -i 's/Unsupported schema node\\\\. Use Raw mode\\\\./Advanced field uses Raw mode./g' \"$f\" || true;",
+          "done",
+        ].join(" "),
+      );
+      scriptSteps.push(
         "echo '[oneclick] starting control UI device auto-approve loop' >&2",
         [
           "( for i in $(seq 1 60); do",
