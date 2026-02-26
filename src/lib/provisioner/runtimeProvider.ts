@@ -582,8 +582,18 @@ async function launchViaEcs(input: LaunchInput) {
       }
       if (onboardCommand) {
         if (usesSubsidyFallback) {
-          // Subsidy proxy reachability can be transient during cold starts; don't block gateway startup on auth bootstrap.
-          scriptSteps.push(`( ${onboardCommand} >/tmp/oneclick-onboard.log 2>&1 || true ) &`);
+          // Don't contend with gateway startup; wait for gateway health, then attempt subsidy auth bootstrap.
+          scriptSteps.push(
+            [
+              "(",
+              "for i in $(seq 1 60); do",
+              "if openclaw health >/dev/null 2>&1; then break; fi;",
+              "sleep 5;",
+              "done;",
+              `${onboardCommand} >/tmp/oneclick-onboard.log 2>&1 || true`,
+              ") &",
+            ].join(" "),
+          );
         } else {
           scriptSteps.push(onboardCommand);
         }
