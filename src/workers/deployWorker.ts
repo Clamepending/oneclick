@@ -480,6 +480,8 @@ export async function processDeploymentJob(job: DeploymentJob) {
     await appendEvent(job.deploymentId, "starting", `Using provider ${provider}`);
   }
 
+  let runtime: Awaited<ReturnType<typeof launchUserContainer>> | null = null;
+  try {
   const deploymentRow = await pool.query<{
     bot_name: string | null;
     openai_api_key: string | null;
@@ -562,50 +564,36 @@ export async function processDeploymentJob(job: DeploymentJob) {
     [subsidyProxyToken, job.deploymentId],
   );
 
-  let runtime: Awaited<ReturnType<typeof launchUserContainer>> | null = null;
-  try {
-    runtime = await launchUserContainer({
-      deploymentId: job.deploymentId,
-      userId: job.userId,
-      runtimeSlugSource,
-      host,
-      telegramBotToken: selectedChannel === "telegram" || Boolean(deploymentTelegramBotToken) ? telegramBotToken : null,
-      openaiApiKey: selectedOpenAiKey,
-      anthropicApiKey: selectedAnthropicKey,
-      openrouterApiKey: selectedOpenRouterKey,
-      subsidyProxyToken,
-      subsidyProxyBaseUrl,
-      deploymentFlavor,
-      providerOverride: "ssh",
-    });
-    await pool.query(
-      `UPDATE deployments
-       SET ready_url = $1,
-           runtime_id = $2,
-           deploy_provider = $3,
-           updated_at = NOW()
-       WHERE id = $4`,
-      [runtime.readyUrl, runtime.runtimeId, runtime.deployProvider, job.deploymentId],
-    );
-    await appendEvent(job.deploymentId, "starting", "Runtime launched; persisted runtime metadata");
-    await appendEvent(job.deploymentId, "starting", "Waiting for runtime health check");
-    await waitForRuntimeReady({
-      readyUrl: runtime.readyUrl,
-      deployProvider: runtime.deployProvider,
-      runtimeId: runtime.runtimeId,
-    });
-  } catch (error) {
-    if (runtime) {
-      await destroyUserRuntime({
-        runtimeId: runtime.runtimeId,
-        deployProvider: runtime.deployProvider,
-        readyUrl: runtime.readyUrl,
-      }).catch(() => {});
-    } else if (dedicatedVmId) {
-      await destroyDedicatedVm(dedicatedVmId).catch(() => {});
-    }
-    throw error;
-  }
+  runtime = await launchUserContainer({
+    deploymentId: job.deploymentId,
+    userId: job.userId,
+    runtimeSlugSource,
+    host,
+    telegramBotToken: selectedChannel === "telegram" || Boolean(deploymentTelegramBotToken) ? telegramBotToken : null,
+    openaiApiKey: selectedOpenAiKey,
+    anthropicApiKey: selectedAnthropicKey,
+    openrouterApiKey: selectedOpenRouterKey,
+    subsidyProxyToken,
+    subsidyProxyBaseUrl,
+    deploymentFlavor,
+    providerOverride: "ssh",
+  });
+  await pool.query(
+    `UPDATE deployments
+     SET ready_url = $1,
+         runtime_id = $2,
+         deploy_provider = $3,
+         updated_at = NOW()
+     WHERE id = $4`,
+    [runtime.readyUrl, runtime.runtimeId, runtime.deployProvider, job.deploymentId],
+  );
+  await appendEvent(job.deploymentId, "starting", "Runtime launched; persisted runtime metadata");
+  await appendEvent(job.deploymentId, "starting", "Waiting for runtime health check");
+  await waitForRuntimeReady({
+    readyUrl: runtime.readyUrl,
+    deployProvider: runtime.deployProvider,
+    runtimeId: runtime.runtimeId,
+  });
 
   await pool.query(
     `UPDATE deployments
@@ -617,6 +605,18 @@ export async function processDeploymentJob(job: DeploymentJob) {
   await appendEvent(job.deploymentId, "ready", "Runtime is ready");
   if (selectedOpenAiKey || selectedAnthropicKey || selectedOpenRouterKey) {
     await appendEvent(job.deploymentId, "ready", "Configured runtime API credentials from deployment settings.");
+  }
+  } catch (error) {
+    if (runtime) {
+      await destroyUserRuntime({
+        runtimeId: runtime.runtimeId,
+        deployProvider: runtime.deployProvider,
+        readyUrl: runtime.readyUrl,
+      }).catch(() => {});
+    } else if (dedicatedVmId) {
+      await destroyDedicatedVm(dedicatedVmId).catch(() => {});
+    }
+    throw error;
   }
   } finally {
     if (advisoryLockAcquired) {

@@ -98,62 +98,70 @@ export async function createDedicatedSshHost(input: { deploymentId: string; user
     .map((tag) => tag.trim())
     .filter(Boolean);
   const sshFingerprints = await resolveSshFingerprints();
+  let dropletId: number | null = null;
 
-  const createResponse = await doRequest("/v2/droplets", {
-    method: "POST",
-    body: JSON.stringify({
-      name: buildVmName({ deploymentId: input.deploymentId }),
-      region,
-      size,
-      image,
-      ssh_keys: sshFingerprints,
-      tags,
-      monitoring: true,
-      backups: false,
-      ipv6: false,
-      user_data: buildCloudInitUserData(),
-    }),
-  });
-  const created = (await createResponse.json()) as { droplet?: DoDroplet };
-  const dropletId = created.droplet?.id;
-  if (!dropletId) {
-    throw new Error("DigitalOcean create droplet response missing droplet id.");
-  }
-
-  const deadline = Date.now() + Number(readTrimmedEnv("DO_PROVISION_TIMEOUT_MS") || "600000");
-  let activeDroplet: DoDroplet | null = null;
-  while (Date.now() < deadline) {
-    const response = await doRequest(`/v2/droplets/${dropletId}`);
-    const body = (await response.json()) as { droplet?: DoDroplet };
-    const droplet = body.droplet ?? null;
-    const publicIp = droplet ? getPublicIp(droplet) : "";
-    if (droplet && droplet.status === "active" && publicIp) {
-      activeDroplet = droplet;
-      break;
+  try {
+    const createResponse = await doRequest("/v2/droplets", {
+      method: "POST",
+      body: JSON.stringify({
+        name: buildVmName({ deploymentId: input.deploymentId }),
+        region,
+        size,
+        image,
+        ssh_keys: sshFingerprints,
+        tags,
+        monitoring: true,
+        backups: false,
+        ipv6: false,
+        user_data: buildCloudInitUserData(),
+      }),
+    });
+    const created = (await createResponse.json()) as { droplet?: DoDroplet };
+    dropletId = created.droplet?.id ?? null;
+    if (!dropletId) {
+      throw new Error("DigitalOcean create droplet response missing droplet id.");
     }
-    await sleep(5000);
-  }
 
-  if (!activeDroplet) {
-    throw new Error(`Timed out waiting for dedicated VM ${dropletId} to become active.`);
-  }
+    const deadline = Date.now() + Number(readTrimmedEnv("DO_PROVISION_TIMEOUT_MS") || "600000");
+    let activeDroplet: DoDroplet | null = null;
+    while (Date.now() < deadline) {
+      const response = await doRequest(`/v2/droplets/${dropletId}`);
+      const body = (await response.json()) as { droplet?: DoDroplet };
+      const droplet = body.droplet ?? null;
+      const publicIp = droplet ? getPublicIp(droplet) : "";
+      if (droplet && droplet.status === "active" && publicIp) {
+        activeDroplet = droplet;
+        break;
+      }
+      await sleep(5000);
+    }
 
-  const publicIp = getPublicIp(activeDroplet);
-  if (!publicIp) {
-    throw new Error(`Dedicated VM ${dropletId} has no public IP.`);
-  }
+    if (!activeDroplet) {
+      throw new Error(`Timed out waiting for dedicated VM ${dropletId} to become active.`);
+    }
 
-  const bootWaitMs = Number(readTrimmedEnv("OPENCLAW_VM_BOOT_WAIT_MS") || "30000");
-  if (bootWaitMs > 0) {
-    await sleep(bootWaitMs);
-  }
+    const publicIp = getPublicIp(activeDroplet);
+    if (!publicIp) {
+      throw new Error(`Dedicated VM ${dropletId} has no public IP.`);
+    }
 
-  return {
-    name: `do-vm-${dropletId}`,
-    dockerHost: `ssh://root@${publicIp}`,
-    publicBaseUrl: `http://${publicIp}`,
-    vmId: String(dropletId),
-  };
+    const bootWaitMs = Number(readTrimmedEnv("OPENCLAW_VM_BOOT_WAIT_MS") || "30000");
+    if (bootWaitMs > 0) {
+      await sleep(bootWaitMs);
+    }
+
+    return {
+      name: `do-vm-${dropletId}`,
+      dockerHost: `ssh://root@${publicIp}`,
+      publicBaseUrl: `http://${publicIp}`,
+      vmId: String(dropletId),
+    };
+  } catch (error) {
+    if (dropletId) {
+      await destroyDedicatedVm(String(dropletId)).catch(() => {});
+    }
+    throw error;
+  }
 }
 
 export async function destroyDedicatedVm(vmId: string) {
