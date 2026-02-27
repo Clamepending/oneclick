@@ -122,11 +122,14 @@ export function DeploymentActions({
     setPairingResult(null);
     setIsApprovingPairing(true);
     try {
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), 45_000);
       const response = await fetch(`/api/deployments/${deploymentId}/pairing/telegram`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
-      });
+        signal: controller.signal,
+      }).finally(() => window.clearTimeout(timeoutId));
       const payload = (await response.json()) as { ok?: boolean; message?: string; error?: string };
       if (!response.ok || !payload.ok) {
         throw new Error(payload.error || "Failed to approve pairing code");
@@ -134,6 +137,13 @@ export function DeploymentActions({
       setPairingCode("");
       setPairingResult({ type: "success", message: payload.message || "Telegram pairing approved." });
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setPairingResult({
+          type: "error",
+          message: "Approval timed out. Try again with a fresh code.",
+        });
+        return;
+      }
       setPairingResult({
         type: "error",
         message: err instanceof Error ? err.message : "Failed to approve pairing code",
