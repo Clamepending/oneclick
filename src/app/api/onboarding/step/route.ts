@@ -28,20 +28,6 @@ export async function POST(request: Request) {
 
     const { step, botName, channel, telegramBotToken, modelProvider, modelApiKey, plan, deploymentFlavor } =
       parsed.data;
-    if (step >= 2) {
-      if (!modelProvider || !modelApiKey?.trim()) {
-        return NextResponse.json(
-          { ok: false, error: "Model provider and model API key are required before continuing." },
-          { status: 400 },
-        );
-      }
-      if (!telegramBotToken?.trim()) {
-        return NextResponse.json(
-          { ok: false, error: "Telegram bot token is required before continuing." },
-          { status: 400 },
-        );
-      }
-    }
     await ensureSchema();
 
     await pool.query(
@@ -66,7 +52,7 @@ export async function POST(request: Request) {
        WHERE user_id = $9`,
       [
         botName ?? null,
-        (step >= 2 ? "telegram" : channel) ?? null,
+        channel ?? null,
         telegramBotToken ?? null,
         modelProvider ?? null,
         modelApiKey ?? null,

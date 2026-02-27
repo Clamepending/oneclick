@@ -635,6 +635,7 @@ async function launchViaSsh(input: LaunchInput) {
   const remoteScript = [
     `set -e`,
     `>&2 echo "oneclick-debug image=${image} container=${containerName} hostPort=${hostPort} containerPort=${containerPort}"`,
+    `if ! command -v docker >/dev/null 2>&1; then export DEBIAN_FRONTEND=noninteractive; apt-get update -y && apt-get install -y docker.io && systemctl enable docker && systemctl restart docker; fi`,
     `mkdir -p "${userDir}" "${workspaceDir}"`,
     `chown -R 1000:1000 "${userDir}" "${workspaceDir}" || true`,
     `docker pull "${image}"`,
@@ -1073,12 +1074,21 @@ export async function destroyUserRuntime(input: DestroyInput) {
     if (!parsed) {
       throw new Error("Invalid ssh runtime id format.");
     }
-    await runSshCommand(
-      parsed.sshTarget,
-      `docker rm -f "${parsed.containerName}" >/dev/null 2>&1 || true`,
-    );
+    let dockerCleanupError: Error | null = null;
+    try {
+      await runSshCommand(
+        parsed.sshTarget,
+        `docker rm -f "${parsed.containerName}" >/dev/null 2>&1 || true`,
+      );
+    } catch (error) {
+      dockerCleanupError = error instanceof Error ? error : new Error(String(error));
+    }
     if (parsed.vmId) {
       await destroyDedicatedVm(parsed.vmId);
+      return;
+    }
+    if (dockerCleanupError) {
+      throw dockerCleanupError;
     }
     return;
   }

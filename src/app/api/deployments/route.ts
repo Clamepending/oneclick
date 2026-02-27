@@ -401,18 +401,6 @@ export async function POST(request: Request) {
   const openaiApiKey = modelProvider === "openai" ? modelApiKey : null;
   const anthropicApiKey = modelProvider === "anthropic" ? modelApiKey : null;
   const telegramBotToken = onboarding.rows[0]?.telegram_bot_token?.trim() || null;
-  if (!modelProvider || !modelApiKey) {
-    return NextResponse.json(
-      { ok: false, error: "Model provider and model API key are required. Start a new deployment setup and enter a key." },
-      { status: 400 },
-    );
-  }
-  if (!telegramBotToken) {
-    return NextResponse.json(
-      { ok: false, error: "Telegram bot token is required. Start a new deployment setup and connect Telegram first." },
-      { status: 400 },
-    );
-  }
   const selectedPlan = parsedPayload.planTier ?? normalizePlanTier(onboarding.rows[0]?.plan);
   const selectedDeploymentFlavor =
     selectedPlan === "paid"
