@@ -746,6 +746,7 @@ async function launchViaSsh(input: LaunchInput) {
   const simpleAgentOpenAiApiKey = openaiApiKey;
   const simpleAgentAnthropicApiKey = anthropicApiKey;
   const simpleAgentGoogleApiKey = "";
+  const simpleAgentModel = readTrimmedEnv("SIMPLE_AGENT_MODEL") || "gpt-4o-mini";
   const simpleAgentLlmUrl = readTrimmedEnv("SIMPLE_AGENT_LLM_URL");
   const resolvedSimpleAgentLlmUrl = simpleAgentLlmUrl || subsidyProxyBaseUrl;
   const shouldBuildSimpleAgent = !isOpenClawRuntime && shouldBuildSimpleAgentImage();
@@ -759,6 +760,7 @@ async function launchViaSsh(input: LaunchInput) {
     simpleAgentOpenAiApiKey ? `-e OPENAI_API_KEY=${shellQuote(simpleAgentOpenAiApiKey)}` : "",
     simpleAgentAnthropicApiKey ? `-e ANTHROPIC_API_KEY=${shellQuote(simpleAgentAnthropicApiKey)}` : "",
     simpleAgentGoogleApiKey ? `-e GOOGLE_API_KEY=${shellQuote(simpleAgentGoogleApiKey)}` : "",
+    simpleAgentModel ? `-e ADMINAGENT_MODEL=${shellQuote(simpleAgentModel)}` : "",
     resolvedSimpleAgentLlmUrl ? `-e OPENAI_BASE_URL=${shellQuote(resolvedSimpleAgentLlmUrl)}` : "",
     resolvedSimpleAgentLlmUrl ? `-e OPENAI_API_BASE=${shellQuote(resolvedSimpleAgentLlmUrl)}` : "",
     `-e PORT=${containerPort}`,
