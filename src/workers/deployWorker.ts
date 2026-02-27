@@ -17,6 +17,7 @@ import { normalizeDeploymentFlavor, type DeploymentFlavor } from "@/lib/plans";
 import { selectHost } from "@/lib/provisioner/hostScheduler";
 import { createDedicatedSshHost, destroyDedicatedVm } from "@/lib/provisioner/dedicatedVm";
 import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runtimeProvider";
+import { probeRuntimeHttp } from "@/lib/runtimeHealth";
 
 type DeploymentJob = {
   deploymentId: string;
@@ -354,6 +355,8 @@ async function waitForRuntimeReady(input: {
     try {
       if (parsedSshRuntime) {
         await probeSshContainerRunning(parsedSshRuntime.sshTarget, parsedSshRuntime.containerName);
+        const httpProbe = await probeRuntimeHttp(input.readyUrl, 4000);
+        if (httpProbe.ok) return;
         await probeSshLocalPort(parsedSshRuntime.sshTarget, port);
       } else {
         await probeTcpPort(host, port);
