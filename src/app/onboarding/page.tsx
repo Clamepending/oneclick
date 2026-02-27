@@ -90,7 +90,7 @@ export default function OnboardingPage() {
       if (!response.ok || !body.id) {
         throw new Error(body.error ?? body.message ?? "Deployment failed to start");
       }
-      router.push(`/deployments/${body.id}`);
+      router.push("/");
     } catch (e) {
       const message = e instanceof Error ? e.message : "Deployment failed to start";
       setError(message);

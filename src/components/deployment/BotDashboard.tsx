@@ -276,16 +276,13 @@ export function BotDashboard({ deployments }: Props) {
                     Deployments usually take ~10 minutes on DigitalOcean VM (image pull + startup).
                   </p>
                 ) : null}
-                <div className="row">
-                  <Link className="button secondary" href={`/deployments/${deployment.id}`}>
-                    View details
-                  </Link>
-                  {deployment.status === "ready" ? (
+                {deployment.status === "ready" ? (
+                  <div className="row">
                     <Link className="button" href={`/runtime/${deployment.id}`}>
                       Open UI
                     </Link>
-                  ) : null}
-                </div>
+                  </div>
+                ) : null}
                 <DeploymentActions
                   deploymentId={deployment.id}
                   status={deployment.status}

@@ -44,7 +44,7 @@ export function DeploymentActions({
       if (!response.ok || !payload.id) {
         throw new Error(payload.error || "Failed to redeploy");
       }
-      router.push(`/deployments/${payload.id}`);
+      router.push("/");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to redeploy");
