@@ -19,7 +19,7 @@ export function planDisplayName(plan: PlanTier) {
 
 export function deploymentModeDisplayName(plan: PlanTier, flavor: DeploymentFlavor) {
   if (plan === "paid") return "Paid (Basic)";
-  if (flavor === "lightsail") return "Free (Lightsail)";
+  if (flavor === "lightsail") return "Free (DigitalOcean VM)";
   return flavor === "advanced" ? "Free (Advanced)" : "Free (Basic)";
 }
 

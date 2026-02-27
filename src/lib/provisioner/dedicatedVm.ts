@@ -19,7 +19,7 @@ function readTrimmedEnv(name: string) {
 function getDoToken() {
   const token = readTrimmedEnv("DO_API_TOKEN");
   if (!token) {
-    throw new Error("DO_API_TOKEN is required for dedicated Lightsail VM provisioning.");
+    throw new Error("DO_API_TOKEN is required for dedicated DigitalOcean VM provisioning.");
   }
   return token;
 }
@@ -149,7 +149,7 @@ export async function createDedicatedSshHost(input: { deploymentId: string; user
   }
 
   return {
-    name: `lightsail-vm-${dropletId}`,
+    name: `do-vm-${dropletId}`,
     dockerHost: `ssh://root@${publicIp}`,
     publicBaseUrl: `http://${publicIp}`,
     vmId: String(dropletId),
@@ -169,4 +169,3 @@ export async function destroyDedicatedVm(vmId: string) {
     throw error;
   }
 }
-

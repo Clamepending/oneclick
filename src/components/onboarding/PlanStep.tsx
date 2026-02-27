@@ -26,7 +26,7 @@ export function PlanStep({
   freeActiveLimit = 1,
 }: Props) {
   const selectedMode =
-    planTier === "paid" ? "paid_basic" : deploymentFlavor === "advanced" ? "free_advanced" : deploymentFlavor === "lightsail" ? "free_lightsail" : "free_basic";
+    planTier === "paid" ? "paid_basic" : deploymentFlavor === "advanced" ? "free_advanced" : deploymentFlavor === "lightsail" ? "free_do_vm" : "free_basic";
   const freeStorageGb = getPlanStorageGb("free");
   const paidStorageGb = getPlanStorageGb("paid");
 
@@ -41,23 +41,23 @@ export function PlanStep({
           onClick={() => onSelectionChange({ planTier: "free", deploymentFlavor: "lightsail" })}
           style={{
             textAlign: "left",
-            border: `1px solid ${selectedMode === "free_lightsail" && freeSelectable ? "var(--border-strong)" : "var(--border)"}`,
+            border: `1px solid ${selectedMode === "free_do_vm" && freeSelectable ? "var(--border-strong)" : "var(--border)"}`,
             borderRadius: 10,
             padding: 16,
-            background: selectedMode === "free_lightsail" && freeSelectable ? "var(--accent-surface)" : "transparent",
+            background: selectedMode === "free_do_vm" && freeSelectable ? "var(--accent-surface)" : "transparent",
             color: "inherit",
             cursor: freeSelectable ? "pointer" : "not-allowed",
             opacity: freeSelectable ? 1 : 0.6,
           }}
         >
-          <strong>Free (Lightsail)</strong>
+          <strong>Free (DigitalOcean VM)</strong>
           <p className="muted" style={{ marginBottom: 8 }}>
-            Default free mode on a Lightsail-style single-host runtime.
+            Default free mode on a dedicated DigitalOcean VM runtime.
           </p>
           <ul className="muted" style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
             <li>1 active deployment</li>
             <li>Persistent storage target: {freeStorageGb} GB</li>
-            <li>Single-host deployment path (SSH provider)</li>
+            <li>Dedicated VM deployment path (SSH provider)</li>
           </ul>
           {!freeSelectable ? (
             <p className="muted" style={{ marginTop: 8, marginBottom: 0 }}>
@@ -167,7 +167,7 @@ export function PlanStep({
           : planTier === "paid"
             ? "Start Paid (Basic) Deploy ($20/mo)"
             : deploymentFlavor === "lightsail"
-              ? "Start Free (Lightsail) Deploy"
+              ? "Start Free (DigitalOcean VM) Deploy"
             : deploymentFlavor === "advanced"
               ? "Start Free (Advanced) Deploy"
               : "Start Free (Basic) Deploy"}

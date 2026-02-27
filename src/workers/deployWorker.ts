@@ -350,7 +350,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
       [job.deploymentId],
     );
     const currentHostName = currentHostRow.rows[0]?.host_name?.trim() || "";
-    const vmMatch = currentHostName.match(/^lightsail-vm-(\d+)$/);
+    const vmMatch = currentHostName.match(/^(?:lightsail-vm|do-vm)-(\d+)$/);
     if (vmMatch) {
       const currentStatus = (currentHostRow.rows[0]?.status || "").trim().toLowerCase();
       if (currentStatus !== "ready") {

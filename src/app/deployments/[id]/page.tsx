@@ -140,7 +140,7 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
         </p>
         {(deployment?.status === "queued" || deployment?.status === "starting") ? (
           <p className="muted" style={{ marginTop: 0 }}>
-            Deployments usually take ~10 minutes on AWS ECS/Fargate (image pull + startup).
+            Deployments usually take ~10 minutes (image pull + startup), depending on provider (AWS ECS/Fargate or DigitalOcean VM).
           </p>
         ) : null}
         {deployment ? (
