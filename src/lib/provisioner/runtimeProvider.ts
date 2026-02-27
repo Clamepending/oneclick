@@ -752,6 +752,10 @@ async function launchViaEcs(input: LaunchInput) {
         !input.openrouterApiKey?.trim();
       const scriptSteps = [
         "set -e",
+        "mkdir -p /tmp/oneclick-bin",
+        `printf '%s\\n' '#!/bin/sh' 'exec node /app/dist/index.js "$@"' > /tmp/oneclick-bin/openclaw`,
+        "chmod +x /tmp/oneclick-bin/openclaw",
+        'export PATH="/tmp/oneclick-bin:$PATH"',
       ];
       if (efsEnabled) {
         const stateSuffix = buildEcsOpenClawStateDir({ userId: input.userId, deploymentId: input.deploymentId });
@@ -808,11 +812,11 @@ async function launchViaEcs(input: LaunchInput) {
           [
             "( if [ ! -f \"$BOOTSTRAP_SENTINEL\" ]; then",
             "for i in $(seq 1 60); do",
-            "if node /app/dist/index.js health >/dev/null 2>&1; then break; fi;",
+            "if openclaw health >/dev/null 2>&1; then break; fi;",
             "sleep 5;",
             "done;",
             "sleep 2;",
-            `node /app/dist/index.js agent --session-id main --message ${advancedMessage} >/tmp/oneclick-advanced-bootstrap.log 2>&1 && touch \"$BOOTSTRAP_SENTINEL\" || true;`,
+            `openclaw agent --session-id main --message ${advancedMessage} >/tmp/oneclick-advanced-bootstrap.log 2>&1 && touch \"$BOOTSTRAP_SENTINEL\" || true;`,
             "fi ) &",
           ].join(" "),
         );
@@ -830,7 +834,7 @@ async function launchViaEcs(input: LaunchInput) {
         "echo '[oneclick] starting control UI device auto-approve loop' >&2",
         [
           "( for i in $(seq 1 60); do",
-          "node /app/dist/index.js health >/dev/null 2>&1 && break;",
+          "openclaw health >/dev/null 2>&1 && break;",
           "sleep 2;",
           "done;",
           "while :; do",
