@@ -753,6 +753,10 @@ async function launchViaSsh(input: LaunchInput) {
     telegramBotToken ? `-e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : "",
     runtimeLlmApiKey ? `-e ADMINAGENT_LLM_API_KEY=${shellQuote(runtimeLlmApiKey)}` : "",
     resolvedSimpleAgentLlmUrl ? `-e ADMINAGENT_LLM_URL=${shellQuote(resolvedSimpleAgentLlmUrl)}` : "",
+    // Keep compatibility with agents that still read OpenAI-style env names.
+    runtimeLlmApiKey ? `-e OPENAI_API_KEY=${shellQuote(runtimeLlmApiKey)}` : "",
+    resolvedSimpleAgentLlmUrl ? `-e OPENAI_BASE_URL=${shellQuote(resolvedSimpleAgentLlmUrl)}` : "",
+    resolvedSimpleAgentLlmUrl ? `-e OPENAI_API_BASE=${shellQuote(resolvedSimpleAgentLlmUrl)}` : "",
     `-e PORT=${containerPort}`,
   ]
     .filter(Boolean)
