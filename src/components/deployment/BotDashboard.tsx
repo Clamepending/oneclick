@@ -280,10 +280,10 @@ export function BotDashboard({ deployments }: Props) {
                   <Link className="button secondary" href={`/deployments/${deployment.id}`}>
                     View details
                   </Link>
-                  {deployment.status === "ready" && deployment.readyUrl ? (
-                    <a className="button" href={deployment.readyUrl} target="_blank" rel="noreferrer">
+                  {deployment.status === "ready" ? (
+                    <Link className="button" href={`/runtime/${deployment.id}`}>
                       Open OpenClaw
-                    </a>
+                    </Link>
                   ) : null}
                 </div>
                 <DeploymentActions

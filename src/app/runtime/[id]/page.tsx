@@ -129,6 +129,30 @@ function renderPlaceholder(id: string, details?: string) {
   );
 }
 
+function renderRuntimeUnavailable(id: string, readyUrl: string | null, details?: string) {
+  return (
+    <main className="container">
+      <div className="card">
+        <h1>OpenClaw Runtime Endpoint</h1>
+        <p className="muted">
+          Deployment <code>{id}</code> is running, but the runtime web UI is not reachable yet.
+        </p>
+        {details ? <p className="muted">{details}</p> : null}
+        <p className="muted">
+          <a className="button secondary" href={`/deployments/${id}`}>
+            Back to deployment dashboard
+          </a>
+        </p>
+        {readyUrl ? (
+          <p className="muted">
+            Raw runtime URL: <code>{readyUrl}</code>
+          </p>
+        ) : null}
+      </div>
+    </main>
+  );
+}
+
 function mergeResolvedRuntimeUrl(resolvedBaseUrl: string, storedReadyUrl: string | null) {
   try {
     const resolved = new URL(resolvedBaseUrl);
@@ -146,6 +170,19 @@ function mergeResolvedRuntimeUrl(resolvedBaseUrl: string, storedReadyUrl: string
     return resolved.toString();
   } catch {
     return resolvedBaseUrl;
+  }
+}
+
+async function isRuntimeControlUiReachable(readyUrl: string) {
+  try {
+    const probeUrl = new URL("/__openclaw/control-ui-config.json", readyUrl);
+    const response = await fetch(probeUrl.toString(), {
+      cache: "no-store",
+      signal: AbortSignal.timeout(3000),
+    });
+    return response.ok;
+  } catch {
+    return false;
   }
 }
 
@@ -188,6 +225,17 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
       // Keep placeholder for invalid URLs.
     }
     if (parsedReadyUrl && parsedReadyUrl.pathname !== `/runtime/${id}`) {
+      const provider = (deployment.deploy_provider ?? "").trim();
+      if (provider !== "ecs") {
+        const reachable = await isRuntimeControlUiReachable(parsedReadyUrl.toString());
+        if (!reachable) {
+          return renderRuntimeUnavailable(
+            id,
+            parsedReadyUrl.toString(),
+            "The runtime accepted deployment but is not serving the Control UI over HTTP yet.",
+          );
+        }
+      }
       redirect(parsedReadyUrl.toString());
     }
   }

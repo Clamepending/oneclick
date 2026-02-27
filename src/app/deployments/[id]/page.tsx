@@ -189,10 +189,10 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
             </p>
           </div>
         ) : null}
-        {deployment?.status === "ready" && deployment.readyUrl ? (
+        {deployment?.status === "ready" ? (
           <div style={{ display: "grid", gap: 8 }}>
             <p style={{ margin: 0 }}>
-              <a className="button" href={deployment.readyUrl} target="_blank" rel="noreferrer">
+              <a className="button" href={`/runtime/${deployment.id}`}>
                 Open OpenClaw
               </a>
             </p>
