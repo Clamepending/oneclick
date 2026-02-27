@@ -15,6 +15,7 @@ import {
 import { ensureSchema, pool } from "@/lib/db";
 import { normalizeDeploymentFlavor, normalizePlanTier, type DeploymentFlavor, type PlanTier } from "@/lib/plans";
 import { selectHost } from "@/lib/provisioner/hostScheduler";
+import { createDedicatedSshHost, destroyDedicatedVm } from "@/lib/provisioner/dedicatedVm";
 import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runtimeProvider";
 
 type DeploymentJob = {
@@ -66,8 +67,8 @@ function parseSshRuntimeId(runtimeId: string) {
   if (!runtimeId.startsWith("ssh:")) return null;
   const body = runtimeId.slice(4);
   const split = body.split("|");
-  if (split.length !== 2) return null;
-  return { sshTarget: split[0], containerName: split[1] };
+  if (split.length < 2) return null;
+  return { sshTarget: split[0], containerName: split[1], vmId: split[2]?.trim() || null };
 }
 
 function parseEcsRuntimeId(runtimeId: string) {
@@ -377,19 +378,25 @@ export async function processDeploymentJob(job: DeploymentJob) {
   }
 
   let host: Awaited<ReturnType<typeof selectHost>> | undefined;
+  let dedicatedVmId: string | null = null;
   if (providerRequiresHost) {
-    const activeByHost = new Map<string, number>();
-    const activeRows = await pool.query<{ host_name: string; active_count: string }>(
-      `SELECT host_name, COUNT(*)::text as active_count
-       FROM deployments
-       WHERE status IN ('queued', 'starting') AND host_name IS NOT NULL
-       GROUP BY host_name`,
-    );
-    for (const row of activeRows.rows) {
-      activeByHost.set(row.host_name, Number(row.active_count));
+    if (selectedDeploymentFlavor === "lightsail") {
+      await appendEvent(job.deploymentId, "starting", "Provisioning dedicated VM host");
+      host = await createDedicatedSshHost({ deploymentId: job.deploymentId, userId: job.userId });
+      dedicatedVmId = host.vmId?.trim() || null;
+    } else {
+      const activeByHost = new Map<string, number>();
+      const activeRows = await pool.query<{ host_name: string; active_count: string }>(
+        `SELECT host_name, COUNT(*)::text as active_count
+         FROM deployments
+         WHERE status IN ('queued', 'starting') AND host_name IS NOT NULL
+         GROUP BY host_name`,
+      );
+      for (const row of activeRows.rows) {
+        activeByHost.set(row.host_name, Number(row.active_count));
+      }
+      host = await selectHost(activeByHost);
     }
-
-    host = await selectHost(activeByHost);
     await pool.query(
       `UPDATE deployments SET host_name = $1, status = 'starting', updated_at = NOW() WHERE id = $2`,
       [host.name, job.deploymentId],
@@ -486,37 +493,50 @@ export async function processDeploymentJob(job: DeploymentJob) {
     [subsidyProxyToken, job.deploymentId],
   );
 
-  const runtime = await launchUserContainer({
-    deploymentId: job.deploymentId,
-    userId: job.userId,
-    runtimeSlugSource,
-    host,
-    telegramBotToken: selectedChannel === "telegram" || Boolean(deploymentTelegramBotToken) ? telegramBotToken : null,
-    openaiApiKey: selectedOpenAiKey,
-    anthropicApiKey: selectedAnthropicKey,
-    openrouterApiKey: selectedOpenRouterKey,
-    subsidyProxyToken,
-    subsidyProxyBaseUrl,
-    planTier,
-    deploymentFlavor,
-    providerOverride: provider as "mock" | "ssh" | "ecs",
-  });
-  await pool.query(
-    `UPDATE deployments
-     SET ready_url = $1,
-         runtime_id = $2,
-         deploy_provider = $3,
-         updated_at = NOW()
-     WHERE id = $4`,
-    [runtime.readyUrl, runtime.runtimeId, runtime.deployProvider, job.deploymentId],
-  );
-  await appendEvent(job.deploymentId, "starting", "Runtime launched; persisted runtime metadata");
-  await appendEvent(job.deploymentId, "starting", "Waiting for runtime health check");
-  await waitForRuntimeReady({
-    readyUrl: runtime.readyUrl,
-    deployProvider: runtime.deployProvider,
-    runtimeId: runtime.runtimeId,
-  });
+  let runtime: Awaited<ReturnType<typeof launchUserContainer>> | null = null;
+  try {
+    runtime = await launchUserContainer({
+      deploymentId: job.deploymentId,
+      userId: job.userId,
+      runtimeSlugSource,
+      host,
+      telegramBotToken: selectedChannel === "telegram" || Boolean(deploymentTelegramBotToken) ? telegramBotToken : null,
+      openaiApiKey: selectedOpenAiKey,
+      anthropicApiKey: selectedAnthropicKey,
+      openrouterApiKey: selectedOpenRouterKey,
+      subsidyProxyToken,
+      subsidyProxyBaseUrl,
+      planTier,
+      deploymentFlavor,
+      providerOverride: provider as "mock" | "ssh" | "ecs",
+    });
+    await pool.query(
+      `UPDATE deployments
+       SET ready_url = $1,
+           runtime_id = $2,
+           deploy_provider = $3,
+           updated_at = NOW()
+       WHERE id = $4`,
+      [runtime.readyUrl, runtime.runtimeId, runtime.deployProvider, job.deploymentId],
+    );
+    await appendEvent(job.deploymentId, "starting", "Runtime launched; persisted runtime metadata");
+    await appendEvent(job.deploymentId, "starting", "Waiting for runtime health check");
+    await waitForRuntimeReady({
+      readyUrl: runtime.readyUrl,
+      deployProvider: runtime.deployProvider,
+      runtimeId: runtime.runtimeId,
+    });
+  } catch (error) {
+    if (runtime) {
+      await destroyUserRuntime({
+        runtimeId: runtime.runtimeId,
+        deployProvider: runtime.deployProvider,
+      }).catch(() => {});
+    } else if (dedicatedVmId) {
+      await destroyDedicatedVm(dedicatedVmId).catch(() => {});
+    }
+    throw error;
+  }
 
   await pool.query(
     `UPDATE deployments

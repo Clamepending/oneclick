@@ -25,6 +25,7 @@ import {
   getOpenClawStartCommand,
   shouldAllowInsecureControlUi,
 } from "@/lib/provisioner/openclawBundle";
+import { destroyDedicatedVm } from "@/lib/provisioner/dedicatedVm";
 import { buildRuntimeSubdomain } from "@/lib/provisioner/runtimeSlug";
 import type { Host } from "@/lib/provisioner/hostScheduler";
 
@@ -381,7 +382,10 @@ function parseUserAndHost(sshTarget: string) {
   return { user, host };
 }
 
-function runtimeIdFromSsh(sshTarget: string, containerName: string) {
+function runtimeIdFromSsh(sshTarget: string, containerName: string, vmId?: string) {
+  if (vmId?.trim()) {
+    return `ssh:${sshTarget}|${containerName}|${vmId.trim()}`;
+  }
   return `ssh:${sshTarget}|${containerName}`;
 }
 
@@ -403,8 +407,12 @@ function parseSshRuntimeId(runtimeId: string) {
   if (!runtimeId.startsWith("ssh:")) return null;
   const body = runtimeId.slice(4);
   const split = body.split("|");
-  if (split.length !== 2) return null;
-  return { sshTarget: split[0], containerName: split[1] };
+  if (split.length < 2) return null;
+  return {
+    sshTarget: split[0],
+    containerName: split[1],
+    vmId: split[2]?.trim() || null,
+  };
 }
 
 function parseEcsRuntimeId(runtimeId: string) {
@@ -660,7 +668,7 @@ async function launchViaSsh(input: LaunchInput) {
   }
 
   return {
-    runtimeId: runtimeIdFromSsh(sshTarget, containerName),
+    runtimeId: runtimeIdFromSsh(sshTarget, containerName, input.host?.vmId),
     deployProvider: "ssh",
     image,
     port: containerPort,
@@ -1069,6 +1077,9 @@ export async function destroyUserRuntime(input: DestroyInput) {
       parsed.sshTarget,
       `docker rm -f "${parsed.containerName}" >/dev/null 2>&1 || true`,
     );
+    if (parsed.vmId) {
+      await destroyDedicatedVm(parsed.vmId);
+    }
     return;
   }
   if (provider === "ecs") {

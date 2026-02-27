@@ -2,6 +2,7 @@ export type Host = {
   name: string;
   dockerHost: string;
   publicBaseUrl?: string;
+  vmId?: string;
 };
 
 function getHostPool(): Host[] {

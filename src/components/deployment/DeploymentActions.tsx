@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { getPlanStorageGb } from "@/lib/plans";
 
 type Props = {
   deploymentId: string;
@@ -41,19 +40,6 @@ export function DeploymentActions({
   const [pairingResult, setPairingResult] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [sshCommandMessage, setSshCommandMessage] = useState("");
   const isReady = status === "ready";
-  const freeStorageGb = getPlanStorageGb("free");
-  const paidStorageGb = getPlanStorageGb("paid");
-  const [redeploySelection, setRedeploySelection] = useState<"free_lightsail" | "free_basic" | "free_advanced" | "paid_basic">(
-    planTier === "paid"
-      ? "paid_basic"
-      : !freeSelectable
-        ? "paid_basic"
-        : deploymentFlavor === "advanced"
-          ? "free_advanced"
-          : deploymentFlavor === "lightsail"
-            ? "free_lightsail"
-            : "free_basic",
-  );
 
   const canDelete = status !== "deactivated";
   const isSshRuntime = (deployProvider ?? "").trim() === "ssh";
@@ -62,7 +48,9 @@ export function DeploymentActions({
     const raw = runtimeId?.trim();
     if (!raw || !raw.startsWith("ssh:")) return null;
     const body = raw.slice(4);
-    const [sshTarget, containerName] = body.split("|");
+    const parts = body.split("|");
+    const sshTarget = parts[0];
+    const containerName = parts[1];
     if (!sshTarget || !containerName) return null;
     const escapedContainer = containerName.replace(/"/g, '\\"');
     return `ssh ${sshTarget} 'docker exec -it "${escapedContainer}" sh'`;
@@ -77,13 +65,8 @@ export function DeploymentActions({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           botName: botName ?? undefined,
-          planTier: redeploySelection === "paid_basic" ? "paid" : "free",
-          deploymentFlavor:
-            redeploySelection === "free_advanced"
-              ? "advanced"
-              : redeploySelection === "free_lightsail"
-                ? "lightsail"
-                : "basic",
+          planTier: planTier === "paid" ? "paid" : "free",
+          deploymentFlavor: planTier === "paid" ? "basic" : deploymentFlavor,
         }),
       });
       const payload = (await response.json()) as { id?: string; error?: string };
@@ -214,36 +197,6 @@ export function DeploymentActions({
         ) : null}
         {isReady ? (
           <>
-            <label className="muted" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              Plan
-              <select
-                value={redeploySelection}
-                onChange={(event) =>
-                  setRedeploySelection(
-                    event.target.value === "free_advanced"
-                      ? "free_advanced"
-                      : event.target.value === "free_lightsail"
-                        ? "free_lightsail"
-                      : event.target.value === "paid_basic"
-                        ? "paid_basic"
-                        : "free_basic",
-                  )
-                }
-                disabled={isRedeploying || isDeleting || isUpgrading}
-                style={{ minHeight: 34 }}
-              >
-                <option value="free_lightsail" disabled={!freeSelectable}>
-                  Free (Lightsail) - SSH host runtime - {freeStorageGb} GB storage
-                </option>
-                <option value="free_basic" disabled={!freeSelectable}>
-                  Free (Basic) - Fargate 0.25 vCPU / 0.5 GB - {freeStorageGb} GB storage
-                </option>
-                <option value="free_advanced" disabled={!freeSelectable}>
-                  Free (Advanced) - Fargate 0.25 vCPU / 0.5 GB - {freeStorageGb} GB storage
-                </option>
-                <option value="paid_basic">Paid (Basic) $20/mo - Fargate 0.5 vCPU / 1 GB - {paidStorageGb} GB storage</option>
-              </select>
-            </label>
             <button
               className="button secondary"
               type="button"
