@@ -1,5 +1,7 @@
 "use client";
 
+import { getPlanStorageGb } from "@/lib/plans";
+
 type Props = {
   planTier: "free" | "paid";
   deploymentFlavor: "basic" | "advanced";
@@ -24,6 +26,8 @@ export function PlanStep({
   freeActiveLimit = 1,
 }: Props) {
   const selectedMode = planTier === "paid" ? "paid_basic" : deploymentFlavor === "advanced" ? "free_advanced" : "free_basic";
+  const freeStorageGb = getPlanStorageGb("free");
+  const paidStorageGb = getPlanStorageGb("paid");
 
   return (
     <div className="card">
@@ -52,6 +56,7 @@ export function PlanStep({
           <ul className="muted" style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
             <li>1 active deployment</li>
             <li>AWS ECS Fargate: 0.25 vCPU / 0.5 GB RAM</li>
+            <li>Persistent storage target: {freeStorageGb} GB</li>
             <li>Deactivates after 30 days unless upgraded</li>
           </ul>
           {!freeSelectable ? (
@@ -83,6 +88,7 @@ export function PlanStep({
           <ul className="muted" style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
             <li>1 active deployment</li>
             <li>AWS ECS Fargate: 0.25 vCPU / 0.5 GB RAM</li>
+            <li>Persistent storage target: {freeStorageGb} GB</li>
             <li>Auto-prompts the agent with OttoAuth setup instructions after startup</li>
           </ul>
           {!freeSelectable ? (
@@ -111,6 +117,7 @@ export function PlanStep({
           </p>
           <ul className="muted" style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
             <li>AWS ECS Fargate: 0.5 vCPU / 1 GB RAM</li>
+            <li>Persistent storage target: {paidStorageGb} GB</li>
             <li>No trial expiration deactivation</li>
             <li>Better for heavier MCP / media processing than free tier</li>
           </ul>

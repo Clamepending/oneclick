@@ -35,6 +35,7 @@ Critical keys:
 - `DATABASE_URL`
 - `HOST_POOL_JSON`
 - `OPENCLAW_IMAGE`
+- `PLAN_STORAGE_GB_FREE` / `PLAN_STORAGE_GB_PAID` (displayed plan storage targets; defaults `1` and `10`)
 
 Optional for background queue mode:
 

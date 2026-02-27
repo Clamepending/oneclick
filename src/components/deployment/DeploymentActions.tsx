@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { getPlanStorageGb } from "@/lib/plans";
 
 type Props = {
   deploymentId: string;
@@ -35,6 +36,8 @@ export function DeploymentActions({
   const [pairingCode, setPairingCode] = useState("");
   const [pairingResult, setPairingResult] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const isReady = status === "ready";
+  const freeStorageGb = getPlanStorageGb("free");
+  const paidStorageGb = getPlanStorageGb("paid");
   const [redeploySelection, setRedeploySelection] = useState<"free_basic" | "free_advanced" | "paid_basic">(
     planTier === "paid" ? "paid_basic" : !freeSelectable ? "paid_basic" : deploymentFlavor === "advanced" ? "free_advanced" : "free_basic",
   );
@@ -175,12 +178,12 @@ export function DeploymentActions({
                 style={{ minHeight: 34 }}
               >
                 <option value="free_basic" disabled={!freeSelectable}>
-                  Free (Basic) - Fargate 0.25 vCPU / 0.5 GB
+                  Free (Basic) - Fargate 0.25 vCPU / 0.5 GB - {freeStorageGb} GB storage
                 </option>
                 <option value="free_advanced" disabled={!freeSelectable}>
-                  Free (Advanced) - Fargate 0.25 vCPU / 0.5 GB
+                  Free (Advanced) - Fargate 0.25 vCPU / 0.5 GB - {freeStorageGb} GB storage
                 </option>
-                <option value="paid_basic">Paid (Basic) $20/mo - Fargate 0.5 vCPU / 1 GB</option>
+                <option value="paid_basic">Paid (Basic) $20/mo - Fargate 0.5 vCPU / 1 GB - {paidStorageGb} GB storage</option>
               </select>
             </label>
             <button

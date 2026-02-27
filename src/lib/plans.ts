@@ -54,3 +54,10 @@ export function getEcsPlanResources(plan: PlanTier) {
     memory: readTrimmed("ECS_TASK_MEMORY_FREE") || readTrimmed("ECS_TASK_MEMORY") || "2048",
   };
 }
+
+export function getPlanStorageGb(plan: PlanTier) {
+  if (plan === "paid") {
+    return Number(readTrimmed("PLAN_STORAGE_GB_PAID") || "10");
+  }
+  return Number(readTrimmed("PLAN_STORAGE_GB_FREE") || "1");
+}
