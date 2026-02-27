@@ -655,9 +655,12 @@ async function launchViaSsh(input: LaunchInput) {
   const launchTimeoutMs = Number(readTrimmedEnv("OPENCLAW_SSH_LAUNCH_TIMEOUT_MS") || "1800000");
   await runSshCommand(sshTarget, remoteScript, launchTimeoutMs);
   const runtimeDomain = buildRuntimeUrlFromDomain(input.runtimeSlugSource, input.userId);
-  if (runtimeDomain) {
-    await ensureCaddyRoute(sshTarget, runtimeDomain.fqdn, hostPort);
+  if (!runtimeDomain) {
+    throw new Error(
+      "Runtime domain is not configured. Set NEXT_PUBLIC_RUNTIME_BASE_DOMAIN so SSH deployments can publish HTTPS runtime URLs.",
+    );
   }
+  await ensureCaddyRoute(sshTarget, runtimeDomain.fqdn, hostPort);
 
   return {
     runtimeId: runtimeIdFromSsh(sshTarget, containerName, input.host?.vmId),
@@ -667,10 +670,7 @@ async function launchViaSsh(input: LaunchInput) {
     hostPort,
     startCommand,
     hostName: input.host?.name ?? "mock",
-    readyUrl: withGatewayToken(
-      runtimeDomain?.readyUrl ?? toReadyUrl(input.host, hostPort, input.deploymentId),
-      gatewayToken,
-    ),
+    readyUrl: withGatewayToken(runtimeDomain.readyUrl, gatewayToken),
   };
 }
 
