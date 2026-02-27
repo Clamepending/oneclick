@@ -235,8 +235,8 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
             "The runtime accepted deployment but is not serving the Control UI over HTTP yet.",
           );
         }
+        redirect(parsedReadyUrl.toString());
       }
-      redirect(parsedReadyUrl.toString());
     }
   }
 
