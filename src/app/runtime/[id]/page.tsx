@@ -209,14 +209,21 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
     return renderPlaceholder(id, "Deployment not found.");
   }
 
+  const readyUrl = deployment.ready_url?.trim();
   if (deployment.status === "failed" || deployment.status === "stopped") {
+    if (readyUrl) {
+      return renderRuntimeUnavailable(
+        id,
+        readyUrl,
+        deployment.error || "This deployment is no longer active.",
+      );
+    }
     return renderPlaceholder(
       id,
       deployment.error || "This deployment is no longer active.",
     );
   }
 
-  const readyUrl = deployment.ready_url?.trim();
   if (readyUrl) {
     let parsedReadyUrl: URL | null = null;
     try {
