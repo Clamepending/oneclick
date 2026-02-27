@@ -182,6 +182,65 @@ async function probeSshLocalPort(sshTarget: string, port: number) {
   });
 }
 
+async function probeSshContainerRunning(sshTarget: string, containerName: string) {
+  const privateKeyRaw = process.env.DEPLOY_SSH_PRIVATE_KEY?.trim();
+  if (!privateKeyRaw) {
+    throw new Error("DEPLOY_SSH_PRIVATE_KEY is required for SSH runtime health checks.");
+  }
+  const privateKey = privateKeyRaw.replace(/\\n/g, "\n");
+  const timeoutMs = Number(process.env.OPENCLAW_SSH_TIMEOUT_MS ?? "120000");
+  const { user, host } = parseUserAndHost(sshTarget);
+  const safeContainer = containerName.replace(/"/g, '\\"');
+  const command = `docker inspect -f '{{.State.Running}}' \"${safeContainer}\" 2>/dev/null || true`;
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const conn = new Client();
+    const timer = setTimeout(() => {
+      finish(new Error(`SSH container probe timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      conn.end();
+      if (error) reject(error);
+      else resolve();
+    };
+
+    conn
+      .on("ready", () => {
+        conn.exec(command, (execErr, stream) => {
+          if (execErr) {
+            finish(execErr);
+            return;
+          }
+          let stdout = "";
+          let stderr = "";
+          stream.on("data", (data: Buffer) => {
+            stdout += data.toString("utf8");
+          });
+          stream.stderr.on("data", (data: Buffer) => {
+            stderr += data.toString("utf8");
+          });
+          stream.on("close", () => {
+            const running = stdout.trim().toLowerCase() === "true";
+            if (running) finish();
+            else finish(new Error(stderr || "SSH container probe: container is not running"));
+          });
+        });
+      })
+      .on("error", (error) => finish(error))
+      .connect({
+        host,
+        username: user,
+        privateKey,
+        readyTimeout: timeoutMs,
+      });
+  });
+}
+
 async function resolveEcsPublicIp(ecsClient: ECSClient, ec2Client: EC2Client, input: { cluster: string; serviceName: string }) {
   const tasks = await ecsClient.send(
     new ListTasksCommand({
@@ -223,7 +282,7 @@ async function waitForRuntimeReady(input: {
   deployProvider: string | null;
   runtimeId: string;
 }) {
-  const defaultStartupTimeoutMs = Number(readTrimmedEnv("OPENCLAW_STARTUP_TIMEOUT_MS") || "120000");
+  const defaultStartupTimeoutMs = Number(readTrimmedEnv("OPENCLAW_STARTUP_TIMEOUT_MS") || "600000");
   const pollIntervalMs = 3000;
   const parsedEcsRuntime = input.deployProvider === "ecs" ? parseEcsRuntimeId(input.runtimeId) : null;
   if (parsedEcsRuntime) {
@@ -289,6 +348,7 @@ async function waitForRuntimeReady(input: {
   while (Date.now() < deadline) {
     try {
       if (parsedSshRuntime) {
+        await probeSshContainerRunning(parsedSshRuntime.sshTarget, parsedSshRuntime.containerName);
         await probeSshLocalPort(parsedSshRuntime.sshTarget, port);
       } else {
         await probeTcpPort(host, port);
