@@ -4,8 +4,8 @@ import { getPlanStorageGb } from "@/lib/plans";
 
 type Props = {
   planTier: "free" | "paid";
-  deploymentFlavor: "basic" | "advanced" | "lightsail";
-  onSelectionChange: (selection: { planTier: "free" | "paid"; deploymentFlavor: "basic" | "advanced" | "lightsail" }) => void;
+  deploymentFlavor: "basic" | "advanced" | "do_vm";
+  onSelectionChange: (selection: { planTier: "free" | "paid"; deploymentFlavor: "basic" | "advanced" | "do_vm" }) => void;
   onDeploy: () => void;
   loading: boolean;
   hasApiKey: boolean;
@@ -26,7 +26,7 @@ export function PlanStep({
   freeActiveLimit = 1,
 }: Props) {
   const selectedMode =
-    planTier === "paid" ? "paid_basic" : deploymentFlavor === "advanced" ? "free_advanced" : deploymentFlavor === "lightsail" ? "free_do_vm" : "free_basic";
+    planTier === "paid" ? "paid_basic" : deploymentFlavor === "advanced" ? "free_advanced" : deploymentFlavor === "do_vm" ? "free_do_vm" : "free_basic";
   const freeStorageGb = getPlanStorageGb("free");
   const paidStorageGb = getPlanStorageGb("paid");
 
@@ -38,7 +38,7 @@ export function PlanStep({
         <button
           type="button"
           disabled={!freeSelectable}
-          onClick={() => onSelectionChange({ planTier: "free", deploymentFlavor: "lightsail" })}
+          onClick={() => onSelectionChange({ planTier: "free", deploymentFlavor: "do_vm" })}
           style={{
             textAlign: "left",
             border: `1px solid ${selectedMode === "free_do_vm" && freeSelectable ? "var(--border-strong)" : "var(--border)"}`,
@@ -166,7 +166,7 @@ export function PlanStep({
           ? "Starting..."
           : planTier === "paid"
             ? "Start Paid (Basic) Deploy ($20/mo)"
-            : deploymentFlavor === "lightsail"
+            : deploymentFlavor === "do_vm"
               ? "Start Free (DigitalOcean VM) Deploy"
             : deploymentFlavor === "advanced"
               ? "Start Free (Advanced) Deploy"

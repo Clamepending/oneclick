@@ -78,6 +78,8 @@ export async function ensureSchema() {
   await pool.query(`ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMPTZ;`);
   await pool.query(`ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS trial_expires_at TIMESTAMPTZ;`);
   await pool.query(`ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS deployment_flavor TEXT NOT NULL DEFAULT 'basic';`);
+  await pool.query(`UPDATE deployments SET deployment_flavor = 'do_vm' WHERE deployment_flavor = 'lightsail';`);
+  await pool.query(`UPDATE onboarding_sessions SET deployment_flavor = 'do_vm' WHERE deployment_flavor = 'lightsail';`);
 
   await pool.query(`
     CREATE INDEX IF NOT EXISTS deployments_user_id_idx ON deployments (user_id);

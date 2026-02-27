@@ -86,8 +86,8 @@ function readTrimmedEnv(name: string) {
 }
 
 function resolveProviderForDeployment(defaultProvider: string, deploymentFlavor: DeploymentFlavor) {
-  if (deploymentFlavor === "lightsail") {
-    return readTrimmedEnv("DEPLOY_PROVIDER_LIGHTSAIL") || "ssh";
+  if (deploymentFlavor === "do_vm") {
+    return readTrimmedEnv("DEPLOY_PROVIDER_DO_VM") || readTrimmedEnv("DEPLOY_PROVIDER_LIGHTSAIL") || "ssh";
   }
   return defaultProvider;
 }
@@ -344,7 +344,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
   const provider = resolveProviderForDeployment(defaultProvider, selectedDeploymentFlavor);
   const providerRequiresHost = provider === "ssh" || provider === "mock";
 
-  if (selectedDeploymentFlavor === "lightsail") {
+  if (selectedDeploymentFlavor === "do_vm") {
     const currentHostRow = await pool.query<{ host_name: string | null; status: string }>(
       `SELECT host_name, status FROM deployments WHERE id = $1 LIMIT 1`,
       [job.deploymentId],
@@ -396,7 +396,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
   let host: Awaited<ReturnType<typeof selectHost>> | undefined;
   let dedicatedVmId: string | null = null;
   if (providerRequiresHost) {
-    if (selectedDeploymentFlavor === "lightsail") {
+    if (selectedDeploymentFlavor === "do_vm") {
       await appendEvent(job.deploymentId, "starting", "Provisioning dedicated VM host");
       host = await createDedicatedSshHost({ deploymentId: job.deploymentId, userId: job.userId });
       dedicatedVmId = host.vmId?.trim() || null;

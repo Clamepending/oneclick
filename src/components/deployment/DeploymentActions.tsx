@@ -11,7 +11,7 @@ type Props = {
   compact?: boolean;
   botName?: string | null;
   planTier?: "free" | "paid";
-  deploymentFlavor?: "basic" | "advanced" | "lightsail";
+  deploymentFlavor?: "basic" | "advanced" | "do_vm";
   freeSelectable?: boolean;
   freeActiveDeployments?: number;
   freeActiveLimit?: number;

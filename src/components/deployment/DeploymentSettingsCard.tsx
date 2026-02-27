@@ -7,7 +7,7 @@ type Props = {
   deploymentId: string;
   botName?: string | null;
   planTier?: "free" | "paid" | null;
-  deploymentFlavor?: "basic" | "advanced" | "lightsail" | null;
+  deploymentFlavor?: "basic" | "advanced" | "do_vm" | null;
   hasOpenaiApiKey: boolean;
   hasAnthropicApiKey: boolean;
   hasOpenrouterApiKey: boolean;
@@ -83,8 +83,8 @@ export function DeploymentSettingsCard({
                 ? "basic"
                 : deploymentFlavor === "advanced"
                   ? "advanced"
-                  : deploymentFlavor === "lightsail"
-                    ? "lightsail"
+                  : deploymentFlavor === "do_vm"
+                    ? "do_vm"
                     : "basic",
           }),
         });

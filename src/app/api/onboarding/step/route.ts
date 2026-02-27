@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
+import { normalizeDeploymentFlavor } from "@/lib/plans";
 
 const stepPayload = z.object({
   step: z.number().min(1).max(3),
@@ -11,7 +12,7 @@ const stepPayload = z.object({
   modelProvider: z.enum(["openai", "anthropic"]).nullable().optional(),
   modelApiKey: z.string().trim().min(1).max(200).nullable().optional(),
   plan: z.enum(["free", "paid"]).optional(),
-  deploymentFlavor: z.enum(["basic", "advanced", "lightsail"]).optional(),
+  deploymentFlavor: z.enum(["basic", "advanced", "do_vm", "lightsail"]).optional(),
 });
 
 export async function POST(request: Request) {
@@ -28,6 +29,7 @@ export async function POST(request: Request) {
 
     const { step, botName, channel, telegramBotToken, modelProvider, modelApiKey, plan, deploymentFlavor } =
       parsed.data;
+    const normalizedFlavor = deploymentFlavor ? normalizeDeploymentFlavor(deploymentFlavor) : null;
     await ensureSchema();
 
     await pool.query(
@@ -57,7 +59,7 @@ export async function POST(request: Request) {
         modelProvider ?? null,
         modelApiKey ?? null,
         plan ?? null,
-        deploymentFlavor ?? null,
+        normalizedFlavor,
         step,
         session.user.email,
       ],
