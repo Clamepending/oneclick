@@ -56,6 +56,16 @@ export function DeploymentActions({
     return `ssh ${sshTarget} 'docker exec -it "${escapedContainer}" sh'`;
   }
 
+  function buildSshDeepLink() {
+    const raw = runtimeId?.trim();
+    if (!raw || !raw.startsWith("ssh:")) return null;
+    const body = raw.slice(4);
+    const parts = body.split("|");
+    const sshTarget = parts[0]?.trim();
+    if (!sshTarget) return null;
+    return `ssh://${sshTarget}`;
+  }
+
   async function handleRedeploy() {
     setError("");
     setIsRedeploying(true);
@@ -186,14 +196,30 @@ export function DeploymentActions({
     <div style={{ display: "grid", gap: 8 }}>
       <div className="row" style={compact ? { gap: 8 } : undefined}>
         {isSshRuntime ? (
-          <button
-            className="button secondary"
-            type="button"
-            onClick={() => void handleCopySshCommand()}
-            disabled={isRedeploying || isDeleting || isUpgrading}
-          >
-            Copy SSH command
-          </button>
+          <>
+            {buildSshDeepLink() ? (
+              <a
+                className="button secondary"
+                href={buildSshDeepLink() ?? undefined}
+                aria-disabled={isRedeploying || isDeleting || isUpgrading}
+                onClick={(event) => {
+                  if (isRedeploying || isDeleting || isUpgrading) {
+                    event.preventDefault();
+                  }
+                }}
+              >
+                Open VM SSH
+              </a>
+            ) : null}
+            <button
+              className="button secondary"
+              type="button"
+              onClick={() => void handleCopySshCommand()}
+              disabled={isRedeploying || isDeleting || isUpgrading}
+            >
+              Copy SSH command
+            </button>
+          </>
         ) : null}
         {isReady ? (
           <>
