@@ -768,16 +768,18 @@ async function launchViaEcs(input: LaunchInput) {
         );
       }
       scriptSteps.push(
-        "node /app/dist/index.js config set gateway.bind lan",
-        `node /app/dist/index.js config set gateway.auth.token ${shellQuote(gatewayToken)}`,
+        "node /app/dist/index.js config set gateway.bind lan || true",
+        `node /app/dist/index.js config set gateway.auth.token ${shellQuote(gatewayToken)} || true`,
       );
       if (input.telegramBotToken?.trim()) {
-        scriptSteps.push("node /app/dist/index.js config set plugins.entries.telegram.enabled true");
+        scriptSteps.push(
+          "node /app/dist/index.js config set channels.telegram.enabled true || node /app/dist/index.js config set plugins.entries.telegram.enabled true || true",
+        );
       }
       if (shouldAllowInsecureControlUi()) {
         scriptSteps.push(
-          "node /app/dist/index.js config set gateway.controlUi.allowInsecureAuth true",
-          "node /app/dist/index.js config set gateway.controlUi.dangerouslyDisableDeviceAuth true",
+          "node /app/dist/index.js config set gateway.controlUi.allowInsecureAuth true || true",
+          "node /app/dist/index.js config set gateway.controlUi.dangerouslyDisableDeviceAuth true || true",
         );
       }
       if (onboardCommand) {
@@ -785,15 +787,22 @@ async function launchViaEcs(input: LaunchInput) {
           // Subsidy mode relies on env-based OpenAI-compatible auth; onboarding is memory-heavy and can OOM free-tier tasks.
           scriptSteps.push("echo '[oneclick] skipping onboard bootstrap for subsidy fallback' >&2");
         } else {
-          scriptSteps.push(onboardCommand);
-          if (shouldAllowInsecureControlUi()) {
-            // `onboard` rewrites config and can reset controlUi flags; re-apply after onboarding.
-            scriptSteps.push(
-              "echo '[oneclick] reapply control UI auth flags after onboard' >&2",
-              "node /app/dist/index.js config set gateway.controlUi.allowInsecureAuth true",
-              "node /app/dist/index.js config set gateway.controlUi.dangerouslyDisableDeviceAuth true",
-            );
-          }
+          // Keep gateway startup fast/reliable; run onboarding asynchronously so failures do not block container readiness.
+          scriptSteps.push(
+            "echo '[oneclick] starting onboarding in background' >&2",
+            [
+              "( ",
+              `${onboardCommand} >/tmp/oneclick-onboard.log 2>&1 || true;`,
+              ...(shouldAllowInsecureControlUi()
+                ? [
+                    "echo '[oneclick] reapply control UI auth flags after onboard' >&2;",
+                    "node /app/dist/index.js config set gateway.controlUi.allowInsecureAuth true || true;",
+                    "node /app/dist/index.js config set gateway.controlUi.dangerouslyDisableDeviceAuth true || true;",
+                  ]
+                : []),
+              " ) &",
+            ].join(" "),
+          );
         }
       }
       if (deploymentFlavor === "advanced") {
