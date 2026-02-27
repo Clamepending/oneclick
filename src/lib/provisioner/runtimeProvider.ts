@@ -743,7 +743,9 @@ async function launchViaSsh(input: LaunchInput) {
   const setTelegramPluginConfig =
     isOpenClawRuntime &&
     (readTrimmedEnv("OPENCLAW_SSH_SET_TELEGRAM_PLUGIN_CONFIG") || "false").toLowerCase() === "true";
-  const runtimeLlmApiKey = openaiApiKey || openrouterApiKey || anthropicApiKey || subsidyProxyToken;
+  const simpleAgentOpenAiApiKey = openaiApiKey;
+  const simpleAgentAnthropicApiKey = anthropicApiKey;
+  const simpleAgentGoogleApiKey = "";
   const simpleAgentLlmUrl = readTrimmedEnv("SIMPLE_AGENT_LLM_URL");
   const resolvedSimpleAgentLlmUrl = simpleAgentLlmUrl || subsidyProxyBaseUrl;
   const shouldBuildSimpleAgent = !isOpenClawRuntime && shouldBuildSimpleAgentImage();
@@ -751,10 +753,12 @@ async function launchViaSsh(input: LaunchInput) {
   const simpleAgentRuntimeArgs = [
     `-e TELEGRAM_ENABLED=${telegramEnabled}`,
     telegramBotToken ? `-e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : "",
-    runtimeLlmApiKey ? `-e ADMINAGENT_LLM_API_KEY=${shellQuote(runtimeLlmApiKey)}` : "",
+    simpleAgentOpenAiApiKey ? `-e ADMINAGENT_LLM_API_KEY=${shellQuote(simpleAgentOpenAiApiKey)}` : "",
     resolvedSimpleAgentLlmUrl ? `-e ADMINAGENT_LLM_URL=${shellQuote(resolvedSimpleAgentLlmUrl)}` : "",
-    // Keep compatibility with agents that still read OpenAI-style env names.
-    runtimeLlmApiKey ? `-e OPENAI_API_KEY=${shellQuote(runtimeLlmApiKey)}` : "",
+    // Latest AdminAgent stores/reads provider keys from these env vars.
+    simpleAgentOpenAiApiKey ? `-e OPENAI_API_KEY=${shellQuote(simpleAgentOpenAiApiKey)}` : "",
+    simpleAgentAnthropicApiKey ? `-e ANTHROPIC_API_KEY=${shellQuote(simpleAgentAnthropicApiKey)}` : "",
+    simpleAgentGoogleApiKey ? `-e GOOGLE_API_KEY=${shellQuote(simpleAgentGoogleApiKey)}` : "",
     resolvedSimpleAgentLlmUrl ? `-e OPENAI_BASE_URL=${shellQuote(resolvedSimpleAgentLlmUrl)}` : "",
     resolvedSimpleAgentLlmUrl ? `-e OPENAI_API_BASE=${shellQuote(resolvedSimpleAgentLlmUrl)}` : "",
     `-e PORT=${containerPort}`,
