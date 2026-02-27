@@ -31,6 +31,9 @@ export function DeploymentActions({
   const [isRedeploying, setIsRedeploying] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isUpgrading, setIsUpgrading] = useState(false);
+  const [isApprovingPairing, setIsApprovingPairing] = useState(false);
+  const [pairingCode, setPairingCode] = useState("");
+  const [pairingResult, setPairingResult] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const isReady = status === "ready";
   const [redeploySelection, setRedeploySelection] = useState<"free_basic" | "free_advanced" | "paid_basic">(
     planTier === "paid" ? "paid_basic" : !freeSelectable ? "paid_basic" : deploymentFlavor === "advanced" ? "free_advanced" : "free_basic",
@@ -108,6 +111,38 @@ export function DeploymentActions({
     }
   }
 
+  async function handleApproveTelegramPairing() {
+    const code = pairingCode.trim().toUpperCase();
+    if (!code) {
+      setPairingResult({ type: "error", message: "Enter a pairing code." });
+      return;
+    }
+
+    setError("");
+    setPairingResult(null);
+    setIsApprovingPairing(true);
+    try {
+      const response = await fetch(`/api/deployments/${deploymentId}/pairing/telegram`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const payload = (await response.json()) as { ok?: boolean; message?: string; error?: string };
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || "Failed to approve pairing code");
+      }
+      setPairingCode("");
+      setPairingResult({ type: "success", message: payload.message || "Telegram pairing approved." });
+    } catch (err) {
+      setPairingResult({
+        type: "error",
+        message: err instanceof Error ? err.message : "Failed to approve pairing code",
+      });
+    } finally {
+      setIsApprovingPairing(false);
+    }
+  }
+
   return (
     <div style={{ display: "grid", gap: 8 }}>
       <div className="row" style={compact ? { gap: 8 } : undefined}>
@@ -177,6 +212,43 @@ export function DeploymentActions({
         <p style={{ color: "#ff8e8e", margin: 0 }} role="alert">
           {error}
         </p>
+      ) : null}
+      {isReady ? (
+        <div style={{ display: "grid", gap: 6 }}>
+          <p className="muted" style={{ margin: 0 }}>
+            Telegram pairing: paste a code from Telegram and OneClick will approve it for this runtime.
+          </p>
+          <div className="row" style={{ gap: 8 }}>
+            <input
+              type="text"
+              value={pairingCode}
+              onChange={(event) => setPairingCode(event.target.value.toUpperCase())}
+              placeholder="Pairing code (example: D4UQDC2X)"
+              inputMode="text"
+              autoCapitalize="characters"
+              spellCheck={false}
+              maxLength={24}
+              disabled={isApprovingPairing || isRedeploying || isDeleting || isUpgrading}
+              style={{ minHeight: 34, minWidth: 220 }}
+            />
+            <button
+              className="button secondary"
+              type="button"
+              onClick={() => void handleApproveTelegramPairing()}
+              disabled={isApprovingPairing || isRedeploying || isDeleting || isUpgrading}
+            >
+              {isApprovingPairing ? "Approving..." : "Approve Telegram code"}
+            </button>
+          </div>
+          {pairingResult ? (
+            <p
+              style={{ color: pairingResult.type === "success" ? "#90e6a8" : "#ff8e8e", margin: 0 }}
+              role={pairingResult.type === "error" ? "alert" : undefined}
+            >
+              {pairingResult.message}
+            </p>
+          ) : null}
+        </div>
       ) : null}
       {!freeSelectable ? (
         <p className="muted" style={{ margin: 0 }}>
