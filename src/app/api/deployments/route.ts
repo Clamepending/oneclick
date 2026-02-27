@@ -399,8 +399,6 @@ export async function POST(request: Request) {
     const telegramBotToken = onboarding.rows[0]?.telegram_bot_token?.trim() || null;
     const selectedPlan = "free";
     const selectedDeploymentFlavor = "do_vm";
-    const trialStartedAt: Date | null = null;
-    const trialExpiresAt: Date | null = null;
     const reservation = await reserveBotIdentity(session.user.email, botName);
     if (!reservation.ok) {
       return NextResponse.json({ ok: false, error: reservation.error }, { status: 409 });
@@ -411,13 +409,11 @@ export async function POST(request: Request) {
      SET plan = $1,
          trial_started_at = NULL,
          trial_expires_at = NULL,
-         deployment_flavor = $4,
+         deployment_flavor = $2,
          updated_at = NOW()
-     WHERE user_id = $5`,
+     WHERE user_id = $3`,
     [
       selectedPlan,
-      null,
-      null,
       selectedDeploymentFlavor,
       session.user.email,
     ],
