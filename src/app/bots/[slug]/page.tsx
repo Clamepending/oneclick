@@ -193,6 +193,8 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
                   <DeploymentActions
                     deploymentId={deployment.id}
                     status={deployment.status}
+                    runtimeId={deployment.runtime_id}
+                    deployProvider={deployment.deploy_provider}
                     compact
                     botName={deployment.bot_name}
                     planTier={deployment.plan_tier === "paid" ? "paid" : "free"}

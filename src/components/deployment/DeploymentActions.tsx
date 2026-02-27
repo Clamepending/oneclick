@@ -7,6 +7,8 @@ import { getPlanStorageGb } from "@/lib/plans";
 type Props = {
   deploymentId: string;
   status?: "queued" | "starting" | "ready" | "failed" | "stopped" | "deactivated";
+  runtimeId?: string | null;
+  deployProvider?: string | null;
   compact?: boolean;
   botName?: string | null;
   planTier?: "free" | "paid";
@@ -19,6 +21,8 @@ type Props = {
 export function DeploymentActions({
   deploymentId,
   status,
+  runtimeId,
+  deployProvider,
   compact = false,
   botName,
   planTier = "free",
@@ -35,6 +39,7 @@ export function DeploymentActions({
   const [isApprovingPairing, setIsApprovingPairing] = useState(false);
   const [pairingCode, setPairingCode] = useState("");
   const [pairingResult, setPairingResult] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [sshCommandMessage, setSshCommandMessage] = useState("");
   const isReady = status === "ready";
   const freeStorageGb = getPlanStorageGb("free");
   const paidStorageGb = getPlanStorageGb("paid");
@@ -51,6 +56,17 @@ export function DeploymentActions({
   );
 
   const canDelete = status !== "deactivated";
+  const isSshRuntime = (deployProvider ?? "").trim() === "ssh";
+
+  function buildSshCommand() {
+    const raw = runtimeId?.trim();
+    if (!raw || !raw.startsWith("ssh:")) return null;
+    const body = raw.slice(4);
+    const [sshTarget, containerName] = body.split("|");
+    if (!sshTarget || !containerName) return null;
+    const escapedContainer = containerName.replace(/"/g, '\\"');
+    return `ssh ${sshTarget} 'docker exec -it "${escapedContainer}" sh'`;
+  }
 
   async function handleRedeploy() {
     setError("");
@@ -169,9 +185,33 @@ export function DeploymentActions({
     }
   }
 
+  async function handleCopySshCommand() {
+    const command = buildSshCommand();
+    if (!command) {
+      setSshCommandMessage("SSH command unavailable for this deployment.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(command);
+      setSshCommandMessage("SSH command copied.");
+    } catch {
+      setSshCommandMessage("Could not copy command. Clipboard permissions may be blocked.");
+    }
+  }
+
   return (
     <div style={{ display: "grid", gap: 8 }}>
       <div className="row" style={compact ? { gap: 8 } : undefined}>
+        {isSshRuntime ? (
+          <button
+            className="button secondary"
+            type="button"
+            onClick={() => void handleCopySshCommand()}
+            disabled={isRedeploying || isDeleting || isUpgrading}
+          >
+            Copy SSH command
+          </button>
+        ) : null}
         {isReady ? (
           <>
             <label className="muted" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -242,6 +282,11 @@ export function DeploymentActions({
       {error ? (
         <p style={{ color: "#ff8e8e", margin: 0 }} role="alert">
           {error}
+        </p>
+      ) : null}
+      {sshCommandMessage ? (
+        <p className="muted" style={{ margin: 0 }}>
+          {sshCommandMessage}
         </p>
       ) : null}
       {isReady ? (

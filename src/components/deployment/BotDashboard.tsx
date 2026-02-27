@@ -305,6 +305,8 @@ export function BotDashboard({ deployments }: Props) {
                 <DeploymentActions
                   deploymentId={deployment.id}
                   status={deployment.status}
+                  runtimeId={deployment.runtimeId}
+                  deployProvider={deployment.deployProvider}
                   compact
                   botName={deployment.botName}
                   planTier={deployment.planTier === "paid" ? "paid" : "free"}

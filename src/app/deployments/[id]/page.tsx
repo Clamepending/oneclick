@@ -220,6 +220,8 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
           <DeploymentActions
             deploymentId={deployment.id}
             status={deployment.status}
+            runtimeId={deployment.runtimeId}
+            deployProvider={deployment.deployProvider}
             botName={deployment.botName}
             planTier={deployment.planTier === "paid" ? "paid" : "free"}
             deploymentFlavor={normalizeDeploymentFlavor(deployment.deploymentFlavor)}
