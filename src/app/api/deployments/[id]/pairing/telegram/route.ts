@@ -46,6 +46,7 @@ async function approveTelegramPairingViaEcs(input: {
   userId: string;
   deploymentId: string;
   code: string;
+  waitMs?: number;
 }) {
   const parsed = parseEcsRuntimeId(input.runtimeId);
   if (!parsed) {
@@ -141,24 +142,26 @@ async function approveTelegramPairingViaEcs(input: {
 
   let helperExitCode: number | null = null;
   let helperReason = "";
-  const timeoutMs = Number(readTrimmedEnv("TELEGRAM_PAIRING_HELPER_TIMEOUT_MS") || "180000");
+  const timeoutMs = Math.max(0, input.waitMs ?? Number(readTrimmedEnv("TELEGRAM_PAIRING_HELPER_TIMEOUT_MS") || "15000"));
   const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    const described = await ecs.send(
-      new DescribeTasksCommand({
-        cluster: parsed.cluster,
-        tasks: [taskArn],
-      }),
-    );
-    const task = described.tasks?.[0];
-    if (!task) break;
-    if (task.lastStatus === "STOPPED") {
-      const container = task.containers?.find((entry) => entry.name === containerName);
-      helperExitCode = container?.exitCode ?? null;
-      helperReason = container?.reason || task.stoppedReason || "";
-      break;
+  if (timeoutMs > 0) {
+    while (Date.now() - startedAt < timeoutMs) {
+      const described = await ecs.send(
+        new DescribeTasksCommand({
+          cluster: parsed.cluster,
+          tasks: [taskArn],
+        }),
+      );
+      const task = described.tasks?.[0];
+      if (!task) break;
+      if (task.lastStatus === "STOPPED") {
+        const container = task.containers?.find((entry) => entry.name === containerName);
+        helperExitCode = container?.exitCode ?? null;
+        helperReason = container?.reason || task.stoppedReason || "";
+        break;
+      }
+      await sleep(1000);
     }
-    await sleep(1000);
   }
 
   const taskId = taskArn.split("/").pop();
@@ -188,6 +191,7 @@ async function approveTelegramPairingViaEcs(input: {
   const timedOut = helperExitCode === null;
 
   return {
+    taskArn,
     approved,
     noPending,
     timedOut,
@@ -245,21 +249,13 @@ export async function POST(
   }
 
   try {
-    let result = await approveTelegramPairingViaEcs({
+    const result = await approveTelegramPairingViaEcs({
       runtimeId: deployment.runtime_id,
       userId: deployment.user_id,
       deploymentId: deployment.id,
       code: payloadResult.data.code,
+      waitMs: Number(readTrimmedEnv("TELEGRAM_PAIRING_WAIT_SYNC_MS") || "15000"),
     });
-    if (result.timedOut) {
-      // ECS can take a while to place ad-hoc tasks; retry once before surfacing a timeout.
-      result = await approveTelegramPairingViaEcs({
-        runtimeId: deployment.runtime_id,
-        userId: deployment.user_id,
-        deploymentId: deployment.id,
-        code: payloadResult.data.code,
-      });
-    }
 
     if (result.approved) {
       return NextResponse.json({ ok: true, message: "Telegram pairing approved." });
@@ -272,8 +268,13 @@ export async function POST(
     }
     if (result.timedOut) {
       return NextResponse.json(
-        { ok: false, error: "Pairing helper timed out while waiting for ECS task execution. Please retry." },
-        { status: 504 },
+        {
+          ok: true,
+          pending: true,
+          taskArn: result.taskArn,
+          message: "Approval queued. ECS is still starting the helper task; this can take 2-3 minutes.",
+        },
+        { status: 202 },
       );
     }
 
