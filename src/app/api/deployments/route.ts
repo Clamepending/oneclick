@@ -4,6 +4,7 @@ import { ensureSchema, pool } from "@/lib/db";
 import {
   normalizeDeploymentFlavor,
   normalizePlanTier,
+  type DeploymentFlavor,
 } from "@/lib/plans";
 import { getRuntimeBaseDomain } from "@/lib/subdomainConfig";
 import { deactivateExpiredFreeTrialsForUser } from "@/lib/trialEnforcement";
@@ -129,7 +130,7 @@ async function readDeployRequest(request: Request) {
       ok: true as const,
       botName: null as string | null,
       planTier: null as "free" | "paid" | null,
-      deploymentFlavor: null as "do_vm" | null,
+      deploymentFlavor: null as DeploymentFlavor | null,
     };
   }
 
@@ -141,7 +142,7 @@ async function readDeployRequest(request: Request) {
       ok: true as const,
       botName: null as string | null,
       planTier: null as "free" | "paid" | null,
-      deploymentFlavor: null as "do_vm" | null,
+      deploymentFlavor: null as DeploymentFlavor | null,
     };
   }
   if (payload.botName !== undefined && typeof payload.botName !== "string") {
@@ -398,7 +399,10 @@ export async function POST(request: Request) {
     const anthropicApiKey = modelProvider === "anthropic" ? modelApiKey : null;
     const telegramBotToken = onboarding.rows[0]?.telegram_bot_token?.trim() || null;
     const selectedPlan = "free";
-    const selectedDeploymentFlavor = "do_vm";
+    const selectedDeploymentFlavor =
+      parsedPayload.deploymentFlavor ??
+      normalizeDeploymentFlavor(onboarding.rows[0]?.deployment_flavor) ??
+      "simple_agent_free";
     const reservation = await reserveBotIdentity(session.user.email, botName);
     if (!reservation.ok) {
       return NextResponse.json({ ok: false, error: reservation.error }, { status: 409 });
@@ -450,7 +454,9 @@ export async function POST(request: Request) {
      VALUES ($1, 'queued', $2)`,
     [
       deploymentId,
-      "DigitalOcean VM mode selected: dedicated VM per deployment.",
+      selectedDeploymentFlavor === "deploy_openclaw_free"
+        ? "Selected deployment type: Deploy OpenClaw (Free)."
+        : "Selected deployment type: Simple Agent (Free).",
     ],
   );
 

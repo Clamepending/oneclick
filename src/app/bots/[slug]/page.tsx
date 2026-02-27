@@ -172,7 +172,7 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
                     {deployment.status === "ready" && deployment.ready_url ? (
                       <>
                         <a className="button" href={deployment.ready_url} target="_blank" rel="noreferrer">
-                          Open OpenClaw
+                          Open UI
                         </a>
                         {deployment.deploy_provider === "ecs" ? (
                           <p className="muted" style={{ margin: 0 }}>

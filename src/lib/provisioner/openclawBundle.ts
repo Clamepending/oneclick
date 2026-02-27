@@ -1,3 +1,5 @@
+import { normalizeDeploymentFlavor, type DeploymentFlavor } from "@/lib/plans";
+
 function readEnv(name: string) {
   const raw = process.env[name];
   if (!raw) return "";
@@ -62,4 +64,39 @@ export function getOpenClawStartCommand() {
 
 export function shouldAllowInsecureControlUi() {
   return readBool("OPENCLAW_ALLOW_INSECURE_CONTROL_UI", true);
+}
+
+export function getSimpleAgentImage() {
+  return readEnv("SIMPLE_AGENT_IMAGE") || "oneclick/adminagent:main";
+}
+
+export function getSimpleAgentPort() {
+  return Number(readEnv("SIMPLE_AGENT_CONTAINER_PORT") || "18789");
+}
+
+export function getSimpleAgentStartCommand() {
+  return readEnv("SIMPLE_AGENT_START_COMMAND") || "";
+}
+
+export function getSimpleAgentBuildRepo() {
+  return readEnv("SIMPLE_AGENT_BUILD_REPO") || "https://github.com/Clamepending/adminagent.git#main";
+}
+
+export function shouldBuildSimpleAgentImage() {
+  return readBool("SIMPLE_AGENT_BUILD_ON_HOST", true);
+}
+
+export function getRuntimeImage(flavor: DeploymentFlavor | null | undefined) {
+  const normalized = normalizeDeploymentFlavor(flavor);
+  return normalized === "deploy_openclaw_free" ? getOpenClawImage() : getSimpleAgentImage();
+}
+
+export function getRuntimePort(flavor: DeploymentFlavor | null | undefined) {
+  const normalized = normalizeDeploymentFlavor(flavor);
+  return normalized === "deploy_openclaw_free" ? getOpenClawPort() : getSimpleAgentPort();
+}
+
+export function getRuntimeStartCommand(flavor: DeploymentFlavor | null | undefined) {
+  const normalized = normalizeDeploymentFlavor(flavor);
+  return normalized === "deploy_openclaw_free" ? getOpenClawStartCommand() : getSimpleAgentStartCommand();
 }

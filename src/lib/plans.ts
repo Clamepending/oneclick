@@ -1,5 +1,5 @@
 export type PlanTier = "free" | "paid";
-export type DeploymentFlavor = "do_vm";
+export type DeploymentFlavor = "simple_agent_free" | "deploy_openclaw_free";
 
 export const FREE_TRIAL_DAYS = 30;
 export const PAID_MONTHLY_PRICE_CENTS = 2000;
@@ -9,8 +9,13 @@ export function normalizePlanTier(value: string | null | undefined): PlanTier {
 }
 
 export function normalizeDeploymentFlavor(value: string | null | undefined): DeploymentFlavor {
-  void value;
-  return "do_vm";
+  const normalized = value?.trim().toLowerCase() || "";
+  if (normalized === "simple_agent_free") return "simple_agent_free";
+  if (normalized === "deploy_openclaw_free") return "deploy_openclaw_free";
+  if (normalized === "do_vm" || normalized === "basic" || normalized === "lightsail") {
+    return "deploy_openclaw_free";
+  }
+  return "simple_agent_free";
 }
 
 export function planDisplayName(plan: PlanTier) {
@@ -19,8 +24,7 @@ export function planDisplayName(plan: PlanTier) {
 
 export function deploymentModeDisplayName(plan: PlanTier, flavor: DeploymentFlavor) {
   void plan;
-  void flavor;
-  return "DigitalOcean VM (Standard)";
+  return flavor === "deploy_openclaw_free" ? "Deploy OpenClaw (Free)" : "Simple Agent (Free)";
 }
 
 export function planPriceLabel(plan: PlanTier) {

@@ -35,7 +35,7 @@ export default async function HomePage() {
       <main className="container">
         <div className="card">
           <h1>Sign in</h1>
-          <p className="muted">Use Google to view and manage your OpenClaw containers.</p>
+          <p className="muted">Use Google to view and manage your deployed agent runtimes.</p>
           <form
             action={async () => {
               "use server";
@@ -106,7 +106,7 @@ export default async function HomePage() {
             Start new deployment
           </Link>
         </div>
-        <p className="muted">Track and open your OpenClaw containers in one place.</p>
+        <p className="muted">Track and open your agent runtimes in one place.</p>
         {deploymentLookupFailed ? (
           <p className="muted" style={{ marginBottom: 0 }}>
             Deployment details are temporarily unavailable. You can still start a new deployment.

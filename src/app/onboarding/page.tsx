@@ -22,6 +22,9 @@ export default function OnboardingPage() {
   const [provider, setProvider] = useState<"openai" | "anthropic">("openai");
   const [apiKey, setApiKey] = useState("");
   const [telegramBotToken, setTelegramBotToken] = useState("");
+  const [deploymentFlavor, setDeploymentFlavor] = useState<"simple_agent_free" | "deploy_openclaw_free">(
+    "simple_agent_free",
+  );
   const [loading, setLoading] = useState(false);
   const [savingStep, setSavingStep] = useState(false);
   const [error, setError] = useState("");
@@ -67,7 +70,7 @@ export default function OnboardingPage() {
         modelProvider: apiKey.trim() ? provider : null,
         modelApiKey: apiKey.trim() || null,
         plan: "free",
-        deploymentFlavor: "do_vm",
+        deploymentFlavor,
       }),
     });
     if (!response.ok) {
@@ -100,7 +103,7 @@ export default function OnboardingPage() {
       const response = await fetch("/api/deployments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deploymentFlavor: "do_vm" }),
+        body: JSON.stringify({ deploymentFlavor }),
       });
       const body = await parseDeployResponse(response);
       if (!response.ok || !body.id) {
@@ -131,6 +134,8 @@ export default function OnboardingPage() {
       )}
       {step === 3 && (
         <PlanStep
+          deploymentFlavor={deploymentFlavor}
+          onDeploymentFlavorChange={setDeploymentFlavor}
           onDeploy={handleDeploy}
           loading={loading}
         />

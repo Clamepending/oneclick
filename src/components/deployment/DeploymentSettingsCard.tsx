@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 type Props = {
   deploymentId: string;
   botName?: string | null;
-  deploymentFlavor?: "do_vm" | null;
+  deploymentFlavor?: "simple_agent_free" | "deploy_openclaw_free" | null;
   hasOpenaiApiKey: boolean;
   hasAnthropicApiKey: boolean;
   hasOpenrouterApiKey: boolean;
@@ -76,7 +76,7 @@ export function DeploymentSettingsCard({
           body: JSON.stringify({
             botName: botName ?? undefined,
             planTier: "free",
-            deploymentFlavor: "do_vm",
+            deploymentFlavor: deploymentFlavor ?? "simple_agent_free",
           }),
         });
         const redeployBody = (await redeployResponse.json().catch(() => null)) as

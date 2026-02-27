@@ -1,36 +1,54 @@
 "use client";
 
 type Props = {
+  deploymentFlavor: "simple_agent_free" | "deploy_openclaw_free";
+  onDeploymentFlavorChange: (value: "simple_agent_free" | "deploy_openclaw_free") => void;
   onDeploy: () => void;
   loading: boolean;
 };
 
-export function PlanStep({ onDeploy, loading }: Props) {
+export function PlanStep({ deploymentFlavor, onDeploymentFlavorChange, onDeploy, loading }: Props) {
   return (
     <div className="card">
       <h2>Deployment mode</h2>
-      <p className="muted">One deployment option: dedicated DigitalOcean VM per bot.</p>
+      <p className="muted">Choose which runtime to deploy (both free).</p>
       <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
-        <div
+        <button
+          type="button"
+          onClick={() => onDeploymentFlavorChange("simple_agent_free")}
           style={{
             textAlign: "left",
-            border: "1px solid var(--border-strong)",
+            border: deploymentFlavor === "simple_agent_free" ? "1px solid var(--border-strong)" : "1px solid var(--border)",
             borderRadius: 10,
             padding: 16,
-            background: "var(--accent-surface)",
+            background: deploymentFlavor === "simple_agent_free" ? "var(--accent-surface)" : "var(--surface-strong)",
             color: "inherit",
+            cursor: "pointer",
           }}
         >
-          <strong>DigitalOcean VM (Standard)</strong>
+          <strong>Simple Agent (Free)</strong>
           <p className="muted" style={{ marginBottom: 8 }}>
-            One VM per deployment with fixed runtime resources.
+            Deploys the `adminagent` UI/service.
           </p>
-          <ul className="muted" style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
-            <li>1 vCPU / 2 GB RAM</li>
-            <li>Standard Droplet storage</li>
-            <li>Dedicated host and persistent bot state</li>
-          </ul>
-        </div>
+        </button>
+        <button
+          type="button"
+          onClick={() => onDeploymentFlavorChange("deploy_openclaw_free")}
+          style={{
+            textAlign: "left",
+            border: deploymentFlavor === "deploy_openclaw_free" ? "1px solid var(--border-strong)" : "1px solid var(--border)",
+            borderRadius: 10,
+            padding: 16,
+            background: deploymentFlavor === "deploy_openclaw_free" ? "var(--accent-surface)" : "var(--surface-strong)",
+            color: "inherit",
+            cursor: "pointer",
+          }}
+        >
+          <strong>Deploy OpenClaw (Free)</strong>
+          <p className="muted" style={{ marginBottom: 0 }}>
+            Deploys the OpenClaw runtime and Control UI.
+          </p>
+        </button>
       </div>
       <button className="button" type="button" onClick={onDeploy} disabled={loading}>
         {loading ? "Starting..." : "Start Deployment"}

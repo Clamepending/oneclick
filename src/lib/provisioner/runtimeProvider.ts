@@ -20,9 +20,11 @@ import {
 import { getRuntimeBaseDomain } from "@/lib/subdomainConfig";
 import { getEcsPlanResources, normalizeDeploymentFlavor, normalizePlanTier, type DeploymentFlavor, type PlanTier } from "@/lib/plans";
 import {
-  getOpenClawImage,
-  getOpenClawPort,
-  getOpenClawStartCommand,
+  getRuntimeImage,
+  getRuntimePort,
+  getRuntimeStartCommand,
+  getSimpleAgentBuildRepo,
+  shouldBuildSimpleAgentImage,
   shouldAllowInsecureControlUi,
 } from "@/lib/provisioner/openclawBundle";
 import { destroyDedicatedVm } from "@/lib/provisioner/dedicatedVm";
@@ -709,9 +711,11 @@ async function launchViaSsh(input: LaunchInput) {
     throw new Error(`Invalid ssh dockerHost value: ${input.host.dockerHost}`);
   }
 
-  const image = getOpenClawImage();
-  const containerPort = getOpenClawPort();
-  const startCommand = getOpenClawStartCommand();
+  const deploymentFlavor = normalizeDeploymentFlavor(input.deploymentFlavor);
+  const isOpenClawRuntime = deploymentFlavor === "deploy_openclaw_free";
+  const image = getRuntimeImage(deploymentFlavor);
+  const containerPort = getRuntimePort(deploymentFlavor);
+  const startCommand = getRuntimeStartCommand(deploymentFlavor);
   const allowInsecureControlUi = shouldAllowInsecureControlUi();
   const gatewayToken = getGatewayToken();
   const hostPort = buildAssignedPort(input.deploymentId);
@@ -725,16 +729,33 @@ async function launchViaSsh(input: LaunchInput) {
   const planTier = "free";
   const resourceFlags = getDockerResourceFlags(planTier);
   const openclawNodeOptions = readTrimmedEnv("OPENCLAW_NODE_OPTIONS") || "--max-old-space-size=1536";
-  const onboardCommand = buildOpenClawOnboardCommand({
-    anthropicApiKey,
-    openaiApiKey,
-    openrouterApiKey,
-    subsidyProxyToken,
-    containerPort,
-  });
-  const runSshOnboard = (readTrimmedEnv("OPENCLAW_SSH_RUN_ONBOARD") || "false").toLowerCase() === "true";
+  const onboardCommand = isOpenClawRuntime
+    ? buildOpenClawOnboardCommand({
+      anthropicApiKey,
+      openaiApiKey,
+      openrouterApiKey,
+      subsidyProxyToken,
+      containerPort,
+    })
+    : "";
+  const runSshOnboard =
+    isOpenClawRuntime && (readTrimmedEnv("OPENCLAW_SSH_RUN_ONBOARD") || "false").toLowerCase() === "true";
   const setTelegramPluginConfig =
+    isOpenClawRuntime &&
     (readTrimmedEnv("OPENCLAW_SSH_SET_TELEGRAM_PLUGIN_CONFIG") || "false").toLowerCase() === "true";
+  const runtimeLlmApiKey = openaiApiKey || openrouterApiKey || anthropicApiKey || subsidyProxyToken;
+  const simpleAgentLlmUrl = readTrimmedEnv("SIMPLE_AGENT_LLM_URL");
+  const shouldBuildSimpleAgent = !isOpenClawRuntime && shouldBuildSimpleAgentImage();
+  const simpleAgentBuildRepo = getSimpleAgentBuildRepo();
+  const simpleAgentRuntimeArgs = [
+    `-e TELEGRAM_ENABLED=${telegramEnabled}`,
+    telegramBotToken ? `-e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : "",
+    runtimeLlmApiKey ? `-e ADMINAGENT_LLM_API_KEY=${shellQuote(runtimeLlmApiKey)}` : "",
+    simpleAgentLlmUrl ? `-e ADMINAGENT_LLM_URL=${shellQuote(simpleAgentLlmUrl)}` : "",
+    `-e PORT=${containerPort}`,
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   const safeUser = sanitizeSegment(input.userId);
   const safeDeployment = sanitizeSegment(input.deploymentId);
@@ -754,7 +775,9 @@ async function launchViaSsh(input: LaunchInput) {
     `if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then >&2 echo "[oneclick] docker install/daemon startup failed"; exit 1; fi`,
     `mkdir -p "${userDir}" "${workspaceDir}"`,
     `chown -R 1000:1000 "${userDir}" "${workspaceDir}" || true`,
-    `docker pull "${image}"`,
+    ...(shouldBuildSimpleAgent
+      ? [`docker build -t "${image}" "${simpleAgentBuildRepo}"`]
+      : [`docker pull "${image}"`]),
     `docker rm -f "${containerName}" >/dev/null 2>&1 || true`,
     ...(telegramBotToken && setTelegramPluginConfig
       ? [
@@ -766,7 +789,9 @@ async function launchViaSsh(input: LaunchInput) {
           `docker run --rm --entrypoint sh -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace"${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""}${subsidyProxyBaseUrl && subsidyProxyToken && !openaiApiKey && !anthropicApiKey && !openrouterApiKey ? ` -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)}` : ""} "${image}" -lc ${shellQuote(`timeout 120 ${onboardCommand}`)}`,
         ]
       : []),
-    `docker run -d --name "${containerName}" --restart unless-stopped --memory=${resourceFlags.memory} --memory-swap=${resourceFlags.memory} --cpus=${resourceFlags.cpus} --pids-limit=${resourceFlags.pids} --shm-size=${resourceFlags.shmSize} --log-opt max-size=${resourceFlags.logMaxSize} --log-opt max-file=${resourceFlags.logMaxFiles}${resourceFlags.writableLayerSize ? ` --storage-opt size=${resourceFlags.writableLayerSize}` : ""} -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" -e OPENCLAW_GATEWAY_TOKEN=${shellQuote(gatewayToken)} -e OPENCLAW_ALLOW_INSECURE_CONTROL_UI=${allowInsecureControlUi ? "true" : "false"} -e NODE_OPTIONS=${shellQuote(openclawNodeOptions)} -e TELEGRAM_ENABLED=${telegramEnabled}${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""}${!openaiApiKey && !anthropicApiKey && !openrouterApiKey && subsidyProxyBaseUrl && subsidyProxyToken ? ` -e OPENAI_API_KEY=${shellQuote(subsidyProxyToken)} -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)}` : ""} -p "${hostPort}:${containerPort}" "${image}" ${startCommand}`,
+    isOpenClawRuntime
+      ? `docker run -d --name "${containerName}" --restart unless-stopped --memory=${resourceFlags.memory} --memory-swap=${resourceFlags.memory} --cpus=${resourceFlags.cpus} --pids-limit=${resourceFlags.pids} --shm-size=${resourceFlags.shmSize} --log-opt max-size=${resourceFlags.logMaxSize} --log-opt max-file=${resourceFlags.logMaxFiles}${resourceFlags.writableLayerSize ? ` --storage-opt size=${resourceFlags.writableLayerSize}` : ""} -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" -e OPENCLAW_GATEWAY_TOKEN=${shellQuote(gatewayToken)} -e OPENCLAW_ALLOW_INSECURE_CONTROL_UI=${allowInsecureControlUi ? "true" : "false"} -e NODE_OPTIONS=${shellQuote(openclawNodeOptions)} -e TELEGRAM_ENABLED=${telegramEnabled}${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""}${!openaiApiKey && !anthropicApiKey && !openrouterApiKey && subsidyProxyBaseUrl && subsidyProxyToken ? ` -e OPENAI_API_KEY=${shellQuote(subsidyProxyToken)} -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)}` : ""} -p "${hostPort}:${containerPort}" "${image}" ${startCommand}`
+      : `docker run -d --name "${containerName}" --restart unless-stopped --memory=${resourceFlags.memory} --memory-swap=${resourceFlags.memory} --cpus=${resourceFlags.cpus} --pids-limit=${resourceFlags.pids} --shm-size=${resourceFlags.shmSize} --log-opt max-size=${resourceFlags.logMaxSize} --log-opt max-file=${resourceFlags.logMaxFiles}${resourceFlags.writableLayerSize ? ` --storage-opt size=${resourceFlags.writableLayerSize}` : ""} -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" ${simpleAgentRuntimeArgs} -p "${hostPort}:${containerPort}" "${image}"${startCommand ? ` ${startCommand}` : ""}`,
   ].join(" && ");
 
   const launchTimeoutMs = Number(readTrimmedEnv("OPENCLAW_SSH_LAUNCH_TIMEOUT_MS") || "1800000");
@@ -808,14 +833,15 @@ async function launchViaEcs(input: LaunchInput) {
   const assignPublicIp = (readTrimmedEnv("ECS_ASSIGN_PUBLIC_IP") || "true").toLowerCase() === "false"
     ? "DISABLED"
     : "ENABLED";
-  const image = getOpenClawImage();
-  const gatewayToken = getGatewayToken();
-  const containerPort = getOpenClawPort();
-  const startCommand = getOpenClawStartCommand();
-  const command = splitStartCommand(startCommand);
-  const isPhioranexOpenClawImage = image.toLowerCase().includes("ghcr.io/phioranex/openclaw-docker");
-  const planTier = normalizePlanTier(input.planTier);
   const deploymentFlavor = normalizeDeploymentFlavor(input.deploymentFlavor);
+  const image = getRuntimeImage(deploymentFlavor);
+  const gatewayToken = getGatewayToken();
+  const containerPort = getRuntimePort(deploymentFlavor);
+  const startCommand = getRuntimeStartCommand(deploymentFlavor);
+  const command = splitStartCommand(startCommand);
+  const isPhioranexOpenClawImage =
+    deploymentFlavor === "deploy_openclaw_free" && image.toLowerCase().includes("ghcr.io/phioranex/openclaw-docker");
+  const planTier = normalizePlanTier(input.planTier);
   const { cpu, memory } = getEcsPlanResources(planTier);
   const platformVersion = readTrimmedEnv("ECS_PLATFORM_VERSION");
   const serviceName = `${servicePrefix}-${sanitizeNamePart(input.userId, 16)}-${sanitizeNamePart(input.deploymentId, 10)}`.slice(0, 63);

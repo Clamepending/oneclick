@@ -10,7 +10,7 @@ type Props = {
   deployProvider?: string | null;
   compact?: boolean;
   botName?: string | null;
-  deploymentFlavor?: "do_vm";
+  deploymentFlavor?: "simple_agent_free" | "deploy_openclaw_free";
 };
 
 export function DeploymentActions({
@@ -20,7 +20,7 @@ export function DeploymentActions({
   deployProvider,
   compact = false,
   botName,
-  deploymentFlavor = "do_vm",
+  deploymentFlavor = "simple_agent_free",
 }: Props) {
   const router = useRouter();
   const [error, setError] = useState("");

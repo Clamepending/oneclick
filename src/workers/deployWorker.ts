@@ -14,8 +14,8 @@ import {
 } from "@aws-sdk/client-ecs";
 import { ensureSchema, pool } from "@/lib/db";
 import { normalizeDeploymentFlavor, type DeploymentFlavor } from "@/lib/plans";
-import { selectHost } from "@/lib/provisioner/hostScheduler";
 import { createDedicatedSshHost, destroyDedicatedVm } from "@/lib/provisioner/dedicatedVm";
+import type { Host } from "@/lib/provisioner/hostScheduler";
 import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runtimeProvider";
 import { probeRuntimeHttp } from "@/lib/runtimeHealth";
 
@@ -408,23 +408,21 @@ export async function processDeploymentJob(job: DeploymentJob) {
      LIMIT 1`,
     [job.deploymentId],
   );
-  const selectedDeploymentFlavor = "do_vm" as DeploymentFlavor;
+  const selectedDeploymentFlavor = normalizeDeploymentFlavor(providerSelectionRow.rows[0]?.deployment_flavor);
   const provider = resolveProviderForDeployment(defaultProvider, selectedDeploymentFlavor);
   const providerRequiresHost = provider === "ssh" || provider === "mock";
 
-  if (selectedDeploymentFlavor === "do_vm") {
-    const currentHostRow = await pool.query<{ host_name: string | null; status: string }>(
-      `SELECT host_name, status FROM deployments WHERE id = $1 LIMIT 1`,
-      [job.deploymentId],
-    );
-    const currentHostName = currentHostRow.rows[0]?.host_name?.trim() || "";
-    const vmMatch = currentHostName.match(/^(?:lightsail-vm|do-vm)-(\d+)$/);
-    if (vmMatch) {
-      const currentStatus = (currentHostRow.rows[0]?.status || "").trim().toLowerCase();
-      if (currentStatus !== "ready") {
-        await appendEvent(job.deploymentId, "starting", `Cleaning previous VM ${currentHostName} before retry`);
-        await destroyDedicatedVm(vmMatch[1]).catch(() => {});
-      }
+  const currentHostRow = await pool.query<{ host_name: string | null; status: string }>(
+    `SELECT host_name, status FROM deployments WHERE id = $1 LIMIT 1`,
+    [job.deploymentId],
+  );
+  const currentHostName = currentHostRow.rows[0]?.host_name?.trim() || "";
+  const vmMatch = currentHostName.match(/^(?:lightsail-vm|do-vm)-(\d+)$/);
+  if (vmMatch) {
+    const currentStatus = (currentHostRow.rows[0]?.status || "").trim().toLowerCase();
+    if (currentStatus !== "ready") {
+      await appendEvent(job.deploymentId, "starting", `Cleaning previous VM ${currentHostName} before retry`);
+      await destroyDedicatedVm(vmMatch[1]).catch(() => {});
     }
   }
 
@@ -463,26 +461,12 @@ export async function processDeploymentJob(job: DeploymentJob) {
     await appendEvent(previous.id, "failed", "Replaced by newer deployment");
   }
 
-  let host: Awaited<ReturnType<typeof selectHost>> | undefined;
+  let host: Host | undefined;
   let dedicatedVmId: string | null = null;
   if (providerRequiresHost) {
-    if (selectedDeploymentFlavor === "do_vm") {
-      await appendEvent(job.deploymentId, "starting", "Provisioning dedicated VM host");
-      host = await createDedicatedSshHost({ deploymentId: job.deploymentId, userId: job.userId });
-      dedicatedVmId = host.vmId?.trim() || null;
-    } else {
-      const activeByHost = new Map<string, number>();
-      const activeRows = await pool.query<{ host_name: string; active_count: string }>(
-        `SELECT host_name, COUNT(*)::text as active_count
-         FROM deployments
-         WHERE status IN ('queued', 'starting') AND host_name IS NOT NULL
-         GROUP BY host_name`,
-      );
-      for (const row of activeRows.rows) {
-        activeByHost.set(row.host_name, Number(row.active_count));
-      }
-      host = await selectHost(activeByHost);
-    }
+    await appendEvent(job.deploymentId, "starting", "Provisioning dedicated VM host");
+    host = await createDedicatedSshHost({ deploymentId: job.deploymentId, userId: job.userId });
+    dedicatedVmId = host.vmId?.trim() || null;
     await pool.query(
       `UPDATE deployments SET host_name = $1, status = 'starting', error = NULL, updated_at = NOW() WHERE id = $2`,
       [host.name, job.deploymentId],

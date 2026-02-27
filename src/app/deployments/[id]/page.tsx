@@ -14,7 +14,7 @@ type DeploymentResponse = {
   runtimeId?: string | null;
   deployProvider?: string | null;
   planTier?: "free" | "paid" | null;
-  deploymentFlavor?: "do_vm" | null;
+  deploymentFlavor?: "simple_agent_free" | "deploy_openclaw_free" | null;
   trialStartedAt?: string | null;
   trialExpiresAt?: string | null;
   deactivatedAt?: string | null;
@@ -193,7 +193,7 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
           <div style={{ display: "grid", gap: 8 }}>
             <p style={{ margin: 0 }}>
               <a className="button" href={`/runtime/${deployment.id}`}>
-                Open OpenClaw
+                Open UI
               </a>
             </p>
             <p className="muted" style={{ margin: 0 }}>

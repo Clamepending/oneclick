@@ -282,7 +282,7 @@ export function BotDashboard({ deployments }: Props) {
                   </Link>
                   {deployment.status === "ready" ? (
                     <Link className="button" href={`/runtime/${deployment.id}`}>
-                      Open OpenClaw
+                      Open UI
                     </Link>
                   ) : null}
                 </div>

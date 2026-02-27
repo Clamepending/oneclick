@@ -120,7 +120,7 @@ function renderPlaceholder(id: string, details?: string) {
   return (
     <main className="container">
       <div className="card">
-        <h1>OpenClaw Runtime Endpoint</h1>
+        <h1>Runtime Endpoint</h1>
         <p className="muted">
           This runtime URL is still being resolved for deployment <code>{id}</code>.
         </p>
@@ -134,7 +134,7 @@ function renderRuntimeUnavailable(id: string, readyUrl: string | null, details?:
   return (
     <main className="container">
       <div className="card">
-        <h1>OpenClaw Runtime Endpoint</h1>
+        <h1>Runtime Endpoint</h1>
         <p className="muted">
           Deployment <code>{id}</code> is running, but the runtime web UI is not reachable yet.
         </p>
