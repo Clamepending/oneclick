@@ -48,6 +48,7 @@ type LaunchInput = {
 type DestroyInput = {
   runtimeId: string;
   deployProvider: string | null;
+  readyUrl?: string | null;
 };
 
 function sanitizeSegment(value: string) {
@@ -377,6 +378,122 @@ function parseUserAndHost(sshTarget: string) {
   return { user, host };
 }
 
+function isIpv4Address(value: string) {
+  return /^(?:\d{1,3}\.){3}\d{1,3}$/.test(value.trim());
+}
+
+function getCloudflareConfig() {
+  const token = readTrimmedEnv("CLOUDFLARE_API_TOKEN");
+  const zoneId = readTrimmedEnv("CLOUDFLARE_ZONE_ID");
+  return {
+    token,
+    zoneId,
+    enabled: Boolean(token && zoneId),
+  };
+}
+
+async function cloudflareRequest(path: string, init?: RequestInit) {
+  const config = getCloudflareConfig();
+  if (!config.enabled) {
+    throw new Error("Cloudflare DNS automation requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ZONE_ID.");
+  }
+  const response = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${config.token}`,
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+  });
+  const payload = (await response.json().catch(() => ({}))) as {
+    success?: boolean;
+    errors?: Array<{ message?: string }>;
+    result?: unknown;
+  };
+  if (!response.ok || !payload.success) {
+    const reason =
+      payload.errors?.map((error) => error.message).filter(Boolean).join("; ") ||
+      `HTTP ${response.status} ${response.statusText}`;
+    throw new Error(`Cloudflare API request failed: ${reason}`);
+  }
+  return payload;
+}
+
+type CloudflareDnsRecord = {
+  id: string;
+  type: string;
+  name: string;
+  content: string;
+  comment?: string;
+};
+
+async function upsertRuntimeDnsRecord(input: { fqdn: string; target: string }) {
+  const config = getCloudflareConfig();
+  if (!config.enabled) {
+    throw new Error(
+      "CLOUDFLARE_API_TOKEN and CLOUDFLARE_ZONE_ID are required for SSH runtime domain provisioning.",
+    );
+  }
+  const fqdn = input.fqdn.trim().toLowerCase();
+  const target = input.target.trim();
+  if (!fqdn || !target) {
+    throw new Error("Runtime DNS upsert requires both fqdn and target.");
+  }
+  const recordType = isIpv4Address(target) ? "A" : "CNAME";
+  const list = (await cloudflareRequest(
+    `/zones/${config.zoneId}/dns_records?name=${encodeURIComponent(fqdn)}`,
+  )) as { result?: CloudflareDnsRecord[] };
+  const existing = (list.result ?? []).find((record) => record.name.toLowerCase() === fqdn);
+  const body = JSON.stringify({
+    type: recordType,
+    name: fqdn,
+    content: target,
+    ttl: 120,
+    proxied: false,
+    comment: "managed-by-oneclick-runtime",
+  });
+  if (existing) {
+    await cloudflareRequest(`/zones/${config.zoneId}/dns_records/${existing.id}`, {
+      method: "PUT",
+      body,
+    });
+    return;
+  }
+  await cloudflareRequest(`/zones/${config.zoneId}/dns_records`, {
+    method: "POST",
+    body,
+  });
+}
+
+function hostNameFromReadyUrl(readyUrl: string | null | undefined) {
+  if (!readyUrl) return "";
+  try {
+    return new URL(readyUrl).hostname.trim().toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+async function deleteRuntimeDnsRecordByHost(hostname: string) {
+  const config = getCloudflareConfig();
+  if (!config.enabled) return;
+  const normalizedHost = hostname.trim().toLowerCase();
+  if (!normalizedHost) return;
+  const runtimeBaseDomain = getRuntimeBaseDomain();
+  if (!runtimeBaseDomain || !normalizedHost.endsWith(`.${runtimeBaseDomain}`)) return;
+  const list = (await cloudflareRequest(
+    `/zones/${config.zoneId}/dns_records?name=${encodeURIComponent(normalizedHost)}`,
+  )) as { result?: CloudflareDnsRecord[] };
+  for (const record of list.result ?? []) {
+    if (record.name.toLowerCase() !== normalizedHost) continue;
+    const isManaged = (record.comment ?? "").includes("managed-by-oneclick-runtime");
+    if (!isManaged) continue;
+    await cloudflareRequest(`/zones/${config.zoneId}/dns_records/${record.id}`, {
+      method: "DELETE",
+    });
+  }
+}
+
 function runtimeIdFromSsh(sshTarget: string, containerName: string, vmId?: string) {
   if (vmId?.trim()) {
     return `ssh:${sshTarget}|${containerName}|${vmId.trim()}`;
@@ -657,9 +774,14 @@ async function launchViaSsh(input: LaunchInput) {
   const runtimeDomain = buildRuntimeUrlFromDomain(input.runtimeSlugSource, input.userId);
   if (!runtimeDomain) {
     throw new Error(
-      "Runtime domain is not configured. Set NEXT_PUBLIC_RUNTIME_BASE_DOMAIN so SSH deployments can publish HTTPS runtime URLs.",
+      "Runtime domain is not configured. Set RUNTIME_BASE_DOMAIN so SSH deployments can publish HTTPS runtime URLs.",
     );
   }
+  const dnsTarget = parseUserAndHost(sshTarget).host;
+  await upsertRuntimeDnsRecord({
+    fqdn: runtimeDomain.fqdn,
+    target: dnsTarget,
+  });
   await ensureCaddyRoute(sshTarget, runtimeDomain.fqdn, hostPort);
 
   return {
@@ -1038,12 +1160,14 @@ export async function destroyUserRuntime(input: DestroyInput) {
       dockerCleanupError = error instanceof Error ? error : new Error(String(error));
     }
     if (parsed.vmId) {
+      await deleteRuntimeDnsRecordByHost(hostNameFromReadyUrl(input.readyUrl)).catch(() => {});
       await destroyDedicatedVm(parsed.vmId);
       return;
     }
     if (dockerCleanupError) {
       throw dockerCleanupError;
     }
+    await deleteRuntimeDnsRecordByHost(hostNameFromReadyUrl(input.readyUrl)).catch(() => {});
     return;
   }
   if (provider === "ecs") {

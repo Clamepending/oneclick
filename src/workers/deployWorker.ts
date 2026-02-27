@@ -421,8 +421,9 @@ export async function processDeploymentJob(job: DeploymentJob) {
     id: string;
     runtime_id: string | null;
     deploy_provider: string | null;
+    ready_url: string | null;
   }>(
-    `SELECT id, runtime_id, deploy_provider
+    `SELECT id, runtime_id, deploy_provider, ready_url
      FROM deployments
      WHERE user_id = $1
        AND id <> $2
@@ -436,6 +437,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
     await destroyUserRuntime({
       runtimeId: previous.runtime_id,
       deployProvider: previous.deploy_provider,
+      readyUrl: previous.ready_url,
     });
 
     await pool.query(
@@ -601,6 +603,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
       await destroyUserRuntime({
         runtimeId: runtime.runtimeId,
         deployProvider: runtime.deployProvider,
+        readyUrl: runtime.readyUrl,
       }).catch(() => {});
     } else if (dedicatedVmId) {
       await destroyDedicatedVm(dedicatedVmId).catch(() => {});

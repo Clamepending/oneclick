@@ -202,15 +202,15 @@ For Vercel + SSH deployment (one shared VM, one container per user):
 
 - set `DEPLOY_PROVIDER=ssh`
 - set `DEPLOY_SSH_PRIVATE_KEY` (escaped newlines)
-- set `HOST_POOL_JSON` to your droplet (for example `ssh://root@64.225.46.105`)
 - set `RUNTIME_BASE_DOMAIN` (for example `oneclickagent.net`) to enable `https://<user>.yourdomain` URLs
+- set `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ZONE_ID` so deploy worker can create/update runtime DNS records automatically
 - optional: set `BOT_DASHBOARD_BASE_DOMAIN` to enable bot dashboard URLs at `https://<bot-slug>.yourdomain` (routes to `/bots/:slug`)
 - optional but recommended for shared auth sessions across `app.yourdomain` + `bot.yourdomain`: set `AUTH_COOKIE_DOMAIN=.yourdomain`
 - optional: set `BOT_AUTH_LOGIN_BASE_URL` to your canonical app host (for example `https://app.yourdomain`) so unauthenticated bot subdomain visits always go through one login origin
 - optional: set `CADDY_EMAIL` for certificate issuer contact
 - do not set `REDIS_URL` to localhost; either provide a real remote Redis or leave `REDIS_URL` unset
 - each new deploy for a user destroys that user’s previous container
-- if using `RUNTIME_BASE_DOMAIN`, open droplet ports `80/443` and point wildcard DNS (`*.yourdomain`) to droplet IP
+- if using `RUNTIME_BASE_DOMAIN`, open VM ports `80/443`; runtime subdomains are managed automatically via Cloudflare DNS API
 - deployment step: after launch, enter the customer’s own OpenAI or Anthropic API key in OpenClaw (never use your personal key in customer deployments)
 
 ### Wildcard DNS quick setup

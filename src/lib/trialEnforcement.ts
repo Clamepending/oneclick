@@ -9,12 +9,13 @@ type ExpiredDeploymentRow = {
   id: string;
   runtime_id: string | null;
   deploy_provider: string | null;
+  ready_url: string | null;
   trial_expires_at: string | null;
 };
 
 export async function deactivateExpiredFreeTrialsForUser(userId: string) {
   const result = await pool.query<ExpiredDeploymentRow>(
-    `SELECT id, runtime_id, deploy_provider, trial_expires_at
+    `SELECT id, runtime_id, deploy_provider, ready_url, trial_expires_at
      FROM deployments
      WHERE user_id = $1
        AND plan_tier = 'free'
@@ -31,6 +32,7 @@ export async function deactivateExpiredFreeTrialsForUser(userId: string) {
         await destroyUserRuntime({
           runtimeId: row.runtime_id,
           deployProvider: row.deploy_provider,
+          readyUrl: row.ready_url,
         });
       } catch {
         // Keep deactivation idempotent even if the runtime no longer exists.

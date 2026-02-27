@@ -164,9 +164,10 @@ export async function DELETE(
     status: string;
     runtime_id: string | null;
     deploy_provider: string | null;
+    ready_url: string | null;
     updated_at: string;
   }>(
-    `SELECT id, status, runtime_id, deploy_provider, updated_at
+    `SELECT id, status, runtime_id, deploy_provider, ready_url, updated_at
      FROM deployments
      WHERE id = $1 AND user_id = $2`,
     [id, session.user.email],
@@ -201,6 +202,7 @@ export async function DELETE(
         await destroyUserRuntime({
           runtimeId: deployment.runtime_id,
           deployProvider: deployment.deploy_provider,
+          readyUrl: deployment.ready_url,
         });
       } catch (error) {
         if (!isIgnorableRuntimeDestroyError(error)) {
