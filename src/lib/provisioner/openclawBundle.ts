@@ -55,7 +55,9 @@ export function getOpenClawPort() {
 }
 
 export function getOpenClawStartCommand() {
-  return readEnv("OPENCLAW_START_COMMAND") || "gateway --allow-unconfigured";
+  const raw = readEnv("OPENCLAW_START_COMMAND") || "gateway --allow-unconfigured";
+  // Some images expose `gateway` directly and fail on `gateway run ...`.
+  return raw.replace(/^gateway\s+run(\s+|$)/i, "gateway ");
 }
 
 export function shouldAllowInsecureControlUi() {

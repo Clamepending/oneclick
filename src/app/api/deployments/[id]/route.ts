@@ -2,26 +2,12 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
 import { destroyUserRuntime } from "@/lib/provisioner/runtimeProvider";
+import { probeRuntimeHttp } from "@/lib/runtimeHealth";
 import { deactivateExpiredFreeTrialsForUser } from "@/lib/trialEnforcement";
 
 async function checkRuntimeHealth(readyUrl: string) {
-  try {
-    const healthPath = process.env.OPENCLAW_HEALTH_PATH ?? "/health";
-    const url = new URL(healthPath, readyUrl);
-    const response = await fetch(url.toString(), {
-      cache: "no-store",
-      signal: AbortSignal.timeout(3000),
-    });
-    return {
-      ok: response.ok,
-      status: response.status,
-    };
-  } catch {
-    return {
-      ok: false,
-      status: null,
-    };
-  }
+  const result = await probeRuntimeHttp(readyUrl, 3000);
+  return { ok: result.ok, status: result.status };
 }
 
 function isStaleInProgressDeployment(item: { status: string; updated_at: string }) {

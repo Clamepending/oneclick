@@ -3,6 +3,7 @@ import { DescribeNetworkInterfacesCommand, EC2Client } from "@aws-sdk/client-ec2
 import net from "node:net";
 import { redirect } from "next/navigation";
 import { ensureSchema, pool } from "@/lib/db";
+import { probeRuntimeHttp } from "@/lib/runtimeHealth";
 
 export const dynamic = "force-dynamic";
 
@@ -174,16 +175,8 @@ function mergeResolvedRuntimeUrl(resolvedBaseUrl: string, storedReadyUrl: string
 }
 
 async function isRuntimeControlUiReachable(readyUrl: string) {
-  try {
-    const probeUrl = new URL("/__openclaw/control-ui-config.json", readyUrl);
-    const response = await fetch(probeUrl.toString(), {
-      cache: "no-store",
-      signal: AbortSignal.timeout(3000),
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
+  const result = await probeRuntimeHttp(readyUrl, 3000);
+  return result.ok;
 }
 
 export default async function RuntimePage({ params }: { params: Promise<{ id: string }> }) {
