@@ -278,102 +278,103 @@ async function reserveBotIdentity(ownerUserId: string, botName: string) {
 }
 
 export async function POST(request: Request) {
-  const session = await auth();
-  if (!session?.user?.email) {
-    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  }
+  try {
+    const session = await auth();
+    if (!session?.user?.email) {
+      return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+    }
 
-  const parsedPayload = await readDeployRequest(request);
-  if (!parsedPayload.ok) {
-    return NextResponse.json({ ok: false, error: parsedPayload.error }, { status: 400 });
-  }
+    const parsedPayload = await readDeployRequest(request);
+    if (!parsedPayload.ok) {
+      return NextResponse.json({ ok: false, error: parsedPayload.error }, { status: 400 });
+    }
 
-  const ip = getClientIp(request);
-  const ipLimit = applyMemoryRateLimit(
-    `deploy:ip:${ip}`,
-    Number(process.env.DEPLOY_RATE_LIMIT_PER_MIN ?? "5"),
-    60_000,
-  );
-  if (!ipLimit.allowed) {
-    return NextResponse.json({ ok: false, error: "Too many requests" }, { status: 429 });
-  }
-
-  await ensureSchema();
-  if (readBoolEnv("DEPLOYMENTS_PAUSED", false)) {
-    return NextResponse.json(
-      { ok: false, error: "New deployments are temporarily paused. Please try again later." },
-      { status: 503 },
+    const ip = getClientIp(request);
+    const ipLimit = applyMemoryRateLimit(
+      `deploy:ip:${ip}`,
+      Number(process.env.DEPLOY_RATE_LIMIT_PER_MIN ?? "5"),
+      60_000,
     );
-  }
+    if (!ipLimit.allowed) {
+      return NextResponse.json({ ok: false, error: "Too many requests" }, { status: 429 });
+    }
 
-  await failStaleInProgressDeployments(session.user.email);
-  await deactivateExpiredFreeTrialsForUser(session.user.email);
-
-  const globalInProgressLimit = readLimitEnv("DEPLOY_MAX_IN_PROGRESS_GLOBAL");
-  if (globalInProgressLimit !== null) {
-    const globalInProgress = await pool.query<{ count: string }>(
-      `SELECT COUNT(*)::text as count
-       FROM deployments
-       WHERE status IN ('queued', 'starting')`,
-      [],
-    );
-    if (Number(globalInProgress.rows[0]?.count ?? "0") >= globalInProgressLimit) {
+    await ensureSchema();
+    if (readBoolEnv("DEPLOYMENTS_PAUSED", false)) {
       return NextResponse.json(
-        { ok: false, error: "System is at deployment capacity. Please try again shortly." },
+        { ok: false, error: "New deployments are temporarily paused. Please try again later." },
         { status: 503 },
       );
     }
-  }
 
-  const globalReadyLimit = readLimitEnv("DEPLOY_MAX_READY_GLOBAL");
-  if (globalReadyLimit !== null) {
-    const globalReady = await pool.query<{ count: string }>(
-      `SELECT COUNT(*)::text as count
-       FROM deployments
-       WHERE status = 'ready'`,
-      [],
-    );
-    if (Number(globalReady.rows[0]?.count ?? "0") >= globalReadyLimit) {
-      return NextResponse.json(
-        { ok: false, error: "System runtime capacity is full. Please try again later." },
-        { status: 503 },
+    await failStaleInProgressDeployments(session.user.email);
+    await deactivateExpiredFreeTrialsForUser(session.user.email);
+
+    const globalInProgressLimit = readLimitEnv("DEPLOY_MAX_IN_PROGRESS_GLOBAL");
+    if (globalInProgressLimit !== null) {
+      const globalInProgress = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text as count
+         FROM deployments
+         WHERE status IN ('queued', 'starting')`,
+        [],
       );
+      if (Number(globalInProgress.rows[0]?.count ?? "0") >= globalInProgressLimit) {
+        return NextResponse.json(
+          { ok: false, error: "System is at deployment capacity. Please try again shortly." },
+          { status: 503 },
+        );
+      }
     }
-  }
 
-  const active = await pool.query<{ count: string }>(
-    `SELECT COUNT(*)::text as count
-     FROM deployments
-     WHERE user_id = $1 AND status IN ('queued', 'starting')`,
-    [session.user.email],
-  );
+    const globalReadyLimit = readLimitEnv("DEPLOY_MAX_READY_GLOBAL");
+    if (globalReadyLimit !== null) {
+      const globalReady = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text as count
+         FROM deployments
+         WHERE status = 'ready'`,
+        [],
+      );
+      if (Number(globalReady.rows[0]?.count ?? "0") >= globalReadyLimit) {
+        return NextResponse.json(
+          { ok: false, error: "System runtime capacity is full. Please try again later." },
+          { status: 503 },
+        );
+      }
+    }
 
-  const maxActive = Number(process.env.DEPLOY_MAX_ACTIVE_PER_USER ?? "1");
-  if (Number(active.rows[0]?.count ?? "0") >= maxActive) {
-    return NextResponse.json(
-      { ok: false, error: "You already have an active deployment in progress." },
-      { status: 409 },
-    );
-  }
-
-  const perUserReadyLimit = readLimitEnv("DEPLOY_MAX_READY_PER_USER");
-  if (perUserReadyLimit !== null) {
-    const activeReady = await pool.query<{ count: string }>(
+    const active = await pool.query<{ count: string }>(
       `SELECT COUNT(*)::text as count
        FROM deployments
-       WHERE user_id = $1 AND status = 'ready'`,
+       WHERE user_id = $1 AND status IN ('queued', 'starting')`,
       [session.user.email],
     );
-    if (Number(activeReady.rows[0]?.count ?? "0") >= perUserReadyLimit) {
+
+    const maxActive = Number(process.env.DEPLOY_MAX_ACTIVE_PER_USER ?? "1");
+    if (Number(active.rows[0]?.count ?? "0") >= maxActive) {
       return NextResponse.json(
-        { ok: false, error: "You have reached the maximum number of running bots for your account." },
+        { ok: false, error: "You already have an active deployment in progress." },
         { status: 409 },
       );
     }
-  }
 
-  const deploymentId = newDeploymentId();
-  const onboarding = await pool.query<{
+    const perUserReadyLimit = readLimitEnv("DEPLOY_MAX_READY_PER_USER");
+    if (perUserReadyLimit !== null) {
+      const activeReady = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text as count
+         FROM deployments
+         WHERE user_id = $1 AND status = 'ready'`,
+        [session.user.email],
+      );
+      if (Number(activeReady.rows[0]?.count ?? "0") >= perUserReadyLimit) {
+        return NextResponse.json(
+          { ok: false, error: "You have reached the maximum number of running bots for your account." },
+          { status: 409 },
+        );
+      }
+    }
+
+    const deploymentId = newDeploymentId();
+    const onboarding = await pool.query<{
     bot_name: string | null;
     model_provider: string | null;
     model_api_key: string | null;
@@ -389,23 +390,23 @@ export async function POST(request: Request) {
      LIMIT 1`,
     [session.user.email],
   );
-  const fallbackBotName = onboarding.rows[0]?.bot_name?.trim() || "MyAssistant";
-  const botName = parsedPayload.botName ?? fallbackBotName;
-  const modelProvider = onboarding.rows[0]?.model_provider?.trim() || "";
-  const modelApiKey = onboarding.rows[0]?.model_api_key?.trim() || "";
-  const openaiApiKey = modelProvider === "openai" ? modelApiKey : null;
-  const anthropicApiKey = modelProvider === "anthropic" ? modelApiKey : null;
-  const telegramBotToken = onboarding.rows[0]?.telegram_bot_token?.trim() || null;
-  const selectedPlan = "free";
-  const selectedDeploymentFlavor = "do_vm";
-  const trialStartedAt: Date | null = null;
-  const trialExpiresAt: Date | null = null;
-  const reservation = await reserveBotIdentity(session.user.email, botName);
-  if (!reservation.ok) {
-    return NextResponse.json({ ok: false, error: reservation.error }, { status: 409 });
-  }
+    const fallbackBotName = onboarding.rows[0]?.bot_name?.trim() || "MyAssistant";
+    const botName = parsedPayload.botName ?? fallbackBotName;
+    const modelProvider = onboarding.rows[0]?.model_provider?.trim() || "";
+    const modelApiKey = onboarding.rows[0]?.model_api_key?.trim() || "";
+    const openaiApiKey = modelProvider === "openai" ? modelApiKey : null;
+    const anthropicApiKey = modelProvider === "anthropic" ? modelApiKey : null;
+    const telegramBotToken = onboarding.rows[0]?.telegram_bot_token?.trim() || null;
+    const selectedPlan = "free";
+    const selectedDeploymentFlavor = "do_vm";
+    const trialStartedAt: Date | null = null;
+    const trialExpiresAt: Date | null = null;
+    const reservation = await reserveBotIdentity(session.user.email, botName);
+    if (!reservation.ok) {
+      return NextResponse.json({ ok: false, error: reservation.error }, { status: 409 });
+    }
 
-  await pool.query(
+    await pool.query(
     `UPDATE onboarding_sessions
      SET plan = $1,
          trial_started_at = NULL,
@@ -422,7 +423,7 @@ export async function POST(request: Request) {
     ],
   );
 
-  await pool.query(
+    await pool.query(
     `INSERT INTO deployments (
        id, user_id, bot_name, status, openai_api_key, anthropic_api_key, telegram_bot_token,
        plan_tier, deployment_flavor, trial_started_at, trial_expires_at, monthly_price_cents
@@ -443,7 +444,7 @@ export async function POST(request: Request) {
     ],
   );
 
-  await pool.query(
+    await pool.query(
     `INSERT INTO deployment_events (deployment_id, status, message)
      VALUES ($1, 'queued', 'Deployment accepted and queued')`,
     [deploymentId],
@@ -457,10 +458,10 @@ export async function POST(request: Request) {
     ],
   );
 
-  try {
-    const queueInfo = getQueueModeInfo();
-    const vercelRuntime = isVercelRuntime();
-    await pool.query(
+    try {
+      const queueInfo = getQueueModeInfo();
+      const vercelRuntime = isVercelRuntime();
+      await pool.query(
       `INSERT INTO deployment_events (deployment_id, status, message)
        VALUES ($1, 'queued', $2)`,
       [
@@ -556,10 +557,14 @@ export async function POST(request: Request) {
       }
       throw queueError;
     }
+    } catch (error) {
+      const message = await markDeploymentFailed(deploymentId, error);
+      return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    }
+
+    return NextResponse.json({ id: deploymentId, status: "queued" }, { status: 202 });
   } catch (error) {
-    const message = await markDeploymentFailed(deploymentId, error);
+    const message = error instanceof Error ? error.message : "Deployment request failed";
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
-
-  return NextResponse.json({ id: deploymentId, status: "queued" }, { status: 202 });
 }
