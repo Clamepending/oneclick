@@ -1,5 +1,5 @@
 export type PlanTier = "free" | "paid";
-export type DeploymentFlavor = "basic" | "advanced" | "do_vm";
+export type DeploymentFlavor = "do_vm";
 
 export const FREE_TRIAL_DAYS = 30;
 export const PAID_MONTHLY_PRICE_CENTS = 2000;
@@ -9,9 +9,8 @@ export function normalizePlanTier(value: string | null | undefined): PlanTier {
 }
 
 export function normalizeDeploymentFlavor(value: string | null | undefined): DeploymentFlavor {
-  const normalized = value?.trim().toLowerCase();
-  if (normalized === "lightsail" || normalized === "do_vm") return "do_vm";
-  return value?.trim().toLowerCase() === "advanced" ? "advanced" : "basic";
+  void value;
+  return "do_vm";
 }
 
 export function planDisplayName(plan: PlanTier) {
@@ -19,9 +18,9 @@ export function planDisplayName(plan: PlanTier) {
 }
 
 export function deploymentModeDisplayName(plan: PlanTier, flavor: DeploymentFlavor) {
-  if (plan === "paid") return "Paid (Basic)";
-  if (flavor === "do_vm") return "Free (DigitalOcean VM)";
-  return flavor === "advanced" ? "Free (Advanced)" : "Free (Basic)";
+  void plan;
+  void flavor;
+  return "DigitalOcean VM (Standard)";
 }
 
 export function planPriceLabel(plan: PlanTier) {

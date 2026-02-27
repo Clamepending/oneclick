@@ -13,7 +13,7 @@ import {
   type ECSClientConfig,
 } from "@aws-sdk/client-ecs";
 import { ensureSchema, pool } from "@/lib/db";
-import { normalizeDeploymentFlavor, normalizePlanTier, type DeploymentFlavor, type PlanTier } from "@/lib/plans";
+import { normalizeDeploymentFlavor, type DeploymentFlavor } from "@/lib/plans";
 import { selectHost } from "@/lib/provisioner/hostScheduler";
 import { createDedicatedSshHost, destroyDedicatedVm } from "@/lib/provisioner/dedicatedVm";
 import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runtimeProvider";
@@ -85,11 +85,9 @@ function readTrimmedEnv(name: string) {
   return raw.trim().replace(/^"(.*)"$/, "$1").replace(/\\n/g, "").trim();
 }
 
-function resolveProviderForDeployment(defaultProvider: string, deploymentFlavor: DeploymentFlavor) {
-  if (deploymentFlavor === "do_vm") {
-    return readTrimmedEnv("DEPLOY_PROVIDER_DO_VM") || readTrimmedEnv("DEPLOY_PROVIDER_LIGHTSAIL") || "ssh";
-  }
-  return defaultProvider;
+function resolveProviderForDeployment(_defaultProvider: string, deploymentFlavor: DeploymentFlavor) {
+  void deploymentFlavor;
+  return "ssh";
 }
 
 function buildAwsConfigWithTrimmedCreds(region: string): ECSClientConfig {
@@ -326,7 +324,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
     return;
   }
   await appendEvent(job.deploymentId, "starting", "Scheduling runtime host");
-  const defaultProvider = readTrimmedEnv("DEPLOY_PROVIDER") || "mock";
+  const defaultProvider = "ssh";
 
   const providerSelectionRow = await pool.query<{
     plan_tier: string | null;
@@ -338,9 +336,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
      LIMIT 1`,
     [job.deploymentId],
   );
-  const selectedDeploymentFlavor = normalizeDeploymentFlavor(
-    providerSelectionRow.rows[0]?.deployment_flavor,
-  ) as DeploymentFlavor;
+  const selectedDeploymentFlavor = "do_vm" as DeploymentFlavor;
   const provider = resolveProviderForDeployment(defaultProvider, selectedDeploymentFlavor);
   const providerRequiresHost = provider === "ssh" || provider === "mock";
 
@@ -441,7 +437,6 @@ export async function processDeploymentJob(job: DeploymentJob) {
      LIMIT 1`,
     [job.deploymentId],
   );
-  const planTier = normalizePlanTier(deploymentRow.rows[0]?.plan_tier) as PlanTier;
   const deploymentFlavor = normalizeDeploymentFlavor(deploymentRow.rows[0]?.deployment_flavor) as DeploymentFlavor;
   const onboarding = await pool.query<{
     bot_name: string | null;
@@ -522,9 +517,8 @@ export async function processDeploymentJob(job: DeploymentJob) {
       openrouterApiKey: selectedOpenRouterKey,
       subsidyProxyToken,
       subsidyProxyBaseUrl,
-      planTier,
       deploymentFlavor,
-      providerOverride: provider as "mock" | "ssh" | "ecs",
+      providerOverride: "ssh",
     });
     await pool.query(
       `UPDATE deployments
@@ -562,9 +556,6 @@ export async function processDeploymentJob(job: DeploymentJob) {
     [job.deploymentId],
   );
   await appendEvent(job.deploymentId, "ready", "Runtime is ready");
-  if (deploymentFlavor === "advanced") {
-    await appendEvent(job.deploymentId, "ready", "Advanced mode bootstrap queued: agent will receive OttoAuth setup prompt.");
-  }
   if (selectedOpenAiKey || selectedAnthropicKey || selectedOpenRouterKey) {
     await appendEvent(job.deploymentId, "ready", "Configured runtime API credentials from deployment settings.");
   }

@@ -87,14 +87,6 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
      LIMIT 50`,
     [userId, identity.bot_name_normalized],
   );
-  const freeActiveDeployments = deploymentsResult.rows.filter(
-    (deployment) =>
-      ["queued", "starting", "ready"].includes(deployment.status) &&
-      (deployment.plan_tier?.trim().toLowerCase() ?? "free") !== "paid",
-  ).length;
-  const freeActiveLimit = 1;
-  const freeSelectable = freeActiveDeployments < freeActiveLimit;
-
   return (
     <main className="container">
       <div className="card" style={{ display: "grid", gap: 8 }}>
@@ -197,11 +189,7 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
                     deployProvider={deployment.deploy_provider}
                     compact
                     botName={deployment.bot_name}
-                    planTier={deployment.plan_tier === "paid" ? "paid" : "free"}
                     deploymentFlavor={normalizeDeploymentFlavor(deployment.deployment_flavor)}
-                    freeSelectable={freeSelectable}
-                    freeActiveDeployments={freeActiveDeployments}
-                    freeActiveLimit={freeActiveLimit}
                   />
                 </div>
               );

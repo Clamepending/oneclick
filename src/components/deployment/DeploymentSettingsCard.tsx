@@ -6,8 +6,7 @@ import { useRouter } from "next/navigation";
 type Props = {
   deploymentId: string;
   botName?: string | null;
-  planTier?: "free" | "paid" | null;
-  deploymentFlavor?: "basic" | "advanced" | "do_vm" | null;
+  deploymentFlavor?: "do_vm" | null;
   hasOpenaiApiKey: boolean;
   hasAnthropicApiKey: boolean;
   hasOpenrouterApiKey: boolean;
@@ -17,7 +16,6 @@ type Props = {
 export function DeploymentSettingsCard({
   deploymentId,
   botName,
-  planTier,
   deploymentFlavor,
   hasOpenaiApiKey,
   hasAnthropicApiKey,
@@ -77,15 +75,8 @@ export function DeploymentSettingsCard({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             botName: botName ?? undefined,
-            planTier: planTier === "paid" ? "paid" : "free",
-            deploymentFlavor:
-              planTier === "paid"
-                ? "basic"
-                : deploymentFlavor === "advanced"
-                  ? "advanced"
-                  : deploymentFlavor === "do_vm"
-                    ? "do_vm"
-                    : "basic",
+            planTier: "free",
+            deploymentFlavor: "do_vm",
           }),
         });
         const redeployBody = (await redeployResponse.json().catch(() => null)) as

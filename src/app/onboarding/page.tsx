@@ -22,44 +22,14 @@ export default function OnboardingPage() {
   const [provider, setProvider] = useState<"openai" | "anthropic">("openai");
   const [apiKey, setApiKey] = useState("");
   const [telegramBotToken, setTelegramBotToken] = useState("");
-  const [planTier, setPlanTier] = useState<"free" | "paid">("free");
-  const [deploymentFlavor, setDeploymentFlavor] = useState<"basic" | "advanced" | "do_vm">("do_vm");
   const [loading, setLoading] = useState(false);
   const [savingStep, setSavingStep] = useState(false);
   const [error, setError] = useState("");
-  const [freeSelectable, setFreeSelectable] = useState(true);
-  const [freeActiveDeployments, setFreeActiveDeployments] = useState(0);
-  const [freeActiveLimit, setFreeActiveLimit] = useState(1);
 
   useEffect(() => {
-    let cancelled = false;
     void (async () => {
       await fetch("/api/onboarding/start", { method: "POST" });
-      const response = await fetch("/api/deployments/eligibility", { cache: "no-store" }).catch(() => null);
-      if (!response?.ok) return;
-      const payload = (await response.json().catch(() => null)) as
-        | {
-            plans?: {
-              free?: { selectable?: boolean; activeCount?: number; activeLimit?: number };
-            };
-          }
-        | null;
-      if (cancelled) return;
-      const free = payload?.plans?.free;
-      const selectable = Boolean(free?.selectable ?? true);
-      const activeCount = Number(free?.activeCount ?? 0);
-      const activeLimit = Number(free?.activeLimit ?? 1);
-      setFreeSelectable(selectable);
-      setFreeActiveDeployments(Number.isFinite(activeCount) ? activeCount : 0);
-      setFreeActiveLimit(Number.isFinite(activeLimit) && activeLimit > 0 ? activeLimit : 1);
-      if (!selectable) {
-        setPlanTier("paid");
-        setDeploymentFlavor("basic");
-      }
     })();
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   const title = useMemo(() => `Step ${step} of 3`, [step]);
@@ -96,8 +66,8 @@ export default function OnboardingPage() {
         telegramBotToken: telegramBotToken.trim() || null,
         modelProvider: apiKey.trim() ? provider : null,
         modelApiKey: apiKey.trim() || null,
-        plan: planTier,
-        deploymentFlavor,
+        plan: "free",
+        deploymentFlavor: "do_vm",
       }),
     });
     if (!response.ok) {
@@ -130,7 +100,7 @@ export default function OnboardingPage() {
       const response = await fetch("/api/deployments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ planTier, deploymentFlavor }),
+        body: JSON.stringify({ deploymentFlavor: "do_vm" }),
       });
       const body = await parseDeployResponse(response);
       if (!response.ok || !body.id) {
@@ -161,18 +131,8 @@ export default function OnboardingPage() {
       )}
       {step === 3 && (
         <PlanStep
-          planTier={planTier}
-          deploymentFlavor={deploymentFlavor}
-          onSelectionChange={({ planTier: nextPlanTier, deploymentFlavor: nextFlavor }) => {
-            setPlanTier(nextPlanTier);
-            setDeploymentFlavor(nextFlavor);
-          }}
           onDeploy={handleDeploy}
           loading={loading}
-          hasApiKey={Boolean(apiKey.trim())}
-          freeSelectable={freeSelectable}
-          freeActiveDeployments={freeActiveDeployments}
-          freeActiveLimit={freeActiveLimit}
         />
       )}
 

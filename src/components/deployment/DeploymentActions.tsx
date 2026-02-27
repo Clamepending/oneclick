@@ -10,11 +10,7 @@ type Props = {
   deployProvider?: string | null;
   compact?: boolean;
   botName?: string | null;
-  planTier?: "free" | "paid";
-  deploymentFlavor?: "basic" | "advanced" | "do_vm";
-  freeSelectable?: boolean;
-  freeActiveDeployments?: number;
-  freeActiveLimit?: number;
+  deploymentFlavor?: "do_vm";
 };
 
 export function DeploymentActions({
@@ -24,17 +20,12 @@ export function DeploymentActions({
   deployProvider,
   compact = false,
   botName,
-  planTier = "free",
-  deploymentFlavor = "basic",
-  freeSelectable = true,
-  freeActiveDeployments = 0,
-  freeActiveLimit = 1,
+  deploymentFlavor = "do_vm",
 }: Props) {
   const router = useRouter();
   const [error, setError] = useState("");
   const [isRedeploying, setIsRedeploying] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [isUpgrading, setIsUpgrading] = useState(false);
   const [isApprovingPairing, setIsApprovingPairing] = useState(false);
   const [pairingCode, setPairingCode] = useState("");
   const [pairingResult, setPairingResult] = useState<{ type: "success" | "error"; message: string } | null>(null);
@@ -75,8 +66,8 @@ export function DeploymentActions({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           botName: botName ?? undefined,
-          planTier: planTier === "paid" ? "paid" : "free",
-          deploymentFlavor: planTier === "paid" ? "basic" : deploymentFlavor,
+          planTier: "free",
+          deploymentFlavor,
         }),
       });
       const payload = (await response.json()) as { id?: string; error?: string };
@@ -89,23 +80,6 @@ export function DeploymentActions({
       setError(err instanceof Error ? err.message : "Failed to redeploy");
     } finally {
       setIsRedeploying(false);
-    }
-  }
-
-  async function handleUpgradeToPaid() {
-    setError("");
-    setIsUpgrading(true);
-    try {
-      const response = await fetch(`/api/deployments/${deploymentId}/upgrade`, { method: "POST" });
-      const payload = (await response.json()) as { ok?: boolean; error?: string };
-      if (!response.ok || !payload.ok) {
-        throw new Error(payload.error || "Failed to upgrade plan");
-      }
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to upgrade plan");
-    } finally {
-      setIsUpgrading(false);
     }
   }
 
@@ -201,9 +175,9 @@ export function DeploymentActions({
               <a
                 className="button secondary"
                 href={buildSshDeepLink() ?? undefined}
-                aria-disabled={isRedeploying || isDeleting || isUpgrading}
+                aria-disabled={isRedeploying || isDeleting}
                 onClick={(event) => {
-                  if (isRedeploying || isDeleting || isUpgrading) {
+                  if (isRedeploying || isDeleting) {
                     event.preventDefault();
                   }
                 }}
@@ -215,7 +189,7 @@ export function DeploymentActions({
               className="button secondary"
               type="button"
               onClick={() => void handleCopySshCommand()}
-              disabled={isRedeploying || isDeleting || isUpgrading}
+              disabled={isRedeploying || isDeleting}
             >
               Copy SSH command
             </button>
@@ -227,27 +201,17 @@ export function DeploymentActions({
               className="button secondary"
               type="button"
               onClick={() => void handleRedeploy()}
-              disabled={isRedeploying || isDeleting || isUpgrading}
+              disabled={isRedeploying || isDeleting}
             >
               {isRedeploying ? "Redeploying..." : "Redeploy bot"}
             </button>
           </>
         ) : null}
-        {planTier === "free" ? (
-          <button
-            className="button secondary"
-            type="button"
-            onClick={() => void handleUpgradeToPaid()}
-            disabled={isRedeploying || isDeleting || isUpgrading}
-          >
-            {isUpgrading ? "Upgrading..." : "Upgrade to Paid ($20/mo)"}
-          </button>
-        ) : null}
         <button
           className="button secondary"
           type="button"
           onClick={() => void handleDelete()}
-          disabled={isRedeploying || isDeleting || isUpgrading || !canDelete}
+          disabled={isRedeploying || isDeleting || !canDelete}
           title={!canDelete ? "This deployment can no longer be deleted" : undefined}
         >
           {isDeleting ? "Deleting..." : "Delete bot"}
@@ -283,14 +247,14 @@ export function DeploymentActions({
               autoCapitalize="characters"
               spellCheck={false}
               maxLength={24}
-              disabled={isApprovingPairing || isRedeploying || isDeleting || isUpgrading}
+              disabled={isApprovingPairing || isRedeploying || isDeleting}
               style={{ minHeight: 34, minWidth: 220 }}
             />
             <button
               className="button secondary"
               type="button"
               onClick={() => void handleApproveTelegramPairing()}
-              disabled={isApprovingPairing || isRedeploying || isDeleting || isUpgrading}
+              disabled={isApprovingPairing || isRedeploying || isDeleting}
             >
               {isApprovingPairing ? "Approving..." : "Approve Telegram code"}
             </button>
@@ -304,12 +268,6 @@ export function DeploymentActions({
             </p>
           ) : null}
         </div>
-      ) : null}
-      {!freeSelectable ? (
-        <p className="muted" style={{ margin: 0 }}>
-          Free tier unavailable: you already have {freeActiveDeployments}/{freeActiveLimit} active free deployment
-          {freeActiveLimit === 1 ? "" : "s"}.
-        </p>
       ) : null}
     </div>
   );

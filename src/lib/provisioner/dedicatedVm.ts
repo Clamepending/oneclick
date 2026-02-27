@@ -91,7 +91,7 @@ runcmd:
 
 export async function createDedicatedSshHost(input: { deploymentId: string; userId: string }): Promise<Host> {
   const region = readTrimmedEnv("DO_REGION") || "nyc1";
-  const size = readTrimmedEnv("DO_SIZE") || "s-1vcpu-2gb";
+  const size = "s-1vcpu-2gb";
   const image = readTrimmedEnv("DO_IMAGE") || "ubuntu-24-04-x64";
   const tags = (readTrimmedEnv("DO_TAGS") || "oneclick,oneclick-bot")
     .split(",")

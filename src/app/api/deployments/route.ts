@@ -2,16 +2,11 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
 import {
-  computeFreeTrialExpiry,
   normalizeDeploymentFlavor,
-  FREE_TRIAL_DAYS,
-  isFreeTrialExpired,
   normalizePlanTier,
-  PAID_MONTHLY_PRICE_CENTS,
-  type PlanTier,
 } from "@/lib/plans";
 import { getRuntimeBaseDomain } from "@/lib/subdomainConfig";
-import { deactivateExpiredFreeTrialsForUser, freeTrialExpiredMessage } from "@/lib/trialEnforcement";
+import { deactivateExpiredFreeTrialsForUser } from "@/lib/trialEnforcement";
 import { buildRuntimeSubdomain, normalizeBotName } from "@/lib/provisioner/runtimeSlug";
 import { applyMemoryRateLimit } from "@/lib/security/rateLimit";
 import {
@@ -133,8 +128,8 @@ async function readDeployRequest(request: Request) {
     return {
       ok: true as const,
       botName: null as string | null,
-      planTier: null as PlanTier | null,
-      deploymentFlavor: null as "basic" | "advanced" | "do_vm" | null,
+      planTier: null as "free" | "paid" | null,
+      deploymentFlavor: null as "do_vm" | null,
     };
   }
 
@@ -145,8 +140,8 @@ async function readDeployRequest(request: Request) {
     return {
       ok: true as const,
       botName: null as string | null,
-      planTier: null as PlanTier | null,
-      deploymentFlavor: null as "basic" | "advanced" | "do_vm" | null,
+      planTier: null as "free" | "paid" | null,
+      deploymentFlavor: null as "do_vm" | null,
     };
   }
   if (payload.botName !== undefined && typeof payload.botName !== "string") {
@@ -401,50 +396,10 @@ export async function POST(request: Request) {
   const openaiApiKey = modelProvider === "openai" ? modelApiKey : null;
   const anthropicApiKey = modelProvider === "anthropic" ? modelApiKey : null;
   const telegramBotToken = onboarding.rows[0]?.telegram_bot_token?.trim() || null;
-  const selectedPlan = parsedPayload.planTier ?? normalizePlanTier(onboarding.rows[0]?.plan);
-  const selectedDeploymentFlavor =
-    selectedPlan === "paid"
-      ? "basic"
-      : parsedPayload.deploymentFlavor ?? normalizeDeploymentFlavor(onboarding.rows[0]?.deployment_flavor);
-  const existingTrialStartedAt = onboarding.rows[0]?.trial_started_at ?? null;
-  const existingTrialExpiresAt = onboarding.rows[0]?.trial_expires_at ?? null;
-  let trialStartedAt: Date | null = null;
-  let trialExpiresAt: Date | null = null;
-  if (selectedPlan === "free") {
-    trialStartedAt = existingTrialStartedAt ? new Date(existingTrialStartedAt) : new Date();
-    trialExpiresAt = existingTrialExpiresAt ? new Date(existingTrialExpiresAt) : computeFreeTrialExpiry(trialStartedAt);
-    if (isFreeTrialExpired(trialExpiresAt)) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: `${freeTrialExpiredMessage()} Select the paid tier ($20/month) to deploy again.`,
-        },
-        { status: 402 },
-      );
-    }
-
-    const maxFreeActivePerUser = readLimitEnv("DEPLOY_MAX_FREE_ACTIVE_PER_USER") ?? 1;
-    const freeActive = await pool.query<{ count: string }>(
-      `SELECT COUNT(*)::text as count
-       FROM deployments
-       WHERE user_id = $1
-         AND status IN ('queued', 'starting', 'ready')
-         AND COALESCE(NULLIF(TRIM(plan_tier), ''), 'free') = 'free'`,
-      [session.user.email],
-    );
-    const freeActiveCount = Number(freeActive.rows[0]?.count ?? "0");
-    if (freeActiveCount >= maxFreeActivePerUser) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "Free tier allows only one active deployment at a time. Stop or upgrade the existing free bot before deploying another.",
-          freeActiveDeployments: freeActiveCount,
-          freeActiveLimit: maxFreeActivePerUser,
-        },
-        { status: 409 },
-      );
-    }
-  }
+  const selectedPlan = "free";
+  const selectedDeploymentFlavor = "do_vm";
+  const trialStartedAt: Date | null = null;
+  const trialExpiresAt: Date | null = null;
   const reservation = await reserveBotIdentity(session.user.email, botName);
   if (!reservation.ok) {
     return NextResponse.json({ ok: false, error: reservation.error }, { status: 409 });
@@ -453,21 +408,15 @@ export async function POST(request: Request) {
   await pool.query(
     `UPDATE onboarding_sessions
      SET plan = $1,
-         trial_started_at = CASE
-           WHEN $1 = 'free' THEN COALESCE(trial_started_at, $2)
-           ELSE trial_started_at
-         END,
-         trial_expires_at = CASE
-           WHEN $1 = 'free' THEN COALESCE(trial_expires_at, $3)
-           ELSE trial_expires_at
-         END,
+         trial_started_at = NULL,
+         trial_expires_at = NULL,
          deployment_flavor = $4,
          updated_at = NOW()
      WHERE user_id = $5`,
     [
       selectedPlan,
-      trialStartedAt?.toISOString() ?? null,
-      trialExpiresAt?.toISOString() ?? null,
+      null,
+      null,
       selectedDeploymentFlavor,
       session.user.email,
     ],
@@ -488,9 +437,9 @@ export async function POST(request: Request) {
       telegramBotToken,
       selectedPlan,
       selectedDeploymentFlavor,
-      selectedPlan === "free" ? trialStartedAt?.toISOString() ?? null : null,
-      selectedPlan === "free" ? trialExpiresAt?.toISOString() ?? null : null,
-      selectedPlan === "paid" ? PAID_MONTHLY_PRICE_CENTS : null,
+      null,
+      null,
+      null,
     ],
   );
 
@@ -504,36 +453,9 @@ export async function POST(request: Request) {
      VALUES ($1, 'queued', $2)`,
     [
       deploymentId,
-      selectedPlan === "paid"
-        ? `Paid tier selected ($20/month). Using upgraded runtime specs.`
-        : `Free trial active for ${FREE_TRIAL_DAYS} days (expires ${trialExpiresAt?.toISOString() ?? "unknown"}).`,
+      "DigitalOcean VM mode selected: dedicated VM per deployment.",
     ],
   );
-  if (selectedDeploymentFlavor === "advanced") {
-    await pool.query(
-      `INSERT INTO deployment_events (deployment_id, status, message)
-       VALUES ($1, 'queued', 'Advanced mode selected: runtime will self-bootstrap OttoAuth instructions after startup.')`,
-      [deploymentId],
-    );
-  }
-  if (selectedPlan === "free") {
-    const freeActiveAfterInsert = await pool.query<{ count: string }>(
-      `SELECT COUNT(*)::text as count
-       FROM deployments
-       WHERE user_id = $1
-         AND status IN ('queued', 'starting', 'ready')
-         AND COALESCE(NULLIF(TRIM(plan_tier), ''), 'free') = 'free'`,
-      [session.user.email],
-    );
-    await pool.query(
-      `INSERT INTO deployment_events (deployment_id, status, message)
-       VALUES ($1, 'queued', $2)`,
-      [
-        deploymentId,
-        `Free-tier active deployments for user: ${Number(freeActiveAfterInsert.rows[0]?.count ?? "0")}/${readLimitEnv("DEPLOY_MAX_FREE_ACTIVE_PER_USER") ?? 1}.`,
-      ],
-    );
-  }
 
   try {
     const queueInfo = getQueueModeInfo();

@@ -48,17 +48,6 @@ function getStatusMeta(status: DeploymentSummary["status"]) {
 
 export function BotDashboard({ deployments }: Props) {
   const router = useRouter();
-  const freeActiveDeployments = useMemo(
-    () =>
-      deployments.filter(
-        (deployment) =>
-          ["queued", "starting", "ready"].includes(deployment.status) &&
-          (deployment.planTier?.trim().toLowerCase() ?? "free") !== "paid",
-      ).length,
-    [deployments],
-  );
-  const freeActiveLimit = 1;
-  const freeSelectable = freeActiveDeployments < freeActiveLimit;
   const groups = useMemo<BotGroup[]>(() => {
     const byBot = new Map<string, DeploymentSummary[]>();
     for (const deployment of deployments) {
@@ -284,7 +273,7 @@ export function BotDashboard({ deployments }: Props) {
                 ) : null}
                 {(deployment.status === "queued" || deployment.status === "starting") ? (
                   <p className="muted" style={{ margin: 0 }}>
-                    Deployments usually take ~10 minutes on AWS ECS/Fargate (image pull + startup).
+                    Deployments usually take ~10 minutes on DigitalOcean VM (image pull + startup).
                   </p>
                 ) : null}
                 <div className="row">
@@ -297,11 +286,6 @@ export function BotDashboard({ deployments }: Props) {
                     </a>
                   ) : null}
                 </div>
-                {deployment.status === "ready" && deployment.readyUrl && deployment.deployProvider === "ecs" ? (
-                  <p className="muted" style={{ margin: 0 }}>
-                    Open via the HTTPS runtime URL only. Raw ECS IP/port URLs can fail Control UI auth.
-                  </p>
-                ) : null}
                 <DeploymentActions
                   deploymentId={deployment.id}
                   status={deployment.status}
@@ -309,11 +293,7 @@ export function BotDashboard({ deployments }: Props) {
                   deployProvider={deployment.deployProvider}
                   compact
                   botName={deployment.botName}
-                  planTier={deployment.planTier === "paid" ? "paid" : "free"}
                   deploymentFlavor={normalizeDeploymentFlavor(deployment.deploymentFlavor)}
-                  freeSelectable={freeSelectable}
-                  freeActiveDeployments={freeActiveDeployments}
-                  freeActiveLimit={freeActiveLimit}
                 />
               </div>
             );

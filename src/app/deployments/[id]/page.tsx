@@ -14,7 +14,7 @@ type DeploymentResponse = {
   runtimeId?: string | null;
   deployProvider?: string | null;
   planTier?: "free" | "paid" | null;
-  deploymentFlavor?: "basic" | "advanced" | "do_vm" | null;
+  deploymentFlavor?: "do_vm" | null;
   trialStartedAt?: string | null;
   trialExpiresAt?: string | null;
   deactivatedAt?: string | null;
@@ -155,24 +155,14 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
               Provider: <code>{deployment.deployProvider ?? "unknown"}</code>
             </p>
             <p className="muted">
-              Plan:{" "}
+              Mode:{" "}
               <code>
-                {deployment.planTier === "paid"
-                  ? `${deploymentModeDisplayName(
-                      normalizePlanTier(deployment.planTier),
-                      normalizeDeploymentFlavor(deployment.deploymentFlavor),
-                    )}${deployment.monthlyPriceCents ? ` ($${(deployment.monthlyPriceCents / 100).toFixed(0)}/mo)` : ""}`
-                  : deploymentModeDisplayName(
-                      normalizePlanTier(deployment.planTier),
-                      normalizeDeploymentFlavor(deployment.deploymentFlavor),
-                    )}
+                {deploymentModeDisplayName(
+                  normalizePlanTier(deployment.planTier),
+                  normalizeDeploymentFlavor(deployment.deploymentFlavor),
+                )}
               </code>
             </p>
-            {deployment.trialExpiresAt ? (
-              <p className="muted">
-                Trial expires: <code>{new Date(deployment.trialExpiresAt).toLocaleString()}</code>
-              </p>
-            ) : null}
             <p className="muted">
               Runtime ID: <code>{deployment.runtimeId ?? "pending"}</code>
             </p>
@@ -206,11 +196,6 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
                 Open OpenClaw
               </a>
             </p>
-            {deployment.deployProvider === "ecs" ? (
-              <p className="muted" style={{ margin: 0 }}>
-                Use this HTTPS runtime URL. Direct ECS IP/port URLs can trigger Control UI device-identity errors.
-              </p>
-            ) : null}
             <p className="muted" style={{ margin: 0 }}>
               To change model or Telegram keys, start a new deployment from onboarding. In-place runtime key editing is disabled.
             </p>
@@ -223,7 +208,6 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
             runtimeId={deployment.runtimeId}
             deployProvider={deployment.deployProvider}
             botName={deployment.botName}
-            planTier={deployment.planTier === "paid" ? "paid" : "free"}
             deploymentFlavor={normalizeDeploymentFlavor(deployment.deploymentFlavor)}
           />
         ) : null}

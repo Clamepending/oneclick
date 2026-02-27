@@ -302,14 +302,9 @@ function readOptionalEnv(key: string) {
 }
 
 function getDockerResourceFlags(planTier: PlanTier) {
-  const memory =
-    readOptionalEnv(planTier === "paid" ? "OPENCLAW_LIMIT_MEMORY_PAID" : "OPENCLAW_LIMIT_MEMORY_FREE") ||
-    readOptionalEnv("OPENCLAW_LIMIT_MEMORY") ||
-    (planTier === "paid" ? "2g" : "1536m");
-  const cpus =
-    readOptionalEnv(planTier === "paid" ? "OPENCLAW_LIMIT_CPUS_PAID" : "OPENCLAW_LIMIT_CPUS_FREE") ||
-    readOptionalEnv("OPENCLAW_LIMIT_CPUS") ||
-    (planTier === "paid" ? "1" : "0.75");
+  void planTier;
+  const memory = readOptionalEnv("OPENCLAW_LIMIT_MEMORY") || "2g";
+  const cpus = readOptionalEnv("OPENCLAW_LIMIT_CPUS") || "1";
   const pids = readEnvLimit("OPENCLAW_LIMIT_PIDS", "256");
   const shmSize = readEnvLimit("OPENCLAW_LIMIT_SHM", "256m");
   const logMaxSize = readEnvLimit("OPENCLAW_LIMIT_LOG_MAX_SIZE", "10m");
@@ -610,7 +605,7 @@ async function launchViaSsh(input: LaunchInput) {
   const openrouterApiKey = input.openrouterApiKey?.trim() || "";
   const subsidyProxyBaseUrl = input.subsidyProxyBaseUrl?.trim() || "";
   const subsidyProxyToken = input.subsidyProxyToken?.trim() || "";
-  const planTier = normalizePlanTier(input.planTier);
+  const planTier = "free";
   const resourceFlags = getDockerResourceFlags(planTier);
   const openclawNodeOptions = readTrimmedEnv("OPENCLAW_NODE_OPTIONS") || "--max-old-space-size=1536";
   const onboardCommand = buildOpenClawOnboardCommand({
@@ -827,22 +822,7 @@ async function launchViaEcs(input: LaunchInput) {
           );
         }
       }
-      if (deploymentFlavor === "advanced") {
-        const advancedMessage = shellQuote(getAdvancedBootstrapMessage());
-        scriptSteps.push(
-          "BOOTSTRAP_SENTINEL=/home/node/.openclaw/.oneclick-advanced-ottoauth-sent",
-          [
-            "( if [ ! -f \"$BOOTSTRAP_SENTINEL\" ]; then",
-            "for i in $(seq 1 60); do",
-            "if openclaw health >/dev/null 2>&1; then break; fi;",
-            "sleep 5;",
-            "done;",
-            "sleep 2;",
-            `openclaw agent --session-id main --message ${advancedMessage} >/tmp/oneclick-advanced-bootstrap.log 2>&1 && touch \"$BOOTSTRAP_SENTINEL\" || true;`,
-            "fi ) &",
-          ].join(" "),
-        );
-      }
+      void deploymentFlavor;
       scriptSteps.push(
         "echo '[oneclick] patch control UI unsupported-schema copy' >&2",
         [
@@ -1038,29 +1018,7 @@ async function launchViaEcs(input: LaunchInput) {
 }
 
 export async function launchUserContainer(input: LaunchInput) {
-  const provider = input.providerOverride ?? (readTrimmedEnv("DEPLOY_PROVIDER") || "mock");
-
-  if (provider === "ssh") {
-    return launchViaSsh(input);
-  }
-
-  if (provider === "ecs") {
-    return launchViaEcs(input);
-  }
-
-  const image = getOpenClawImage();
-  const port = getOpenClawPort();
-  const startCommand = getOpenClawStartCommand();
-  return {
-    runtimeId: randomUUID(),
-    deployProvider: "mock",
-    image,
-    port,
-    hostPort: null,
-    startCommand,
-    hostName: input.host?.name ?? "mock",
-    readyUrl: `${process.env.APP_BASE_URL ?? "http://localhost:3000"}/runtime/${input.deploymentId}`,
-  };
+  return launchViaSsh(input);
 }
 
 export async function destroyUserRuntime(input: DestroyInput) {
