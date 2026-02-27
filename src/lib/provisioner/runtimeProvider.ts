@@ -627,8 +627,8 @@ async function launchViaSsh(input: LaunchInput) {
   const safeUser = sanitizeSegment(input.userId);
   const safeDeployment = sanitizeSegment(input.deploymentId);
   const containerName = buildRuntimeName(input);
-  const configBase = process.env.OPENCLAW_CONFIG_MOUNT_BASE ?? "/var/lib/oneclick/openclaw";
-  const workspaceSuffix = process.env.OPENCLAW_WORKSPACE_SUFFIX ?? "workspace";
+  const configBase = readTrimmedEnv("OPENCLAW_CONFIG_MOUNT_BASE") || "/var/lib/oneclick/openclaw";
+  const workspaceSuffix = readTrimmedEnv("OPENCLAW_WORKSPACE_SUFFIX") || "workspace";
   const userDir = `${configBase}/${safeUser}/${safeDeployment}`;
   const workspaceDir = `${userDir}/${workspaceSuffix}`;
 
