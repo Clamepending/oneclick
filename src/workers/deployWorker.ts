@@ -33,6 +33,11 @@ function getQueueConnection() {
   return { url: redisUrl };
 }
 
+function useAdvisoryLocks() {
+  const value = (process.env.DEPLOY_USE_ADVISORY_LOCKS ?? "false").trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
 export async function enqueueDeploymentJob(job: DeploymentJob) {
   const sqsQueueUrl = readTrimmedEnv("SQS_DEPLOYMENT_QUEUE_URL");
   const awsRegion = readTrimmedEnv("AWS_REGION");
@@ -365,13 +370,17 @@ async function waitForRuntimeReady(input: {
 
 export async function processDeploymentJob(job: DeploymentJob) {
   await ensureSchema();
-  const lock = await pool.query<{ locked: boolean }>(
-    `SELECT pg_try_advisory_lock(hashtext($1)) AS locked`,
-    [job.deploymentId],
-  );
-  if (!lock.rows[0]?.locked) {
-    await appendEvent(job.deploymentId, "starting", "Skipping duplicate in-flight deployment job");
-    return;
+  let advisoryLockAcquired = false;
+  if (useAdvisoryLocks()) {
+    const lock = await pool.query<{ locked: boolean }>(
+      `SELECT pg_try_advisory_lock(hashtext($1)) AS locked`,
+      [job.deploymentId],
+    );
+    advisoryLockAcquired = Boolean(lock.rows[0]?.locked);
+    if (!advisoryLockAcquired) {
+      await appendEvent(job.deploymentId, "starting", "Skipping duplicate in-flight deployment job");
+      return;
+    }
   }
   try {
   const existing = await pool.query<{ status: string }>(
@@ -623,7 +632,9 @@ export async function processDeploymentJob(job: DeploymentJob) {
     await appendEvent(job.deploymentId, "ready", "Configured runtime API credentials from deployment settings.");
   }
   } finally {
-    await pool.query(`SELECT pg_advisory_unlock(hashtext($1))`, [job.deploymentId]).catch(() => {});
+    if (advisoryLockAcquired) {
+      await pool.query(`SELECT pg_advisory_unlock(hashtext($1))`, [job.deploymentId]).catch(() => {});
+    }
   }
 }
 
