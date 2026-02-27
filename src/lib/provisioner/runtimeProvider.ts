@@ -295,11 +295,22 @@ function readEnvLimit(key: string, fallback: string) {
   return value && value.length > 0 ? value : fallback;
 }
 
-function getDockerResourceFlags() {
-  const memory = readEnvLimit("OPENCLAW_LIMIT_MEMORY", "1g");
-  const cpus = readEnvLimit("OPENCLAW_LIMIT_CPUS", "0.5");
+function readOptionalEnv(key: string) {
+  const value = process.env[key]?.trim();
+  return value && value.length > 0 ? value : "";
+}
+
+function getDockerResourceFlags(planTier: PlanTier) {
+  const memory =
+    readOptionalEnv(planTier === "paid" ? "OPENCLAW_LIMIT_MEMORY_PAID" : "OPENCLAW_LIMIT_MEMORY_FREE") ||
+    readOptionalEnv("OPENCLAW_LIMIT_MEMORY") ||
+    (planTier === "paid" ? "2g" : "1536m");
+  const cpus =
+    readOptionalEnv(planTier === "paid" ? "OPENCLAW_LIMIT_CPUS_PAID" : "OPENCLAW_LIMIT_CPUS_FREE") ||
+    readOptionalEnv("OPENCLAW_LIMIT_CPUS") ||
+    (planTier === "paid" ? "1" : "0.75");
   const pids = readEnvLimit("OPENCLAW_LIMIT_PIDS", "256");
-  const shmSize = readEnvLimit("OPENCLAW_LIMIT_SHM", "128m");
+  const shmSize = readEnvLimit("OPENCLAW_LIMIT_SHM", "256m");
   const logMaxSize = readEnvLimit("OPENCLAW_LIMIT_LOG_MAX_SIZE", "10m");
   const logMaxFiles = readEnvLimit("OPENCLAW_LIMIT_LOG_MAX_FILES", "3");
   // Writable-layer storage cap; may require specific Docker storage-driver support.
@@ -591,7 +602,9 @@ async function launchViaSsh(input: LaunchInput) {
   const openrouterApiKey = input.openrouterApiKey?.trim() || "";
   const subsidyProxyBaseUrl = input.subsidyProxyBaseUrl?.trim() || "";
   const subsidyProxyToken = input.subsidyProxyToken?.trim() || "";
-  const resourceFlags = getDockerResourceFlags();
+  const planTier = normalizePlanTier(input.planTier);
+  const resourceFlags = getDockerResourceFlags(planTier);
+  const openclawNodeOptions = readTrimmedEnv("OPENCLAW_NODE_OPTIONS") || "--max-old-space-size=1536";
   const onboardCommand = buildOpenClawOnboardCommand({
     anthropicApiKey,
     openaiApiKey,
@@ -599,6 +612,9 @@ async function launchViaSsh(input: LaunchInput) {
     subsidyProxyToken,
     containerPort,
   });
+  const runSshOnboard = (readTrimmedEnv("OPENCLAW_SSH_RUN_ONBOARD") || "false").toLowerCase() === "true";
+  const setTelegramPluginConfig =
+    (readTrimmedEnv("OPENCLAW_SSH_SET_TELEGRAM_PLUGIN_CONFIG") || "false").toLowerCase() === "true";
 
   const safeUser = sanitizeSegment(input.userId);
   const safeDeployment = sanitizeSegment(input.deploymentId);
@@ -624,17 +640,17 @@ async function launchViaSsh(input: LaunchInput) {
           `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.trustedProxies '["172.16.0.0/12"]'`,
         ]
       : []),
-    ...(telegramBotToken
+    ...(telegramBotToken && setTelegramPluginConfig
       ? [
           `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set plugins.entries.telegram.enabled true`,
         ]
       : []),
-    ...(onboardCommand
+    ...(onboardCommand && runSshOnboard
       ? [
-          `docker run --rm --entrypoint sh -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace"${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""}${subsidyProxyBaseUrl && subsidyProxyToken && !openaiApiKey && !anthropicApiKey && !openrouterApiKey ? ` -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)}` : ""} "${image}" -lc ${shellQuote(onboardCommand)}`,
+          `docker run --rm --entrypoint sh -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace"${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""}${subsidyProxyBaseUrl && subsidyProxyToken && !openaiApiKey && !anthropicApiKey && !openrouterApiKey ? ` -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)}` : ""} "${image}" -lc ${shellQuote(`timeout 120 ${onboardCommand}`)}`,
         ]
       : []),
-    `docker run -d --name "${containerName}" --restart unless-stopped --memory=${resourceFlags.memory} --memory-swap=${resourceFlags.memory} --cpus=${resourceFlags.cpus} --pids-limit=${resourceFlags.pids} --shm-size=${resourceFlags.shmSize} --log-opt max-size=${resourceFlags.logMaxSize} --log-opt max-file=${resourceFlags.logMaxFiles}${resourceFlags.writableLayerSize ? ` --storage-opt size=${resourceFlags.writableLayerSize}` : ""} -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" -e TELEGRAM_ENABLED=${telegramEnabled}${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""}${!openaiApiKey && !anthropicApiKey && !openrouterApiKey && subsidyProxyBaseUrl && subsidyProxyToken ? ` -e OPENAI_API_KEY=${shellQuote(subsidyProxyToken)} -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)}` : ""} -p "${hostPort}:${containerPort}" "${image}" ${startCommand}`,
+    `docker run -d --name "${containerName}" --restart unless-stopped --memory=${resourceFlags.memory} --memory-swap=${resourceFlags.memory} --cpus=${resourceFlags.cpus} --pids-limit=${resourceFlags.pids} --shm-size=${resourceFlags.shmSize} --log-opt max-size=${resourceFlags.logMaxSize} --log-opt max-file=${resourceFlags.logMaxFiles}${resourceFlags.writableLayerSize ? ` --storage-opt size=${resourceFlags.writableLayerSize}` : ""} -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" -e NODE_OPTIONS=${shellQuote(openclawNodeOptions)} -e TELEGRAM_ENABLED=${telegramEnabled}${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""}${!openaiApiKey && !anthropicApiKey && !openrouterApiKey && subsidyProxyBaseUrl && subsidyProxyToken ? ` -e OPENAI_API_KEY=${shellQuote(subsidyProxyToken)} -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)}` : ""} -p "${hostPort}:${containerPort}" "${image}" ${startCommand}`,
   ].join(" && ");
 
   await runSshCommand(sshTarget, remoteScript);

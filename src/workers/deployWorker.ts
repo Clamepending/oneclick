@@ -306,6 +306,24 @@ async function waitForRuntimeReady(input: {
 
 export async function processDeploymentJob(job: DeploymentJob) {
   await ensureSchema();
+  const lock = await pool.query<{ locked: boolean }>(
+    `SELECT pg_try_advisory_lock(hashtext($1)) AS locked`,
+    [job.deploymentId],
+  );
+  if (!lock.rows[0]?.locked) {
+    await appendEvent(job.deploymentId, "starting", "Skipping duplicate in-flight deployment job");
+    return;
+  }
+  try {
+  const existing = await pool.query<{ status: string }>(
+    `SELECT status FROM deployments WHERE id = $1 LIMIT 1`,
+    [job.deploymentId],
+  );
+  const existingStatus = (existing.rows[0]?.status || "").trim().toLowerCase();
+  if (existingStatus === "ready") {
+    await appendEvent(job.deploymentId, "ready", "Skipping retry because deployment is already ready");
+    return;
+  }
   await appendEvent(job.deploymentId, "starting", "Scheduling runtime host");
   const defaultProvider = readTrimmedEnv("DEPLOY_PROVIDER") || "mock";
 
@@ -513,6 +531,9 @@ export async function processDeploymentJob(job: DeploymentJob) {
   }
   if (selectedOpenAiKey || selectedAnthropicKey || selectedOpenRouterKey) {
     await appendEvent(job.deploymentId, "ready", "Configured runtime API credentials from deployment settings.");
+  }
+  } finally {
+    await pool.query(`SELECT pg_advisory_unlock(hashtext($1))`, [job.deploymentId]).catch(() => {});
   }
 }
 
