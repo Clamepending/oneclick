@@ -23,7 +23,7 @@ export default function OnboardingPage() {
   const [apiKey, setApiKey] = useState("");
   const [telegramBotToken, setTelegramBotToken] = useState("");
   const [planTier, setPlanTier] = useState<"free" | "paid">("free");
-  const [deploymentFlavor, setDeploymentFlavor] = useState<"basic" | "advanced">("basic");
+  const [deploymentFlavor, setDeploymentFlavor] = useState<"basic" | "advanced" | "lightsail">("lightsail");
   const [loading, setLoading] = useState(false);
   const [savingStep, setSavingStep] = useState(false);
   const [error, setError] = useState("");

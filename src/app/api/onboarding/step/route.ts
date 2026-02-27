@@ -11,7 +11,7 @@ const stepPayload = z.object({
   modelProvider: z.enum(["openai", "anthropic"]).nullable().optional(),
   modelApiKey: z.string().trim().min(1).max(200).nullable().optional(),
   plan: z.enum(["free", "paid"]).optional(),
-  deploymentFlavor: z.enum(["basic", "advanced"]).optional(),
+  deploymentFlavor: z.enum(["basic", "advanced", "lightsail"]).optional(),
 });
 
 export async function POST(request: Request) {

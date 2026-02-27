@@ -46,6 +46,7 @@ Runtime deployment mode:
 - `DEPLOY_PROVIDER=mock` (default placeholder runtime URL)
 - `DEPLOY_PROVIDER=ssh` (real SSH host deployment using Docker)
 - `DEPLOY_PROVIDER=ecs` (AWS ECS Fargate, one always-on task per deployment)
+- `DEPLOY_PROVIDER_LIGHTSAIL=ssh` maps `deploymentFlavor=lightsail` to SSH-host deployments (defaults to `ssh`)
 - `DEPLOY_SSH_PRIVATE_KEY` can contain a PEM private key with `\\n` newlines.
 - `DEPLOY_SSH_KNOWN_HOSTS` is optional but recommended for strict host verification.
 - `OPENCLAW_TELEGRAM_BOT_TOKEN` is required when users select Telegram during onboarding; this token is injected at container launch.

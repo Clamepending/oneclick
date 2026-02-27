@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
+import { normalizeDeploymentFlavor } from "@/lib/plans";
 import { DeploymentActions } from "@/components/deployment/DeploymentActions";
 import { deactivateExpiredFreeTrialsForUser } from "@/lib/trialEnforcement";
 
@@ -195,7 +196,7 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
                     compact
                     botName={deployment.bot_name}
                     planTier={deployment.plan_tier === "paid" ? "paid" : "free"}
-                    deploymentFlavor={deployment.deployment_flavor?.trim().toLowerCase() === "advanced" ? "advanced" : "basic"}
+                    deploymentFlavor={normalizeDeploymentFlavor(deployment.deployment_flavor)}
                     freeSelectable={freeSelectable}
                     freeActiveDeployments={freeActiveDeployments}
                     freeActiveLimit={freeActiveLimit}

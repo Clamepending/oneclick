@@ -134,7 +134,7 @@ async function readDeployRequest(request: Request) {
       ok: true as const,
       botName: null as string | null,
       planTier: null as PlanTier | null,
-      deploymentFlavor: null as "basic" | "advanced" | null,
+      deploymentFlavor: null as "basic" | "advanced" | "lightsail" | null,
     };
   }
 
@@ -146,7 +146,7 @@ async function readDeployRequest(request: Request) {
       ok: true as const,
       botName: null as string | null,
       planTier: null as PlanTier | null,
-      deploymentFlavor: null as "basic" | "advanced" | null,
+      deploymentFlavor: null as "basic" | "advanced" | "lightsail" | null,
     };
   }
   if (payload.botName !== undefined && typeof payload.botName !== "string") {

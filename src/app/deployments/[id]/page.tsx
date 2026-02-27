@@ -14,7 +14,7 @@ type DeploymentResponse = {
   runtimeId?: string | null;
   deployProvider?: string | null;
   planTier?: "free" | "paid" | null;
-  deploymentFlavor?: "basic" | "advanced" | null;
+  deploymentFlavor?: "basic" | "advanced" | "lightsail" | null;
   trialStartedAt?: string | null;
   trialExpiresAt?: string | null;
   deactivatedAt?: string | null;

@@ -7,7 +7,7 @@ type Props = {
   deploymentId: string;
   botName?: string | null;
   planTier?: "free" | "paid" | null;
-  deploymentFlavor?: "basic" | "advanced" | null;
+  deploymentFlavor?: "basic" | "advanced" | "lightsail" | null;
   hasOpenaiApiKey: boolean;
   hasAnthropicApiKey: boolean;
   hasOpenrouterApiKey: boolean;
@@ -78,7 +78,14 @@ export function DeploymentSettingsCard({
           body: JSON.stringify({
             botName: botName ?? undefined,
             planTier: planTier === "paid" ? "paid" : "free",
-            deploymentFlavor: planTier === "paid" ? "basic" : deploymentFlavor === "advanced" ? "advanced" : "basic",
+            deploymentFlavor:
+              planTier === "paid"
+                ? "basic"
+                : deploymentFlavor === "advanced"
+                  ? "advanced"
+                  : deploymentFlavor === "lightsail"
+                    ? "lightsail"
+                    : "basic",
           }),
         });
         const redeployBody = (await redeployResponse.json().catch(() => null)) as

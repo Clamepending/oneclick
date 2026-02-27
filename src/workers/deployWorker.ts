@@ -84,6 +84,13 @@ function readTrimmedEnv(name: string) {
   return raw.trim().replace(/^"(.*)"$/, "$1").replace(/\\n/g, "").trim();
 }
 
+function resolveProviderForDeployment(defaultProvider: string, deploymentFlavor: DeploymentFlavor) {
+  if (deploymentFlavor === "lightsail") {
+    return readTrimmedEnv("DEPLOY_PROVIDER_LIGHTSAIL") || "ssh";
+  }
+  return defaultProvider;
+}
+
 function buildAwsConfigWithTrimmedCreds(region: string): ECSClientConfig {
   const accessKeyId = readTrimmedEnv("AWS_ACCESS_KEY_ID");
   const secretAccessKey = readTrimmedEnv("AWS_SECRET_ACCESS_KEY");
@@ -300,7 +307,22 @@ async function waitForRuntimeReady(input: {
 export async function processDeploymentJob(job: DeploymentJob) {
   await ensureSchema();
   await appendEvent(job.deploymentId, "starting", "Scheduling runtime host");
-  const provider = readTrimmedEnv("DEPLOY_PROVIDER") || "mock";
+  const defaultProvider = readTrimmedEnv("DEPLOY_PROVIDER") || "mock";
+
+  const providerSelectionRow = await pool.query<{
+    plan_tier: string | null;
+    deployment_flavor: string | null;
+  }>(
+    `SELECT plan_tier, deployment_flavor
+     FROM deployments
+     WHERE id = $1
+     LIMIT 1`,
+    [job.deploymentId],
+  );
+  const selectedDeploymentFlavor = normalizeDeploymentFlavor(
+    providerSelectionRow.rows[0]?.deployment_flavor,
+  ) as DeploymentFlavor;
+  const provider = resolveProviderForDeployment(defaultProvider, selectedDeploymentFlavor);
   const providerRequiresHost = provider === "ssh" || provider === "mock";
 
   // Enforce one runtime per user by destroying previous ready runtimes.
@@ -459,6 +481,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
     subsidyProxyBaseUrl,
     planTier,
     deploymentFlavor,
+    providerOverride: provider as "mock" | "ssh" | "ecs",
   });
   await pool.query(
     `UPDATE deployments

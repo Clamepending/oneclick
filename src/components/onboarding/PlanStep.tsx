@@ -4,8 +4,8 @@ import { getPlanStorageGb } from "@/lib/plans";
 
 type Props = {
   planTier: "free" | "paid";
-  deploymentFlavor: "basic" | "advanced";
-  onSelectionChange: (selection: { planTier: "free" | "paid"; deploymentFlavor: "basic" | "advanced" }) => void;
+  deploymentFlavor: "basic" | "advanced" | "lightsail";
+  onSelectionChange: (selection: { planTier: "free" | "paid"; deploymentFlavor: "basic" | "advanced" | "lightsail" }) => void;
   onDeploy: () => void;
   loading: boolean;
   hasApiKey: boolean;
@@ -25,7 +25,8 @@ export function PlanStep({
   freeActiveDeployments = 0,
   freeActiveLimit = 1,
 }: Props) {
-  const selectedMode = planTier === "paid" ? "paid_basic" : deploymentFlavor === "advanced" ? "free_advanced" : "free_basic";
+  const selectedMode =
+    planTier === "paid" ? "paid_basic" : deploymentFlavor === "advanced" ? "free_advanced" : deploymentFlavor === "lightsail" ? "free_lightsail" : "free_basic";
   const freeStorageGb = getPlanStorageGb("free");
   const paidStorageGb = getPlanStorageGb("paid");
 
@@ -34,6 +35,37 @@ export function PlanStep({
       <h2>Choose your plan</h2>
       <p className="muted">Choose a deployment mode. Advanced adds an automatic post-setup agent instruction flow for integrations.</p>
       <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
+        <button
+          type="button"
+          disabled={!freeSelectable}
+          onClick={() => onSelectionChange({ planTier: "free", deploymentFlavor: "lightsail" })}
+          style={{
+            textAlign: "left",
+            border: `1px solid ${selectedMode === "free_lightsail" && freeSelectable ? "var(--border-strong)" : "var(--border)"}`,
+            borderRadius: 10,
+            padding: 16,
+            background: selectedMode === "free_lightsail" && freeSelectable ? "var(--accent-surface)" : "transparent",
+            color: "inherit",
+            cursor: freeSelectable ? "pointer" : "not-allowed",
+            opacity: freeSelectable ? 1 : 0.6,
+          }}
+        >
+          <strong>Free (Lightsail)</strong>
+          <p className="muted" style={{ marginBottom: 8 }}>
+            Default free mode on a Lightsail-style single-host runtime.
+          </p>
+          <ul className="muted" style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
+            <li>1 active deployment</li>
+            <li>Persistent storage target: {freeStorageGb} GB</li>
+            <li>Single-host deployment path (SSH provider)</li>
+          </ul>
+          {!freeSelectable ? (
+            <p className="muted" style={{ marginTop: 8, marginBottom: 0 }}>
+              Unavailable: you already have {freeActiveDeployments}/{freeActiveLimit} active free deployment
+              {freeActiveLimit === 1 ? "" : "s"}.
+            </p>
+          ) : null}
+        </button>
         <button
           type="button"
           disabled={!freeSelectable}
@@ -134,6 +166,8 @@ export function PlanStep({
           ? "Starting..."
           : planTier === "paid"
             ? "Start Paid (Basic) Deploy ($20/mo)"
+            : deploymentFlavor === "lightsail"
+              ? "Start Free (Lightsail) Deploy"
             : deploymentFlavor === "advanced"
               ? "Start Free (Advanced) Deploy"
               : "Start Free (Basic) Deploy"}

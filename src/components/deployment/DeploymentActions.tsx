@@ -10,7 +10,7 @@ type Props = {
   compact?: boolean;
   botName?: string | null;
   planTier?: "free" | "paid";
-  deploymentFlavor?: "basic" | "advanced";
+  deploymentFlavor?: "basic" | "advanced" | "lightsail";
   freeSelectable?: boolean;
   freeActiveDeployments?: number;
   freeActiveLimit?: number;
@@ -38,8 +38,16 @@ export function DeploymentActions({
   const isReady = status === "ready";
   const freeStorageGb = getPlanStorageGb("free");
   const paidStorageGb = getPlanStorageGb("paid");
-  const [redeploySelection, setRedeploySelection] = useState<"free_basic" | "free_advanced" | "paid_basic">(
-    planTier === "paid" ? "paid_basic" : !freeSelectable ? "paid_basic" : deploymentFlavor === "advanced" ? "free_advanced" : "free_basic",
+  const [redeploySelection, setRedeploySelection] = useState<"free_lightsail" | "free_basic" | "free_advanced" | "paid_basic">(
+    planTier === "paid"
+      ? "paid_basic"
+      : !freeSelectable
+        ? "paid_basic"
+        : deploymentFlavor === "advanced"
+          ? "free_advanced"
+          : deploymentFlavor === "lightsail"
+            ? "free_lightsail"
+            : "free_basic",
   );
 
   const canDelete = status !== "deactivated";
@@ -54,7 +62,12 @@ export function DeploymentActions({
         body: JSON.stringify({
           botName: botName ?? undefined,
           planTier: redeploySelection === "paid_basic" ? "paid" : "free",
-          deploymentFlavor: redeploySelection === "free_advanced" ? "advanced" : "basic",
+          deploymentFlavor:
+            redeploySelection === "free_advanced"
+              ? "advanced"
+              : redeploySelection === "free_lightsail"
+                ? "lightsail"
+                : "basic",
         }),
       });
       const payload = (await response.json()) as { id?: string; error?: string };
@@ -169,6 +182,8 @@ export function DeploymentActions({
                   setRedeploySelection(
                     event.target.value === "free_advanced"
                       ? "free_advanced"
+                      : event.target.value === "free_lightsail"
+                        ? "free_lightsail"
                       : event.target.value === "paid_basic"
                         ? "paid_basic"
                         : "free_basic",
@@ -177,6 +192,9 @@ export function DeploymentActions({
                 disabled={isRedeploying || isDeleting || isUpgrading}
                 style={{ minHeight: 34 }}
               >
+                <option value="free_lightsail" disabled={!freeSelectable}>
+                  Free (Lightsail) - SSH host runtime - {freeStorageGb} GB storage
+                </option>
                 <option value="free_basic" disabled={!freeSelectable}>
                   Free (Basic) - Fargate 0.25 vCPU / 0.5 GB - {freeStorageGb} GB storage
                 </option>

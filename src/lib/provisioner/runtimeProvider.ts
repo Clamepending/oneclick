@@ -40,6 +40,7 @@ type LaunchInput = {
   subsidyProxyToken?: string | null;
   planTier?: PlanTier | null;
   deploymentFlavor?: DeploymentFlavor | null;
+  providerOverride?: "mock" | "ssh" | "ecs" | null;
   host?: Host;
 };
 
@@ -1016,7 +1017,7 @@ async function launchViaEcs(input: LaunchInput) {
 }
 
 export async function launchUserContainer(input: LaunchInput) {
-  const provider = readTrimmedEnv("DEPLOY_PROVIDER") || "mock";
+  const provider = input.providerOverride ?? (readTrimmedEnv("DEPLOY_PROVIDER") || "mock");
 
   if (provider === "ssh") {
     return launchViaSsh(input);
