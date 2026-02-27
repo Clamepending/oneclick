@@ -344,6 +344,22 @@ export async function processDeploymentJob(job: DeploymentJob) {
   const provider = resolveProviderForDeployment(defaultProvider, selectedDeploymentFlavor);
   const providerRequiresHost = provider === "ssh" || provider === "mock";
 
+  if (selectedDeploymentFlavor === "lightsail") {
+    const currentHostRow = await pool.query<{ host_name: string | null; status: string }>(
+      `SELECT host_name, status FROM deployments WHERE id = $1 LIMIT 1`,
+      [job.deploymentId],
+    );
+    const currentHostName = currentHostRow.rows[0]?.host_name?.trim() || "";
+    const vmMatch = currentHostName.match(/^lightsail-vm-(\d+)$/);
+    if (vmMatch) {
+      const currentStatus = (currentHostRow.rows[0]?.status || "").trim().toLowerCase();
+      if (currentStatus !== "ready") {
+        await appendEvent(job.deploymentId, "starting", `Cleaning previous VM ${currentHostName} before retry`);
+        await destroyDedicatedVm(vmMatch[1]).catch(() => {});
+      }
+    }
+  }
+
   // Enforce one runtime per user by destroying previous ready runtimes.
   const previousDeployments = await pool.query<{
     id: string;
@@ -398,13 +414,13 @@ export async function processDeploymentJob(job: DeploymentJob) {
       host = await selectHost(activeByHost);
     }
     await pool.query(
-      `UPDATE deployments SET host_name = $1, status = 'starting', updated_at = NOW() WHERE id = $2`,
+      `UPDATE deployments SET host_name = $1, status = 'starting', error = NULL, updated_at = NOW() WHERE id = $2`,
       [host.name, job.deploymentId],
     );
     await appendEvent(job.deploymentId, "starting", `Assigned host ${host.name}`);
   } else {
     await pool.query(
-      `UPDATE deployments SET host_name = $1, status = 'starting', updated_at = NOW() WHERE id = $2`,
+      `UPDATE deployments SET host_name = $1, status = 'starting', error = NULL, updated_at = NOW() WHERE id = $2`,
       [provider, job.deploymentId],
     );
     await appendEvent(job.deploymentId, "starting", `Using provider ${provider}`);

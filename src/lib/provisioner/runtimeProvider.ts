@@ -487,14 +487,14 @@ function buildEcsReadyUrl(input: { deploymentId: string; userId: string; service
     .replaceAll("{service}", input.serviceName);
 }
 
-async function runSshCommand(sshTarget: string, command: string) {
+async function runSshCommand(sshTarget: string, command: string, timeoutMsOverride?: number) {
   const { user, host } = parseUserAndHost(sshTarget);
   const privateKeyRaw = process.env.DEPLOY_SSH_PRIVATE_KEY?.trim();
   if (!privateKeyRaw) {
     throw new Error("DEPLOY_SSH_PRIVATE_KEY is required for DEPLOY_PROVIDER=ssh.");
   }
   const privateKey = privateKeyRaw.replace(/\\n/g, "\n");
-  const timeoutMs = Number(process.env.OPENCLAW_SSH_TIMEOUT_MS ?? "120000");
+  const timeoutMs = timeoutMsOverride ?? Number(process.env.OPENCLAW_SSH_TIMEOUT_MS ?? "600000");
 
   await new Promise<void>((resolve, reject) => {
     let settled = false;
@@ -635,20 +635,15 @@ async function launchViaSsh(input: LaunchInput) {
   const remoteScript = [
     `set -e`,
     `>&2 echo "oneclick-debug image=${image} container=${containerName} hostPort=${hostPort} containerPort=${containerPort}"`,
-    `if ! command -v docker >/dev/null 2>&1; then export DEBIAN_FRONTEND=noninteractive; apt-get update -y && apt-get install -y docker.io && systemctl enable docker && systemctl restart docker; fi`,
+    `if ! command -v docker >/dev/null 2>&1; then >&2 echo "[oneclick] waiting briefly for cloud-init"; if command -v cloud-init >/dev/null 2>&1; then timeout 180 cloud-init status --wait || true; fi; fi`,
+    `if ! command -v docker >/dev/null 2>&1; then >&2 echo "[oneclick] installing docker via apt"; export DEBIAN_FRONTEND=noninteractive; for i in $(seq 1 30); do if apt-get -o DPkg::Lock::Timeout=120 update -y && apt-get -o DPkg::Lock::Timeout=120 install -y docker.io; then break; fi; sleep 5; done; fi`,
+    `if command -v docker >/dev/null 2>&1; then systemctl enable docker || true; systemctl restart docker || true; fi`,
+    `for i in $(seq 1 120); do if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then break; fi; sleep 2; done`,
+    `if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then >&2 echo "[oneclick] docker install/daemon startup failed"; exit 1; fi`,
     `mkdir -p "${userDir}" "${workspaceDir}"`,
     `chown -R 1000:1000 "${userDir}" "${workspaceDir}" || true`,
     `docker pull "${image}"`,
     `docker rm -f "${containerName}" >/dev/null 2>&1 || true`,
-          `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.bind lan`,
-          `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.auth.token ${shellQuote(gatewayToken)}`,
-    ...(allowInsecureControlUi
-      ? [
-          `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.controlUi.allowInsecureAuth true`,
-          `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.controlUi.dangerouslyDisableDeviceAuth true`,
-          `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set gateway.trustedProxies '["172.16.0.0/12"]'`,
-        ]
-      : []),
     ...(telegramBotToken && setTelegramPluginConfig
       ? [
           `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set plugins.entries.telegram.enabled true`,
@@ -659,10 +654,11 @@ async function launchViaSsh(input: LaunchInput) {
           `docker run --rm --entrypoint sh -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace"${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""}${subsidyProxyBaseUrl && subsidyProxyToken && !openaiApiKey && !anthropicApiKey && !openrouterApiKey ? ` -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)}` : ""} "${image}" -lc ${shellQuote(`timeout 120 ${onboardCommand}`)}`,
         ]
       : []),
-    `docker run -d --name "${containerName}" --restart unless-stopped --memory=${resourceFlags.memory} --memory-swap=${resourceFlags.memory} --cpus=${resourceFlags.cpus} --pids-limit=${resourceFlags.pids} --shm-size=${resourceFlags.shmSize} --log-opt max-size=${resourceFlags.logMaxSize} --log-opt max-file=${resourceFlags.logMaxFiles}${resourceFlags.writableLayerSize ? ` --storage-opt size=${resourceFlags.writableLayerSize}` : ""} -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" -e NODE_OPTIONS=${shellQuote(openclawNodeOptions)} -e TELEGRAM_ENABLED=${telegramEnabled}${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""}${!openaiApiKey && !anthropicApiKey && !openrouterApiKey && subsidyProxyBaseUrl && subsidyProxyToken ? ` -e OPENAI_API_KEY=${shellQuote(subsidyProxyToken)} -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)}` : ""} -p "${hostPort}:${containerPort}" "${image}" ${startCommand}`,
+    `docker run -d --name "${containerName}" --restart unless-stopped --memory=${resourceFlags.memory} --memory-swap=${resourceFlags.memory} --cpus=${resourceFlags.cpus} --pids-limit=${resourceFlags.pids} --shm-size=${resourceFlags.shmSize} --log-opt max-size=${resourceFlags.logMaxSize} --log-opt max-file=${resourceFlags.logMaxFiles}${resourceFlags.writableLayerSize ? ` --storage-opt size=${resourceFlags.writableLayerSize}` : ""} -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" -e OPENCLAW_GATEWAY_TOKEN=${shellQuote(gatewayToken)} -e OPENCLAW_ALLOW_INSECURE_CONTROL_UI=${allowInsecureControlUi ? "true" : "false"} -e NODE_OPTIONS=${shellQuote(openclawNodeOptions)} -e TELEGRAM_ENABLED=${telegramEnabled}${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""}${!openaiApiKey && !anthropicApiKey && !openrouterApiKey && subsidyProxyBaseUrl && subsidyProxyToken ? ` -e OPENAI_API_KEY=${shellQuote(subsidyProxyToken)} -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)}` : ""} -p "${hostPort}:${containerPort}" "${image}" ${startCommand}`,
   ].join(" && ");
 
-  await runSshCommand(sshTarget, remoteScript);
+  const launchTimeoutMs = Number(readTrimmedEnv("OPENCLAW_SSH_LAUNCH_TIMEOUT_MS") || "1800000");
+  await runSshCommand(sshTarget, remoteScript, launchTimeoutMs);
   const runtimeDomain = buildRuntimeUrlFromDomain(input.runtimeSlugSource, input.userId);
   if (runtimeDomain) {
     await ensureCaddyRoute(sshTarget, runtimeDomain.fqdn, hostPort);
@@ -1078,7 +1074,7 @@ export async function destroyUserRuntime(input: DestroyInput) {
     try {
       await runSshCommand(
         parsed.sshTarget,
-        `docker rm -f "${parsed.containerName}" >/dev/null 2>&1 || true`,
+        `if command -v docker >/dev/null 2>&1; then docker rm -f "${parsed.containerName}" >/dev/null 2>&1 || true; fi`,
       );
     } catch (error) {
       dockerCleanupError = error instanceof Error ? error : new Error(String(error));
