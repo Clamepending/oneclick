@@ -141,7 +141,7 @@ async function approveTelegramPairingViaEcs(input: {
 
   let helperExitCode: number | null = null;
   let helperReason = "";
-  const timeoutMs = 90_000;
+  const timeoutMs = Number(readTrimmedEnv("TELEGRAM_PAIRING_HELPER_TIMEOUT_MS") || "180000");
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const described = await ecs.send(
@@ -245,12 +245,21 @@ export async function POST(
   }
 
   try {
-    const result = await approveTelegramPairingViaEcs({
+    let result = await approveTelegramPairingViaEcs({
       runtimeId: deployment.runtime_id,
       userId: deployment.user_id,
       deploymentId: deployment.id,
       code: payloadResult.data.code,
     });
+    if (result.timedOut) {
+      // ECS can take a while to place ad-hoc tasks; retry once before surfacing a timeout.
+      result = await approveTelegramPairingViaEcs({
+        runtimeId: deployment.runtime_id,
+        userId: deployment.user_id,
+        deploymentId: deployment.id,
+        code: payloadResult.data.code,
+      });
+    }
 
     if (result.approved) {
       return NextResponse.json({ ok: true, message: "Telegram pairing approved." });
