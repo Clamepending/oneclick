@@ -115,7 +115,7 @@ export function BotDashboard({ deployments }: Props) {
               key={group.name}
               type="button"
               onClick={() => {
-                if (preview.botDashboardUrl) {
+                if (preview.botDashboardUrl && preview.status === "ready") {
                   router.push(preview.botDashboardUrl);
                   return;
                 }
@@ -139,7 +139,7 @@ export function BotDashboard({ deployments }: Props) {
               <p className="muted" style={{ margin: 0, fontSize: 13 }}>
                 {group.deployments.length} deployment{group.deployments.length === 1 ? "" : "s"}
               </p>
-              {preview.botDashboardUrl ? (
+              {preview.botDashboardUrl && preview.status === "ready" ? (
                 <p className="muted" style={{ margin: 0, fontSize: 12 }}>
                   Bot page:{" "}
                   <Link
@@ -193,7 +193,7 @@ export function BotDashboard({ deployments }: Props) {
                 Latest update: <code>{new Date(latestDeployment.updatedAt).toLocaleString()}</code>
               </p>
             ) : null}
-            {latestDeployment?.botDashboardUrl ? (
+            {latestDeployment?.botDashboardUrl && latestDeployment.status === "ready" ? (
               <p style={{ margin: 0 }}>
                 <Link className="button secondary" href={latestDeployment.botDashboardUrl}>
                   Open bot page
