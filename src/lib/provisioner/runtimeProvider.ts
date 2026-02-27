@@ -745,13 +745,14 @@ async function launchViaSsh(input: LaunchInput) {
     (readTrimmedEnv("OPENCLAW_SSH_SET_TELEGRAM_PLUGIN_CONFIG") || "false").toLowerCase() === "true";
   const runtimeLlmApiKey = openaiApiKey || openrouterApiKey || anthropicApiKey || subsidyProxyToken;
   const simpleAgentLlmUrl = readTrimmedEnv("SIMPLE_AGENT_LLM_URL");
+  const resolvedSimpleAgentLlmUrl = simpleAgentLlmUrl || subsidyProxyBaseUrl;
   const shouldBuildSimpleAgent = !isOpenClawRuntime && shouldBuildSimpleAgentImage();
   const simpleAgentBuildRepo = getSimpleAgentBuildRepo();
   const simpleAgentRuntimeArgs = [
     `-e TELEGRAM_ENABLED=${telegramEnabled}`,
     telegramBotToken ? `-e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : "",
     runtimeLlmApiKey ? `-e ADMINAGENT_LLM_API_KEY=${shellQuote(runtimeLlmApiKey)}` : "",
-    simpleAgentLlmUrl ? `-e ADMINAGENT_LLM_URL=${shellQuote(simpleAgentLlmUrl)}` : "",
+    resolvedSimpleAgentLlmUrl ? `-e ADMINAGENT_LLM_URL=${shellQuote(resolvedSimpleAgentLlmUrl)}` : "",
     `-e PORT=${containerPort}`,
   ]
     .filter(Boolean)
