@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { NameStep } from "@/components/onboarding/NameStep";
-import { ChannelStep } from "@/components/onboarding/ChannelStep";
 import { PlanStep } from "@/components/onboarding/PlanStep";
 
 function generateDefaultBotName() {
@@ -18,9 +17,6 @@ function generateDefaultBotName() {
 export default function OnboardingPage() {
   const router = useRouter();
   const [botName, setBotName] = useState(() => generateDefaultBotName());
-  const [provider, setProvider] = useState<"openai" | "anthropic">("openai");
-  const [apiKey, setApiKey] = useState("");
-  const [telegramBotToken, setTelegramBotToken] = useState("");
   const [deploymentFlavor, setDeploymentFlavor] = useState<"simple_agent_free" | "deploy_openclaw_free">(
     "simple_agent_free",
   );
@@ -61,10 +57,6 @@ export default function OnboardingPage() {
       body: JSON.stringify({
         step: 3,
         botName,
-        channel: telegramBotToken.trim() ? "telegram" : "none",
-        telegramBotToken: telegramBotToken.trim() || null,
-        modelProvider: apiKey.trim() ? provider : null,
-        modelApiKey: apiKey.trim() || null,
         plan: "free",
         deploymentFlavor,
       }),
@@ -103,14 +95,6 @@ export default function OnboardingPage() {
       <h1 style={{ marginTop: 0 }}>Start a deployment</h1>
       <div style={{ display: "grid", gap: 12 }}>
         <NameStep value={botName} onChange={setBotName} />
-        <ChannelStep
-          provider={provider}
-          apiKey={apiKey}
-          telegramBotToken={telegramBotToken}
-          onProviderChange={setProvider}
-          onApiKeyChange={setApiKey}
-          onTelegramBotTokenChange={setTelegramBotToken}
-        />
         <PlanStep
           deploymentFlavor={deploymentFlavor}
           onDeploymentFlavorChange={setDeploymentFlavor}
