@@ -839,28 +839,6 @@ async function launchViaEcs(input: LaunchInput) {
           "done ) &",
         ].join(" "),
       );
-      if (input.telegramBotToken?.trim()) {
-        scriptSteps.push(
-          "echo '[oneclick] starting telegram pairing auto-approve loop' >&2",
-          [
-            "( for i in $(seq 1 60); do",
-            "openclaw health >/dev/null 2>&1 && break;",
-            "sleep 2;",
-            "done;",
-            "while :; do",
-            "codes=\"$(node /app/dist/index.js pairing list telegram --json 2>/dev/null | node -e 'let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{try{const j=JSON.parse(s);for(const r of (j.requests||[])){if(r&&r.code) console.log(r.code)}}catch{}})')\";",
-            "for code in $codes; do",
-            "out=\"$(node /app/dist/index.js pairing approve telegram \"$code\" 2>&1 || true)\";",
-            "case \"$out\" in",
-            "Approved*) echo \"[oneclick] $out\" >&2 ;;",
-            "*) ;;",
-            "esac;",
-            "done;",
-            "sleep 3;",
-            "done ) &",
-          ].join(" "),
-        );
-      }
       scriptSteps.push(
         "echo '[oneclick] starting openclaw gateway' >&2",
         `exec node /app/dist/index.js gateway run --allow-unconfigured --bind lan --token ${shellQuote(gatewayToken)}`,
