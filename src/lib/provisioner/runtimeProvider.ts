@@ -356,12 +356,27 @@ function buildRuntimeName(input: { runtimeSlugSource?: string | null; userId: st
   return joined.slice(0, 63);
 }
 
+function appendContainerSuffix(baseName: string, suffix: string) {
+  const maxLength = 63;
+  const normalizedSuffix = suffix.startsWith("-") ? suffix : `-${suffix}`;
+  if (baseName.length + normalizedSuffix.length <= maxLength) {
+    return `${baseName}${normalizedSuffix}`;
+  }
+
+  // Keep names deterministic and unique even when baseName already reaches Docker's 63-char limit.
+  const hash = sha1Hex(`${baseName}${normalizedSuffix}`).slice(0, 8);
+  const reserved = normalizedSuffix.length + hash.length + 1; // trailing "-{hash}"
+  const keepLength = Math.max(1, maxLength - reserved);
+  const trimmedBase = baseName.slice(0, keepLength);
+  return `${trimmedBase}-${hash}${normalizedSuffix}`.slice(0, maxLength);
+}
+
 function buildVideoMemoryContainerName(containerName: string) {
-  return `${containerName}-videomemory`.slice(0, 63);
+  return appendContainerSuffix(containerName, "videomemory");
 }
 
 function buildOttoAgentMcpContainerName(containerName: string) {
-  return `${containerName}-ottoagent-mcp`.slice(0, 63);
+  return appendContainerSuffix(containerName, "ottoagent-mcp");
 }
 
 function buildRuntimeUrlFromDomain(runtimeSlugSource: string | null | undefined, userId: string) {
