@@ -92,7 +92,6 @@ Application-level hard limits (cheap + effective):
 - `DEPLOYMENTS_PAUSED=true` to block all new deployments
 - `DEPLOY_MAX_IN_PROGRESS_GLOBAL` to cap total `queued/starting` deployments
 - `DEPLOY_MAX_READY_GLOBAL` to cap total running bots (`ready`)
-- `DEPLOY_MAX_READY_PER_USER` to cap running bots per user
 
 Age-based auto-stop sweep (optional):
 

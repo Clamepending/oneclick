@@ -425,37 +425,6 @@ export async function POST(request: Request) {
       }
     }
 
-    const active = await pool.query<{ count: string }>(
-      `SELECT COUNT(*)::text as count
-       FROM deployments
-       WHERE user_id = $1 AND status IN ('queued', 'starting')`,
-      [session.user.email],
-    );
-
-    const maxActive = Number(process.env.DEPLOY_MAX_ACTIVE_PER_USER ?? "1");
-    if (Number(active.rows[0]?.count ?? "0") >= maxActive) {
-      return NextResponse.json(
-        { ok: false, error: "You already have an active deployment in progress." },
-        { status: 409 },
-      );
-    }
-
-    const perUserReadyLimit = readLimitEnv("DEPLOY_MAX_READY_PER_USER");
-    if (perUserReadyLimit !== null) {
-      const activeReady = await pool.query<{ count: string }>(
-        `SELECT COUNT(*)::text as count
-         FROM deployments
-         WHERE user_id = $1 AND status = 'ready'`,
-        [session.user.email],
-      );
-      if (Number(activeReady.rows[0]?.count ?? "0") >= perUserReadyLimit) {
-        return NextResponse.json(
-          { ok: false, error: "You have reached the maximum number of running bots for your account." },
-          { status: 409 },
-        );
-      }
-    }
-
     const deploymentId = newDeploymentId();
     const onboarding = await pool.query<{
     bot_name: string | null;

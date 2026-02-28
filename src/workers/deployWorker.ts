@@ -551,41 +551,6 @@ export async function processDeploymentJob(job: DeploymentJob) {
     }
   }
 
-  // Enforce one runtime per user by destroying previous ready runtimes.
-  const previousDeployments = await pool.query<{
-    id: string;
-    runtime_id: string | null;
-    deploy_provider: string | null;
-    ready_url: string | null;
-  }>(
-    `SELECT id, runtime_id, deploy_provider, ready_url
-     FROM deployments
-     WHERE user_id = $1
-       AND id <> $2
-       AND status = 'ready'
-       AND runtime_id IS NOT NULL`,
-    [job.userId, job.deploymentId],
-  );
-
-  for (const previous of previousDeployments.rows) {
-    if (!previous.runtime_id) continue;
-    await destroyUserRuntime({
-      runtimeId: previous.runtime_id,
-      deployProvider: previous.deploy_provider,
-      readyUrl: previous.ready_url,
-    });
-
-    await pool.query(
-      `UPDATE deployments
-       SET status = 'failed',
-           error = 'Replaced by newer deployment',
-           updated_at = NOW()
-       WHERE id = $1`,
-      [previous.id],
-    );
-    await appendEvent(previous.id, "failed", "Replaced by newer deployment");
-  }
-
   let host: Host | undefined;
   let dedicatedVmId: string | null = null;
   if (providerRequiresHost) {
