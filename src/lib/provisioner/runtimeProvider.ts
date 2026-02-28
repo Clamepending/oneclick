@@ -1509,6 +1509,9 @@ async function launchViaSsh(input: LaunchInput) {
     ...(shouldBuildVideoMemory
       ? [
           `rm -rf "${videoMemoryBuildDir}" && git clone --depth 1 ${videoMemoryRepoSpec.ref ? `--branch ${shellQuote(videoMemoryRepoSpec.ref)} ` : ""}${shellQuote(videoMemoryRepoSpec.url)} "${videoMemoryBuildDir}"`,
+          // Upstream caption endpoint keeps a startup-time provider reference; apply settings-saved key updates there too.
+          "sed -i 's/response = model_provider\\._sync_generate_content(/response = task_manager._model_provider._sync_generate_content(/g' " +
+            `"${videoMemoryBuildDir}/flask_app/app.py"`,
           `docker build -t "${videoMemoryImage}" "${videoMemoryBuildDir}"`,
         ]
       : isSimpleAgentWithVideoMemory
