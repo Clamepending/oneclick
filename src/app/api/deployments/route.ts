@@ -428,10 +428,16 @@ export async function POST(request: Request) {
     const anthropicApiKey = null;
     const telegramBotToken = onboarding.rows[0]?.telegram_bot_token?.trim() || null;
     const selectedPlan = "free";
+    const sourceDeploymentFlavor = sourceDeploymentRow?.deployment_flavor?.trim()
+      ? normalizeDeploymentFlavor(sourceDeploymentRow.deployment_flavor)
+      : null;
+    const onboardingDeploymentFlavor = onboarding.rows[0]?.deployment_flavor?.trim()
+      ? normalizeDeploymentFlavor(onboarding.rows[0].deployment_flavor)
+      : null;
     const selectedDeploymentFlavor =
-      normalizeDeploymentFlavor(sourceDeploymentRow?.deployment_flavor) ??
+      sourceDeploymentFlavor ??
       parsedPayload.deploymentFlavor ??
-      normalizeDeploymentFlavor(onboarding.rows[0]?.deployment_flavor) ??
+      onboardingDeploymentFlavor ??
       "simple_agent_free";
     const reservation = await reserveBotIdentity(session.user.email, botName);
     if (!reservation.ok) {
@@ -486,6 +492,8 @@ export async function POST(request: Request) {
       deploymentId,
       selectedDeploymentFlavor === "deploy_openclaw_free"
         ? "Selected deployment type: Deploy OpenClaw (Free)."
+        : selectedDeploymentFlavor === "ottoagent_free"
+          ? "Selected deployment type: OttoAgent (Free)."
         : selectedDeploymentFlavor === "simple_agent_videomemory_free"
           ? "Selected deployment type: Simple Agent + VideoMemory (Free)."
           : "Selected deployment type: Simple Agent (Free).",

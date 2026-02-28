@@ -55,6 +55,23 @@ Runtime deployment mode:
 - `NEXT_PUBLIC_DEPLOY_POLL_INTERVAL_MS` controls dashboard polling in browser (default `10000`)
 - `PG_POOL_MAX`/`PG_IDLE_TIMEOUT_MS`/`PG_CONNECTION_TIMEOUT_MS` tune DB pool usage for serverless (defaults are safe for small Supabase poolers)
 
+Deployment flavors in onboarding:
+
+- `simple_agent_free` (Simple Agent)
+- `simple_agent_videomemory_free` (Simple Agent + VideoMemory MCP sidecar)
+- `ottoagent_free` (OttoAgent + OttoAgent MCP sidecar)
+- `deploy_openclaw_free` (OpenClaw runtime)
+
+OttoAgent flavor env knobs:
+
+- `OTTOAGENT_IMAGE` / `OTTOAGENT_BUILD_ON_HOST` / `OTTOAGENT_BUILD_REPO`
+- `OTTOAGENT_CONTAINER_PORT` / `OTTOAGENT_START_COMMAND`
+- `OTTOAGENT_MODEL` / `OTTOAGENT_LLM_URL`
+- `OTTOAGENT_MCP_IMAGE` / `OTTOAGENT_MCP_BUILD_ON_HOST` / `OTTOAGENT_MCP_BUILD_REPO`
+- `OTTOAGENT_MCP_PORT` / `OTTOAGENT_MCP_PATH` / `OTTOAGENT_MCP_START_COMMAND`
+- optional passthroughs for MCP container auth/config: `OTTOAGENT_MCP_BASE_URL`, `OTTOAGENT_MCP_TOKEN`
+- default build repo paths assume sibling directories: `../ottoagent` and `../ottoagent-mcp`
+
 ## Run
 
 ```bash

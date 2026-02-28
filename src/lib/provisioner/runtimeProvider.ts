@@ -20,6 +20,12 @@ import {
 import { getRuntimeBaseDomain } from "@/lib/subdomainConfig";
 import { getEcsPlanResources, normalizeDeploymentFlavor, normalizePlanTier, type DeploymentFlavor, type PlanTier } from "@/lib/plans";
 import {
+  getOttoAgentBuildRepo,
+  getOttoAgentMcpBuildRepo,
+  getOttoAgentMcpImage,
+  getOttoAgentMcpPath,
+  getOttoAgentMcpPort,
+  getOttoAgentMcpStartCommand,
   getRuntimeImage,
   getRuntimePort,
   getRuntimeStartCommand,
@@ -28,6 +34,8 @@ import {
   getVideoMemoryImage,
   getVideoMemoryPort,
   getVideoMemoryStartCommand,
+  shouldBuildOttoAgentImage,
+  shouldBuildOttoAgentMcpImage,
   shouldBuildSimpleAgentImage,
   shouldBuildVideoMemoryImage,
   shouldAllowInsecureControlUi,
@@ -352,6 +360,10 @@ function buildVideoMemoryContainerName(containerName: string) {
   return `${containerName}-videomemory`.slice(0, 63);
 }
 
+function buildOttoAgentMcpContainerName(containerName: string) {
+  return `${containerName}-ottoagent-mcp`.slice(0, 63);
+}
+
 function buildRuntimeUrlFromDomain(runtimeSlugSource: string | null | undefined, userId: string) {
   const baseDomain = getRuntimeBaseDomain();
   if (!baseDomain) return null;
@@ -387,6 +399,35 @@ function parseUserAndHost(sshTarget: string) {
     ? sshTarget.split("@")
     : ["root", sshTarget];
   return { user, host };
+}
+
+function normalizeHostCandidate(value: string | null | undefined) {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) return "";
+  const first = trimmed.split(",")[0]?.trim() || "";
+  if (!first) return "";
+
+  const withScheme = first.includes("://") ? first : `http://${first}`;
+  try {
+    return new URL(withScheme).hostname.trim();
+  } catch {
+    return "";
+  }
+}
+
+function isUnusablePublicHost(value: string) {
+  const host = value.trim().toLowerCase();
+  if (!host) return true;
+  if (host === "0.0.0.0" || host === "::" || host === "localhost") return true;
+  if (host.startsWith("127.")) return true;
+  return false;
+}
+
+function normalizeMcpPath(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "/mcp";
+  if (!trimmed.startsWith("/")) return `/${trimmed}`;
+  return trimmed;
 }
 
 function isIpv4Address(value: string) {
@@ -732,14 +773,30 @@ async function launchViaSsh(input: LaunchInput) {
   if (!sshTarget) {
     throw new Error(`Invalid ssh dockerHost value: ${input.host.dockerHost}`);
   }
+  const runtimeDomain = buildRuntimeUrlFromDomain(input.runtimeSlugSource, input.userId);
+  if (!runtimeDomain) {
+    throw new Error(
+      "Runtime domain is not configured. Set RUNTIME_BASE_DOMAIN so SSH deployments can publish HTTPS runtime URLs.",
+    );
+  }
 
   const deploymentFlavor = normalizeDeploymentFlavor(input.deploymentFlavor);
   const isOpenClawRuntime = deploymentFlavor === "deploy_openclaw_free";
   const isSimpleAgentWithVideoMemory = deploymentFlavor === "simple_agent_videomemory_free";
-  const vmPublicHost = parseUserAndHost(sshTarget).host;
+  const isSimpleAgentWithOttoAgentMcp = deploymentFlavor === "ottoagent_free";
+  const vmPublicHost = normalizeHostCandidate(parseUserAndHost(sshTarget).host);
+  const runtimeDomainHost = normalizeHostCandidate(runtimeDomain.fqdn);
+  const hostPublicBaseHost = normalizeHostCandidate(input.host.publicBaseUrl ?? "");
+  const videoMemoryPublicHost = [runtimeDomainHost, hostPublicBaseHost, vmPublicHost].find(
+    (candidate) => candidate && !isUnusablePublicHost(candidate),
+  ) || runtimeDomainHost || hostPublicBaseHost || vmPublicHost;
   const image = getRuntimeImage(deploymentFlavor);
   const containerPort = getRuntimePort(deploymentFlavor);
   const startCommand = getRuntimeStartCommand(deploymentFlavor);
+  const ottoAgentMcpImage = getOttoAgentMcpImage();
+  const ottoAgentMcpContainerPort = getOttoAgentMcpPort();
+  const ottoAgentMcpPath = normalizeMcpPath(getOttoAgentMcpPath());
+  const ottoAgentMcpStartCommand = getOttoAgentMcpStartCommand();
   const videoMemoryImage = getVideoMemoryImage();
   const videoMemoryContainerPort = getVideoMemoryPort();
   const videoMemoryStartCommand = getVideoMemoryStartCommand();
@@ -747,6 +804,7 @@ async function launchViaSsh(input: LaunchInput) {
   const allowInsecureControlUi = shouldAllowInsecureControlUi();
   const gatewayToken = getGatewayToken();
   const hostPort = buildAssignedPort(input.deploymentId);
+  const ottoAgentMcpHostPort = buildAssignedPort(`${input.deploymentId}-ottoagent-mcp`);
   const videoMemoryHostPort = buildAssignedPort(`${input.deploymentId}-videomemory`);
   const videoMemoryMcpHostPort = buildAssignedPort(`${input.deploymentId}-videomemory-mcp`);
   const telegramBotToken = input.telegramBotToken?.trim() || "";
@@ -776,11 +834,22 @@ async function launchViaSsh(input: LaunchInput) {
   const simpleAgentOpenAiApiKey = openaiApiKey;
   const simpleAgentAnthropicApiKey = anthropicApiKey;
   const simpleAgentGoogleApiKey = "";
-  const simpleAgentModel = readTrimmedEnv("SIMPLE_AGENT_MODEL") || "gpt-4o-mini";
-  const simpleAgentLlmUrl = readTrimmedEnv("SIMPLE_AGENT_LLM_URL");
+  const simpleAgentModel =
+    (isSimpleAgentWithOttoAgentMcp ? readTrimmedEnv("OTTOAGENT_MODEL") : "") ||
+    readTrimmedEnv("SIMPLE_AGENT_MODEL") ||
+    "gpt-4o-mini";
+  const simpleAgentLlmUrl =
+    (isSimpleAgentWithOttoAgentMcp ? readTrimmedEnv("OTTOAGENT_LLM_URL") : "") ||
+    readTrimmedEnv("SIMPLE_AGENT_LLM_URL");
   const resolvedSimpleAgentLlmUrl = simpleAgentLlmUrl || subsidyProxyBaseUrl;
-  const shouldBuildSimpleAgent = !isOpenClawRuntime && shouldBuildSimpleAgentImage();
-  const simpleAgentBuildRepo = getSimpleAgentBuildRepo();
+  const shouldBuildSimpleAgent = !isOpenClawRuntime && (
+    isSimpleAgentWithOttoAgentMcp ? shouldBuildOttoAgentImage() : shouldBuildSimpleAgentImage()
+  );
+  const simpleAgentBuildRepo = isSimpleAgentWithOttoAgentMcp ? getOttoAgentBuildRepo() : getSimpleAgentBuildRepo();
+  const shouldBuildOttoAgentMcp = isSimpleAgentWithOttoAgentMcp && shouldBuildOttoAgentMcpImage();
+  const ottoAgentMcpBuildRepo = getOttoAgentMcpBuildRepo();
+  const ottoAgentMcpRepoSpec = parseGitRepoSpec(ottoAgentMcpBuildRepo);
+  const ottoAgentMcpBuildDir = `/tmp/oneclick-ottoagent-mcp-${sanitizeSegment(input.deploymentId)}`;
   const shouldBuildVideoMemory = isSimpleAgentWithVideoMemory && shouldBuildVideoMemoryImage();
   const videoMemoryBuildRepo = getVideoMemoryBuildRepo();
   const videoMemoryRepoSpec = parseGitRepoSpec(videoMemoryBuildRepo);
@@ -792,15 +861,22 @@ async function launchViaSsh(input: LaunchInput) {
     isSimpleAgentWithVideoMemory
       ? videoMemoryStartCommand || defaultVideoMemoryMcpStartCommand
       : videoMemoryStartCommand;
-  const simpleAgentMcpServersJson = isSimpleAgentWithVideoMemory
-    ? JSON.stringify([
-        {
-          id: "videomemory",
-          transport: "http",
-          url: `http://host.docker.internal:${videoMemoryMcpHostPort}/mcp`,
-        },
-      ])
-    : "";
+  const simpleAgentMcpServers: Array<{ id: string; transport: "http"; url: string }> = [];
+  if (isSimpleAgentWithVideoMemory) {
+    simpleAgentMcpServers.push({
+      id: "videomemory",
+      transport: "http",
+      url: `http://host.docker.internal:${videoMemoryMcpHostPort}/mcp`,
+    });
+  }
+  if (isSimpleAgentWithOttoAgentMcp) {
+    simpleAgentMcpServers.push({
+      id: "ottoagent",
+      transport: "http",
+      url: `http://host.docker.internal:${ottoAgentMcpHostPort}${ottoAgentMcpPath}`,
+    });
+  }
+  const simpleAgentMcpServersJson = simpleAgentMcpServers.length ? JSON.stringify(simpleAgentMcpServers) : "";
   const simpleAgentRuntimeArgs = [
     `-e TELEGRAM_ENABLED=${telegramEnabled}`,
     telegramBotToken ? `-e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : "",
@@ -822,7 +898,18 @@ async function launchViaSsh(input: LaunchInput) {
   const safeUser = sanitizeSegment(input.userId);
   const safeDeployment = sanitizeSegment(input.deploymentId);
   const containerName = buildRuntimeName(input);
+  const ottoAgentMcpContainerName = buildOttoAgentMcpContainerName(containerName);
   const videoMemoryContainerName = buildVideoMemoryContainerName(containerName);
+  const ottoAgentMcpBaseUrl = readTrimmedEnv("OTTOAGENT_MCP_BASE_URL");
+  const ottoAgentMcpToken = readTrimmedEnv("OTTOAGENT_MCP_TOKEN");
+  const ottoAgentMcpRuntimeArgs = [
+    ottoAgentMcpBaseUrl ? `-e OTTOAGENT_BASE_URL=${shellQuote(ottoAgentMcpBaseUrl)}` : "",
+    ottoAgentMcpBaseUrl ? `-e OTTOAUTH_BASE_URL=${shellQuote(ottoAgentMcpBaseUrl)}` : "",
+    ottoAgentMcpToken ? `-e OTTOAGENT_TOKEN=${shellQuote(ottoAgentMcpToken)}` : "",
+    ottoAgentMcpToken ? `-e OTTOAUTH_TOKEN=${shellQuote(ottoAgentMcpToken)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   const configBase = readTrimmedEnv("OPENCLAW_CONFIG_MOUNT_BASE") || "/var/lib/oneclick/openclaw";
   const workspaceSuffix = readTrimmedEnv("OPENCLAW_WORKSPACE_SUFFIX") || "workspace";
   const userDir = `${configBase}/${safeUser}/${safeDeployment}`;
@@ -843,7 +930,15 @@ async function launchViaSsh(input: LaunchInput) {
     ...(shouldBuildSimpleAgent
       ? [`docker build -t "${image}" "${simpleAgentBuildRepo}"`]
       : [`docker pull "${image}"`]),
-    `docker rm -f "${containerName}" "${videoMemoryContainerName}" >/dev/null 2>&1 || true`,
+    `docker rm -f "${containerName}" "${videoMemoryContainerName}" "${ottoAgentMcpContainerName}" >/dev/null 2>&1 || true`,
+    ...(shouldBuildOttoAgentMcp
+      ? [
+          `rm -rf "${ottoAgentMcpBuildDir}" && git clone --depth 1 ${ottoAgentMcpRepoSpec.ref ? `--branch ${shellQuote(ottoAgentMcpRepoSpec.ref)} ` : ""}${shellQuote(ottoAgentMcpRepoSpec.url)} "${ottoAgentMcpBuildDir}"`,
+          `docker build -t "${ottoAgentMcpImage}" "${ottoAgentMcpBuildDir}"`,
+        ]
+      : isSimpleAgentWithOttoAgentMcp
+        ? [`docker pull "${ottoAgentMcpImage}"`]
+        : []),
     ...(shouldBuildVideoMemory
       ? [
           `rm -rf "${videoMemoryBuildDir}" && git clone --depth 1 ${videoMemoryRepoSpec.ref ? `--branch ${shellQuote(videoMemoryRepoSpec.ref)} ` : ""}${shellQuote(videoMemoryRepoSpec.url)} "${videoMemoryBuildDir}"`,
@@ -871,22 +966,21 @@ async function launchViaSsh(input: LaunchInput) {
     isOpenClawRuntime
       ? `docker run -d --name "${containerName}" --restart unless-stopped --memory=${resourceFlags.memory} --memory-swap=${resourceFlags.memory} --cpus=${resourceFlags.cpus} --pids-limit=${resourceFlags.pids} --shm-size=${resourceFlags.shmSize} --log-opt max-size=${resourceFlags.logMaxSize} --log-opt max-file=${resourceFlags.logMaxFiles}${resourceFlags.writableLayerSize ? ` --storage-opt size=${resourceFlags.writableLayerSize}` : ""} -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" -e OPENCLAW_GATEWAY_TOKEN=${shellQuote(gatewayToken)} -e OPENCLAW_ALLOW_INSECURE_CONTROL_UI=${allowInsecureControlUi ? "true" : "false"} -e NODE_OPTIONS=${shellQuote(openclawNodeOptions)} -e TELEGRAM_ENABLED=${telegramEnabled}${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""}${!openaiApiKey && !anthropicApiKey && !openrouterApiKey && subsidyProxyBaseUrl && subsidyProxyToken ? ` -e OPENAI_API_KEY=${shellQuote(subsidyProxyToken)} -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)}` : ""} -p "${hostPort}:${containerPort}" "${image}" ${startCommand}`
       : `docker run -d --name "${containerName}" --restart unless-stopped --add-host host.docker.internal:host-gateway --memory=${resourceFlags.memory} --memory-swap=${resourceFlags.memory} --cpus=${resourceFlags.cpus} --pids-limit=${resourceFlags.pids} --shm-size=${resourceFlags.shmSize} --log-opt max-size=${resourceFlags.logMaxSize} --log-opt max-file=${resourceFlags.logMaxFiles}${resourceFlags.writableLayerSize ? ` --storage-opt size=${resourceFlags.writableLayerSize}` : ""} -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" ${simpleAgentRuntimeArgs} -p "${hostPort}:${containerPort}" "${image}"${startCommand ? ` ${startCommand}` : ""}`,
+    ...(isSimpleAgentWithOttoAgentMcp
+      ? [
+          `docker run -d --name "${ottoAgentMcpContainerName}" --restart unless-stopped --add-host host.docker.internal:host-gateway --memory=512m --memory-swap=512m --cpus=0.5 --pids-limit=256 --shm-size=128m --log-opt max-size=10m --log-opt max-file=3 ${ottoAgentMcpRuntimeArgs} -p "${ottoAgentMcpHostPort}:${ottoAgentMcpContainerPort}" "${ottoAgentMcpImage}"${ottoAgentMcpStartCommand ? ` ${ottoAgentMcpStartCommand}` : ""}`,
+        ]
+      : []),
     ...(isSimpleAgentWithVideoMemory
       ? [
-          `docker run -d --name "${videoMemoryContainerName}" --restart unless-stopped --memory=1024m --memory-swap=1024m --cpus=0.75 --pids-limit=512 --shm-size=256m --log-opt max-size=10m --log-opt max-file=3 -v "${videoMemoryDataDir}:/app/data" -e VIDEOMEMORY_MCP_PORT=${videoMemoryMcpContainerPort} -e RTMP_SERVER_HOST=${shellQuote(vmPublicHost)} -e RTMP_INGEST_INTERNAL_HOST=127.0.0.1${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""} -p "${videoMemoryHostPort}:${videoMemoryContainerPort}" -p "${videoMemoryMcpHostPort}:${videoMemoryMcpContainerPort}" -p "1935:1935" -p "8554:8554" -p "8890:8890/udp" -p "8889:8889" "${videoMemoryImage}"${resolvedVideoMemoryStartCommand ? ` ${resolvedVideoMemoryStartCommand}` : ""}`,
+          `docker run -d --name "${videoMemoryContainerName}" --restart unless-stopped --memory=1024m --memory-swap=1024m --cpus=0.75 --pids-limit=512 --shm-size=256m --log-opt max-size=10m --log-opt max-file=3 -v "${videoMemoryDataDir}:/app/data" -e VIDEOMEMORY_MCP_PORT=${videoMemoryMcpContainerPort} -e RTMP_SERVER_HOST=${shellQuote(videoMemoryPublicHost)} -e RTMP_INGEST_INTERNAL_HOST=127.0.0.1${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""} -p "${videoMemoryHostPort}:${videoMemoryContainerPort}" -p "${videoMemoryMcpHostPort}:${videoMemoryMcpContainerPort}" -p "1935:1935" -p "8554:8554" -p "8890:8890/udp" -p "8889:8889" "${videoMemoryImage}"${resolvedVideoMemoryStartCommand ? ` ${resolvedVideoMemoryStartCommand}` : ""}`,
         ]
       : []),
   ].join(" && ");
 
   const launchTimeoutMs = Number(readTrimmedEnv("OPENCLAW_SSH_LAUNCH_TIMEOUT_MS") || "1800000");
   await runSshCommand(sshTarget, remoteScript, launchTimeoutMs);
-  const runtimeDomain = buildRuntimeUrlFromDomain(input.runtimeSlugSource, input.userId);
-  if (!runtimeDomain) {
-    throw new Error(
-      "Runtime domain is not configured. Set RUNTIME_BASE_DOMAIN so SSH deployments can publish HTTPS runtime URLs.",
-    );
-  }
-  const dnsTarget = parseUserAndHost(sshTarget).host;
+  const dnsTarget = vmPublicHost;
   await upsertRuntimeDnsRecord({
     fqdn: runtimeDomain.fqdn,
     target: dnsTarget,
@@ -1264,7 +1358,7 @@ export async function destroyUserRuntime(input: DestroyInput) {
     try {
       await runSshCommand(
         parsed.sshTarget,
-        `if command -v docker >/dev/null 2>&1; then docker rm -f "${parsed.containerName}" "${buildVideoMemoryContainerName(parsed.containerName)}" >/dev/null 2>&1 || true; fi`,
+        `if command -v docker >/dev/null 2>&1; then docker rm -f "${parsed.containerName}" "${buildVideoMemoryContainerName(parsed.containerName)}" "${buildOttoAgentMcpContainerName(parsed.containerName)}" >/dev/null 2>&1 || true; fi`,
       );
     } catch (error) {
       dockerCleanupError = error instanceof Error ? error : new Error(String(error));

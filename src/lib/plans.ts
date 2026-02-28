@@ -2,7 +2,8 @@ export type PlanTier = "free" | "paid";
 export type DeploymentFlavor =
   | "simple_agent_free"
   | "simple_agent_videomemory_free"
-  | "deploy_openclaw_free";
+  | "deploy_openclaw_free"
+  | "ottoagent_free";
 
 export const FREE_TRIAL_DAYS = 30;
 export const PAID_MONTHLY_PRICE_CENTS = 2000;
@@ -16,6 +17,9 @@ export function normalizeDeploymentFlavor(value: string | null | undefined): Dep
   if (normalized === "simple_agent_free") return "simple_agent_free";
   if (normalized === "simple_agent_videomemory_free") return "simple_agent_videomemory_free";
   if (normalized === "deploy_openclaw_free") return "deploy_openclaw_free";
+  if (normalized === "ottoagent_free" || normalized === "ottoagent" || normalized === "simple_agent_ottoagent_free") {
+    return "ottoagent_free";
+  }
   if (normalized === "do_vm" || normalized === "basic" || normalized === "lightsail") {
     return "deploy_openclaw_free";
   }
@@ -30,6 +34,7 @@ export function deploymentModeDisplayName(plan: PlanTier, flavor: DeploymentFlav
   void plan;
   if (flavor === "deploy_openclaw_free") return "Deploy OpenClaw (Free)";
   if (flavor === "simple_agent_videomemory_free") return "Simple Agent + VideoMemory (Free)";
+  if (flavor === "ottoagent_free") return "OttoAgent (Free)";
   return "Simple Agent (Free)";
 }
 

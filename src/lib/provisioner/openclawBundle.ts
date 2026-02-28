@@ -86,6 +86,52 @@ export function shouldBuildSimpleAgentImage() {
   return readBool("SIMPLE_AGENT_BUILD_ON_HOST", true);
 }
 
+export function getOttoAgentImage() {
+  return readEnv("OTTOAGENT_IMAGE") || getSimpleAgentImage();
+}
+
+export function getOttoAgentPort() {
+  const configured = readEnv("OTTOAGENT_CONTAINER_PORT");
+  return configured ? Number(configured) : getSimpleAgentPort();
+}
+
+export function getOttoAgentStartCommand() {
+  const configured = readEnv("OTTOAGENT_START_COMMAND");
+  return configured || getSimpleAgentStartCommand();
+}
+
+export function getOttoAgentBuildRepo() {
+  return readEnv("OTTOAGENT_BUILD_REPO") || "../ottoagent";
+}
+
+export function shouldBuildOttoAgentImage() {
+  return readBool("OTTOAGENT_BUILD_ON_HOST", shouldBuildSimpleAgentImage());
+}
+
+export function getOttoAgentMcpImage() {
+  return readEnv("OTTOAGENT_MCP_IMAGE") || "oneclick/ottoagent-mcp:main";
+}
+
+export function getOttoAgentMcpPort() {
+  return Number(readEnv("OTTOAGENT_MCP_PORT") || "8787");
+}
+
+export function getOttoAgentMcpPath() {
+  return readEnv("OTTOAGENT_MCP_PATH") || "/mcp";
+}
+
+export function getOttoAgentMcpStartCommand() {
+  return readEnv("OTTOAGENT_MCP_START_COMMAND") || "";
+}
+
+export function getOttoAgentMcpBuildRepo() {
+  return readEnv("OTTOAGENT_MCP_BUILD_REPO") || "../ottoagent-mcp";
+}
+
+export function shouldBuildOttoAgentMcpImage() {
+  return readBool("OTTOAGENT_MCP_BUILD_ON_HOST", true);
+}
+
 export function getVideoMemoryImage() {
   return readEnv("VIDEOMEMORY_IMAGE") || "oneclick/videomemory:main";
 }
@@ -108,15 +154,18 @@ export function shouldBuildVideoMemoryImage() {
 
 export function getRuntimeImage(flavor: DeploymentFlavor | null | undefined) {
   const normalized = normalizeDeploymentFlavor(flavor);
+  if (normalized === "ottoagent_free") return getOttoAgentImage();
   return normalized === "deploy_openclaw_free" ? getOpenClawImage() : getSimpleAgentImage();
 }
 
 export function getRuntimePort(flavor: DeploymentFlavor | null | undefined) {
   const normalized = normalizeDeploymentFlavor(flavor);
+  if (normalized === "ottoagent_free") return getOttoAgentPort();
   return normalized === "deploy_openclaw_free" ? getOpenClawPort() : getSimpleAgentPort();
 }
 
 export function getRuntimeStartCommand(flavor: DeploymentFlavor | null | undefined) {
   const normalized = normalizeDeploymentFlavor(flavor);
+  if (normalized === "ottoagent_free") return getOttoAgentStartCommand();
   return normalized === "deploy_openclaw_free" ? getOpenClawStartCommand() : getSimpleAgentStartCommand();
 }
