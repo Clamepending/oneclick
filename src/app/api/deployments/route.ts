@@ -393,10 +393,10 @@ export async function POST(request: Request) {
   );
     const fallbackBotName = onboarding.rows[0]?.bot_name?.trim() || "MyAssistant";
     const botName = parsedPayload.botName ?? fallbackBotName;
-    const modelProvider = onboarding.rows[0]?.model_provider?.trim() || "";
-    const modelApiKey = onboarding.rows[0]?.model_api_key?.trim() || "";
-    const openaiApiKey = modelProvider === "openai" ? modelApiKey : null;
-    const anthropicApiKey = modelProvider === "anthropic" ? modelApiKey : null;
+    // Deployment keys must come from explicit setup inputs for that deployment.
+    // Do not inherit stale model keys from onboarding session history.
+    const openaiApiKey = null;
+    const anthropicApiKey = null;
     const telegramBotToken = onboarding.rows[0]?.telegram_bot_token?.trim() || null;
     const selectedPlan = "free";
     const selectedDeploymentFlavor =
