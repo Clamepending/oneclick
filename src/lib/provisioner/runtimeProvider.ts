@@ -641,9 +641,26 @@ import http from "node:http";
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number(process.env.OTTOAGENT_MCP_PORT || process.env.PORT || "8787");
 const RAW_PATH = process.env.OTTOAGENT_MCP_PATH || "/mcp";
-const MCP_PATH = RAW_PATH.startsWith("/") ? RAW_PATH : \`/\${RAW_PATH}\`;
+const MCP_PATH = RAW_PATH.startsWith("/") ? RAW_PATH : "/" + RAW_PATH;
 const BASE_URL = (process.env.OTTOAUTH_BASE_URL || process.env.OTTOAGENT_BASE_URL || "https://ottoauth.vercel.app").replace(/\\/$/, "");
 const AUTH_TOKEN = process.env.OTTOAUTH_TOKEN || process.env.OTTOAGENT_TOKEN || "";
+const REFRESH_INTERVAL_MS = Number(process.env.OTTOAGENT_MCP_REFRESH_MS || String(60 * 60 * 1000));
+const HTTP_TIMEOUT_MS = Number(process.env.OTTOAGENT_MCP_HTTP_TIMEOUT_MS || "30000");
+const VALID_HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+
+let lastRefreshAt = 0;
+let refreshPromise = null;
+const endpointTools = new Map();
+
+const ENDPOINT_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    path_params: { type: "object", additionalProperties: true },
+    query: { type: "object", additionalProperties: true },
+    body: { type: "object", additionalProperties: true },
+    headers: { type: "object", additionalProperties: { type: "string" } },
+  },
+};
 
 function writeJson(res, statusCode, body) {
   res.statusCode = statusCode;
@@ -659,7 +676,160 @@ function mcpError(id, message, code = -32000) {
   return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
-function toolList() {
+function asObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value;
+}
+
+function argumentError(message) {
+  const error = new Error(message);
+  error.code = -32602;
+  return error;
+}
+
+function normalizeMethod(raw) {
+  const method = String(raw || "GET").trim().toUpperCase();
+  if (!VALID_HTTP_METHODS.has(method)) {
+    throw argumentError("Invalid method. Expected one of GET, POST, PUT, PATCH, DELETE.");
+  }
+  return method;
+}
+
+function normalizePath(value) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) throw argumentError("Path is required.");
+  if (!trimmed.startsWith("/")) {
+    throw argumentError("Path must start with '/': " + trimmed);
+  }
+  return trimmed.replace(/\\/{2,}/g, "/");
+}
+
+function applyPathParams(pathTemplate, pathParams) {
+  const params = asObject(pathParams);
+  return pathTemplate.replace(/:([A-Za-z0-9_]+)/g, (_, name) => {
+    const value = params?.[name];
+    if (value === undefined || value === null) {
+      throw argumentError("Missing required path parameter '" + name + "' for path '" + pathTemplate + "'.");
+    }
+    return encodeURIComponent(String(value));
+  });
+}
+
+function toToolName(serviceId, method, path) {
+  const normalizedPath = path
+    .replace(/^\\/api\\//, "")
+    .replace(/[:/]+/g, "_")
+    .replace(/[^A-Za-z0-9_]/g, "")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return "ottoauth_" + serviceId + "_" + method.toLowerCase() + "_" + normalizedPath;
+}
+
+function safeServiceId(raw) {
+  if (typeof raw !== "string") return null;
+  const value = raw.trim().toLowerCase();
+  if (!value) return null;
+  return value.replace(/[^a-z0-9_-]/g, "");
+}
+
+function normalizeDiscoveredPath(value) {
+  const url = String(value).startsWith("http")
+    ? new URL(value)
+    : new URL(value, BASE_URL + "/");
+  let path = normalizePath(url.pathname);
+  if (!path.startsWith("/api/")) return null;
+  path = path
+    .split("/")
+    .map((segment) => {
+      if (/^[A-Z][A-Z0-9_]+$/.test(segment)) {
+        const normalized = segment.replace(/_HERE$/g, "").toLowerCase();
+        return ":" + normalized;
+      }
+      return segment;
+    })
+    .join("/");
+  return path;
+}
+
+function extractEndpointsFromMarkdown(markdown, serviceId) {
+  if (!markdown) return [];
+  const endpoints = [];
+  const codeBlocks = [...markdown.matchAll(/\\\`\\\`\\\`[\\s\\S]*?\\\`\\\`\\\`/g)].map((match) => match[0]);
+
+  for (const block of codeBlocks) {
+    const directEndpointMatches = block.matchAll(
+      /\\b(GET|POST|PUT|PATCH|DELETE)\\s+(https?:\\/\\/[^\\s\\\\\`]+|\\/[^\\s\\\\\`]+)/g,
+    );
+    for (const match of directEndpointMatches) {
+      const method = match[1];
+      const rawPath = match[2];
+      const path = normalizeDiscoveredPath(rawPath);
+      if (!path) continue;
+      endpoints.push({
+        toolName: toToolName(serviceId, method, path),
+        title: serviceId.toUpperCase() + " " + method + " " + path,
+        description: "Passthrough to " + method + " " + path + " on OttoAuth.",
+        method,
+        path,
+        serviceId,
+      });
+    }
+
+    const curlMatches = block.matchAll(
+      /\\bcurl\\b[\\s\\S]*?\\b-X\\s+(GET|POST|PUT|PATCH|DELETE)\\s+(https?:\\/\\/[^\\s\\\\\`]+|\\/[^\\s\\\\\`]+)/g,
+    );
+    for (const match of curlMatches) {
+      const method = match[1];
+      const rawPath = match[2];
+      const path = normalizeDiscoveredPath(rawPath);
+      if (!path) continue;
+      endpoints.push({
+        toolName: toToolName(serviceId, method, path),
+        title: serviceId.toUpperCase() + " " + method + " " + path,
+        description: "Passthrough to " + method + " " + path + " on OttoAuth.",
+        method,
+        path,
+        serviceId,
+      });
+    }
+  }
+
+  return endpoints;
+}
+
+async function fetchWithTimeout(url, init, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? setTimeout(() => controller.abort(), timeoutMs)
+    : null;
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function parseResponseBody(response) {
+  const text = await response.text();
+  const contentType = response.headers.get("content-type") || "";
+  if (!text) {
+    return { contentType, body: null };
+  }
+  if (contentType.includes("application/json")) {
+    try {
+      return { contentType, body: JSON.parse(text) };
+    } catch {
+      return { contentType, body: text };
+    }
+  }
+  try {
+    return { contentType, body: JSON.parse(text) };
+  } catch {
+    return { contentType, body: text };
+  }
+}
+
+function baseTools() {
   return [
     {
       name: "ottoauth_list_services",
@@ -686,14 +856,37 @@ function toolList() {
           path: { type: "string" },
           query: { type: "object", additionalProperties: true },
           body: { type: "object", additionalProperties: true },
+          headers: { type: "object", additionalProperties: { type: "string" } },
         },
       },
+    },
+    {
+      name: "ottoauth_refresh_tools",
+      description: "Refresh OttoAuth endpoint-discovered tools immediately.",
+      inputSchema: { type: "object", properties: {} },
     },
   ];
 }
 
-function buildHeaders() {
-  const headers = { "content-type": "application/json" };
+function toolList() {
+  const dynamic = [...endpointTools.values()]
+    .map((endpoint) => ({
+      name: endpoint.toolName,
+      description: endpoint.description,
+      inputSchema: ENDPOINT_INPUT_SCHEMA,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return [...baseTools(), ...dynamic];
+}
+
+function buildHeaders(input = {}) {
+  const headers = {
+    Accept: "application/json, text/plain;q=0.9, */*;q=0.8",
+    ...(asObject(input.extraHeaders) || {}),
+  };
+  if (input.shouldSendBody) {
+    headers["Content-Type"] = headers["Content-Type"] || "application/json";
+  }
   if (AUTH_TOKEN) {
     headers.authorization = \`Bearer \${AUTH_TOKEN}\`;
   }
@@ -704,79 +897,224 @@ function mapResultContent(value) {
   return [{ type: "text", text: JSON.stringify(value, null, 2) }];
 }
 
-async function callOttoAuth(method, path, query, body) {
-  if (!String(path || "").startsWith("/api/")) {
-    throw new Error("path must start with /api/");
+function toMcpToolResult(response, options = {}) {
+  const preferBodyOnSuccess = Boolean(options.preferBodyOnSuccess);
+  if (response.ok && preferBodyOnSuccess) {
+    return { content: mapResultContent(response.body), structuredContent: response.body };
   }
-  const url = new URL(path, BASE_URL);
-  if (query && typeof query === "object") {
-    for (const [key, value] of Object.entries(query)) {
+  return {
+    isError: !response.ok,
+    content: mapResultContent(response),
+    structuredContent: response,
+  };
+}
+
+async function callOttoAuth(method, path, query, body, headers) {
+  const normalizedMethod = normalizeMethod(method);
+  const normalizedPath = normalizePath(path);
+  if (!normalizedPath.startsWith("/api/")) {
+    throw argumentError("Path must start with /api/.");
+  }
+  const url = new URL(normalizedPath, BASE_URL + "/");
+  const queryObject = asObject(query);
+  if (queryObject) {
+    for (const [key, value] of Object.entries(queryObject)) {
       if (value === undefined || value === null) continue;
       url.searchParams.set(key, String(value));
     }
   }
-  const response = await fetch(url.toString(), {
-    method,
-    headers: buildHeaders(),
-    body: method === "GET" || method === "DELETE" ? undefined : JSON.stringify(body || {}),
-  });
-  const text = await response.text();
-  let parsed = null;
+
+  const shouldSendBody = normalizedMethod !== "GET" && normalizedMethod !== "DELETE";
+  const bodyObject = asObject(body);
+
   try {
-    parsed = text ? JSON.parse(text) : null;
+    const response = await fetchWithTimeout(
+      url.toString(),
+      {
+        method: normalizedMethod,
+        headers: buildHeaders({ shouldSendBody, extraHeaders: headers }),
+        body: shouldSendBody ? JSON.stringify(bodyObject || {}) : undefined,
+      },
+      HTTP_TIMEOUT_MS,
+    );
+    const { contentType, body: parsedBody } = await parseResponseBody(response);
+    return {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      url: url.toString(),
+      contentType,
+      body: parsedBody,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      status: 0,
+      statusText: "NetworkError",
+      url: url.toString(),
+      contentType: "",
+      body: { error: message },
+    };
+  }
+}
+
+async function fetchDocsMarkdown(docsUrl) {
+  try {
+    const response = await fetchWithTimeout(
+      docsUrl,
+      {
+        method: "GET",
+        headers: { Accept: "text/markdown, text/plain;q=0.9, */*;q=0.1" },
+      },
+      HTTP_TIMEOUT_MS,
+    );
+    if (!response.ok) return "";
+    return await response.text();
   } catch {
-    parsed = text;
+    return "";
   }
-  if (!response.ok) {
-    throw new Error(\`OttoAuth request failed: \${response.status} \${response.statusText}\`);
+}
+
+async function discoverEndpoints() {
+  const servicesResponse = await callOttoAuth("GET", "/api/services");
+  if (!servicesResponse.ok) {
+    console.error(
+      "[ottoauth-http-mcp] discovery failed to load /api/services:",
+      servicesResponse.status,
+      servicesResponse.statusText,
+      JSON.stringify(servicesResponse.body),
+    );
+    return [];
   }
-  return parsed;
+
+  const services = Array.isArray(servicesResponse.body?.services)
+    ? servicesResponse.body.services
+    : [];
+  const discovered = new Map();
+
+  for (const service of services) {
+    const serviceId = safeServiceId(service?.id);
+    if (!serviceId) continue;
+    const docsUrl =
+      typeof service?.docsUrl === "string" && service.docsUrl
+        ? service.docsUrl
+        : BASE_URL + "/api/services/" + encodeURIComponent(serviceId);
+    const markdown = await fetchDocsMarkdown(docsUrl);
+    const endpoints = extractEndpointsFromMarkdown(markdown, serviceId);
+    for (const endpoint of endpoints) {
+      discovered.set(endpoint.method + " " + endpoint.path, endpoint);
+    }
+  }
+
+  return [...discovered.values()].sort((a, b) => a.toolName.localeCompare(b.toolName));
+}
+
+async function refreshEndpointTools() {
+  if (refreshPromise) return refreshPromise;
+  refreshPromise = (async () => {
+    const discovered = await discoverEndpoints();
+    endpointTools.clear();
+    for (const endpoint of discovered) {
+      endpointTools.set(endpoint.toolName, endpoint);
+    }
+    lastRefreshAt = Date.now();
+    console.log(
+      "[ottoauth-http-mcp] refreshed " +
+        endpointTools.size +
+        " endpoint tools from " +
+        BASE_URL,
+    );
+  })();
+  try {
+    await refreshPromise;
+  } finally {
+    refreshPromise = null;
+  }
+}
+
+async function ensureFreshTools(force = false) {
+  const stale = Date.now() - lastRefreshAt > REFRESH_INTERVAL_MS;
+  if (force || stale || endpointTools.size === 0) {
+    await refreshEndpointTools();
+  }
 }
 
 async function handleRpc(payload) {
   const id = payload?.id ?? null;
   const method = String(payload?.method || "");
-  const params = payload?.params && typeof payload.params === "object" ? payload.params : {};
+  const params = asObject(payload?.params) || {};
 
   if (method === "initialize") {
     return mcpResult(id, {
       protocolVersion: "2024-11-05",
-      capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "ottoauth-http-mcp", version: "0.1.0" },
+      capabilities: { tools: { listChanged: true } },
+      serverInfo: { name: "ottoauth-http-mcp", version: "0.2.0" },
     });
   }
   if (method === "notifications/initialized") {
     return mcpResult(id, {});
   }
   if (method === "tools/list") {
+    try {
+      await ensureFreshTools(false);
+    } catch (error) {
+      console.error("[ottoauth-http-mcp] tools/list refresh error:", error);
+    }
     return mcpResult(id, { tools: toolList() });
   }
   if (method === "tools/call") {
     const name = String(params.name || "");
-    const args = params.arguments && typeof params.arguments === "object" ? params.arguments : {};
+    const args = asObject(params.arguments) || {};
     try {
       if (name === "ottoauth_list_services") {
         const result = await callOttoAuth("GET", "/api/services");
-        return mcpResult(id, { content: mapResultContent(result), structuredContent: result });
+        if (result.ok) {
+          try {
+            await ensureFreshTools(true);
+          } catch (error) {
+            console.error("[ottoauth-http-mcp] list_services refresh error:", error);
+          }
+        }
+        return mcpResult(id, toMcpToolResult(result, { preferBodyOnSuccess: true }));
       }
       if (name === "ottoauth_get_service") {
         const serviceId = String(args.id || "").trim();
         if (!serviceId) return mcpError(id, "Missing required argument: id", -32602);
-        const result = await callOttoAuth("GET", \`/api/services/\${encodeURIComponent(serviceId)}\`);
-        return mcpResult(id, { content: mapResultContent(result), structuredContent: result });
+        const result = await callOttoAuth("GET", "/api/services/" + encodeURIComponent(serviceId));
+        return mcpResult(id, toMcpToolResult(result, { preferBodyOnSuccess: true }));
+      }
+      if (name === "ottoauth_refresh_tools") {
+        await refreshEndpointTools();
+        const summary = {
+          ok: true,
+          endpoint_count: endpointTools.size,
+          last_refresh_at: lastRefreshAt,
+          base_url: BASE_URL,
+        };
+        return mcpResult(id, { content: mapResultContent(summary), structuredContent: summary });
       }
       if (name === "ottoauth_http_request") {
-        const httpMethod = String(args.method || "GET").toUpperCase();
+        const httpMethod = normalizeMethod(args.method || "GET");
         const path = String(args.path || "");
-        const query = args.query && typeof args.query === "object" ? args.query : undefined;
-        const body = args.body && typeof args.body === "object" ? args.body : undefined;
-        const result = await callOttoAuth(httpMethod, path, query, body);
-        return mcpResult(id, { content: mapResultContent(result), structuredContent: result });
+        const result = await callOttoAuth(httpMethod, path, args.query, args.body, args.headers);
+        return mcpResult(id, toMcpToolResult(result));
+      }
+
+      await ensureFreshTools(false);
+      const endpoint = endpointTools.get(name);
+      if (endpoint) {
+        const path = applyPathParams(endpoint.path, args.path_params);
+        const result = await callOttoAuth(endpoint.method, path, args.query, args.body, args.headers);
+        return mcpResult(id, toMcpToolResult(result));
       }
       return mcpError(id, \`Unknown tool: \${name}\`, -32601);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return mcpError(id, message, -32000);
+      const code = typeof error === "object" && error && "code" in error && typeof error.code === "number"
+        ? error.code
+        : -32000;
+      return mcpError(id, message, code);
     }
   }
 
@@ -784,9 +1122,15 @@ async function handleRpc(payload) {
 }
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url || "/", \`http://\${HOST}:\${PORT}\`);
+  const url = new URL(req.url || "/", "http://" + HOST + ":" + PORT);
   if (url.pathname === "/healthz") {
-    return writeJson(res, 200, { ok: true, baseUrl: BASE_URL });
+    return writeJson(res, 200, {
+      ok: true,
+      baseUrl: BASE_URL,
+      endpointCount: endpointTools.size,
+      lastRefreshAt,
+      refreshIntervalMs: REFRESH_INTERVAL_MS,
+    });
   }
   if (req.method !== "POST" || url.pathname !== MCP_PATH) {
     return writeJson(res, 404, { error: "not found" });
@@ -804,7 +1148,16 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(\`[ottoauth-http-mcp] listening on \${HOST}:\${PORT}\${MCP_PATH} base=\${BASE_URL}\`);
+  console.log("[ottoauth-http-mcp] listening on " + HOST + ":" + PORT + MCP_PATH + " base=" + BASE_URL);
+  refreshEndpointTools().catch((error) => {
+    console.error("[ottoauth-http-mcp] initial endpoint refresh failed:", error);
+  });
+  const timer = setInterval(() => {
+    refreshEndpointTools().catch((error) => {
+      console.error("[ottoauth-http-mcp] scheduled endpoint refresh failed:", error);
+    });
+  }, REFRESH_INTERVAL_MS);
+  if (typeof timer.unref === "function") timer.unref();
 });
 `;
 }

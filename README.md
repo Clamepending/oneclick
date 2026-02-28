@@ -71,6 +71,7 @@ OttoAgent flavor env knobs:
 - `OTTOAGENT_MCP_PORT` / `OTTOAGENT_MCP_PATH` / `OTTOAGENT_MCP_START_COMMAND`
 - optional passthroughs for MCP container auth/config: `OTTOAGENT_MCP_BASE_URL`, `OTTOAGENT_MCP_TOKEN`
 - `OTTOAGENT_MCP_BUILD_REPO` is optional; if omitted, OneClick builds a built-in OttoAuth MCP HTTP bridge image.
+  - Built-in bridge behavior: keeps `ottoauth_list_services` / `ottoauth_get_service` / `ottoauth_http_request`, auto-discovers endpoint-specific OttoAuth tools from docs, and returns structured HTTP failure payloads (status/url/body) instead of generic RPC errors.
 
 ## Run
 
