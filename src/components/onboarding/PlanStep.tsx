@@ -1,9 +1,21 @@
 "use client";
 
 type Props = {
-  deploymentFlavor: "simple_agent_free" | "simple_agent_videomemory_free" | "deploy_openclaw_free" | "ottoagent_free";
+  deploymentFlavor:
+    | "simple_agent_free"
+    | "simple_agent_videomemory_free"
+    | "simple_agent_ottoauth_ecs"
+    | "simple_agent_ottoauth_ecs_canary"
+    | "deploy_openclaw_free"
+    | "ottoagent_free";
   onDeploymentFlavorChange: (
-    value: "simple_agent_free" | "simple_agent_videomemory_free" | "deploy_openclaw_free" | "ottoagent_free",
+    value:
+      | "simple_agent_free"
+      | "simple_agent_videomemory_free"
+      | "simple_agent_ottoauth_ecs"
+      | "simple_agent_ottoauth_ecs_canary"
+      | "deploy_openclaw_free"
+      | "ottoagent_free",
   ) => void;
   onDeploy: () => void;
   loading: boolean;
@@ -30,7 +42,7 @@ export function PlanStep({ deploymentFlavor, onDeploymentFlavorChange, onDeploy,
         >
           <strong>Simple Agent (Free)</strong>
           <p className="muted" style={{ marginBottom: 8 }}>
-            Deploys the `adminagent` UI/service.
+            Deploys the `simpleagent` UI/service.
           </p>
         </button>
         <button
@@ -48,7 +60,7 @@ export function PlanStep({ deploymentFlavor, onDeploymentFlavorChange, onDeploy,
         >
           <strong>Simple Agent + VideoMemory (Free)</strong>
           <p className="muted" style={{ marginBottom: 0 }}>
-            Deploys `adminagent` and `videomemory` together on one VM.
+            Deploys `simpleagent` and `videomemory` together on one VM.
           </p>
         </button>
         <button
@@ -67,6 +79,42 @@ export function PlanStep({ deploymentFlavor, onDeploymentFlavorChange, onDeploy,
           <strong>OttoAgent (Free)</strong>
           <p className="muted" style={{ marginBottom: 0 }}>
             Deploys `ottoagent` with `ottoagent-mcp`.
+          </p>
+        </button>
+        <button
+          type="button"
+          onClick={() => onDeploymentFlavorChange("simple_agent_ottoauth_ecs")}
+          style={{
+            textAlign: "left",
+            border: deploymentFlavor === "simple_agent_ottoauth_ecs" ? "1px solid var(--border-strong)" : "1px solid var(--border)",
+            borderRadius: 10,
+            padding: 16,
+            background: deploymentFlavor === "simple_agent_ottoauth_ecs" ? "var(--accent-surface)" : "var(--surface-strong)",
+            color: "inherit",
+            cursor: "pointer",
+          }}
+        >
+          <strong>Simple Agent + OttoAuth (ECS)</strong>
+          <p className="muted" style={{ marginBottom: 0 }}>
+            Deploys `simpleagent` with the `ottoagent-mcp` sidecar on ECS.
+          </p>
+        </button>
+        <button
+          type="button"
+          onClick={() => onDeploymentFlavorChange("simple_agent_ottoauth_ecs_canary")}
+          style={{
+            textAlign: "left",
+            border: deploymentFlavor === "simple_agent_ottoauth_ecs_canary" ? "1px solid var(--border-strong)" : "1px solid var(--border)",
+            borderRadius: 10,
+            padding: 16,
+            background: deploymentFlavor === "simple_agent_ottoauth_ecs_canary" ? "var(--accent-surface)" : "var(--surface-strong)",
+            color: "inherit",
+            cursor: "pointer",
+          }}
+        >
+          <strong>Simple Agent + OttoAuth (ECS Canary)</strong>
+          <p className="muted" style={{ marginBottom: 0 }}>
+            Testing flavor for canary ECS deployment strategy.
           </p>
         </button>
         <button

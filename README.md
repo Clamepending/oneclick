@@ -59,6 +59,8 @@ Deployment flavors in onboarding:
 
 - `simple_agent_free` (Simple Agent)
 - `simple_agent_videomemory_free` (Simple Agent + VideoMemory MCP sidecar)
+- `simple_agent_ottoauth_ecs` (Simple Agent + OttoAuth MCP sidecar on ECS)
+- `simple_agent_ottoauth_ecs_canary` (Testing flavor for canary ECS deploy strategy; uses `ECS_CANARY_SERVICE_PREFIX` when set)
 - `ottoagent_free` (OttoAgent + OttoAgent MCP sidecar)
 - `deploy_openclaw_free` (OpenClaw runtime)
 

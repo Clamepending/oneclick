@@ -18,7 +18,12 @@ export default function OnboardingPage() {
   const router = useRouter();
   const [botName, setBotName] = useState(() => generateDefaultBotName());
   const [deploymentFlavor, setDeploymentFlavor] = useState<
-    "simple_agent_free" | "simple_agent_videomemory_free" | "deploy_openclaw_free" | "ottoagent_free"
+    | "simple_agent_free"
+    | "simple_agent_videomemory_free"
+    | "simple_agent_ottoauth_ecs"
+    | "simple_agent_ottoauth_ecs_canary"
+    | "deploy_openclaw_free"
+    | "ottoagent_free"
   >(
     "simple_agent_free",
   );

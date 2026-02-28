@@ -18,7 +18,14 @@ import {
   ElasticLoadBalancingV2Client,
 } from "@aws-sdk/client-elastic-load-balancing-v2";
 import { getRuntimeBaseDomain } from "@/lib/subdomainConfig";
-import { getEcsPlanResources, normalizeDeploymentFlavor, normalizePlanTier, type DeploymentFlavor, type PlanTier } from "@/lib/plans";
+import {
+  getEcsPlanResources,
+  isOttoAuthEcsFlavor,
+  normalizeDeploymentFlavor,
+  normalizePlanTier,
+  type DeploymentFlavor,
+  type PlanTier,
+} from "@/lib/plans";
 import {
   getOttoAgentBuildRepo,
   getOttoAgentMcpBuildRepo,
@@ -57,6 +64,7 @@ type LaunchInput = {
   planTier?: PlanTier | null;
   deploymentFlavor?: DeploymentFlavor | null;
   providerOverride?: "mock" | "ssh" | "ecs" | null;
+  ecsServicePrefixOverride?: string | null;
   host?: Host;
 };
 
@@ -1173,26 +1181,13 @@ function buildOpenClawOnboardCommand(input: {
   const openaiApiKey = input.openaiApiKey?.trim() || "";
   const openrouterApiKey = input.openrouterApiKey?.trim() || "";
   const subsidyProxyToken = input.subsidyProxyToken?.trim() || "";
+  const bootstrapApiKey = readTrimmedEnv("OPENCLAW_BOOTSTRAP_API_KEY") || "oneclick-bootstrap-placeholder";
 
-  const authArg = anthropicApiKey
-    ? `--anthropic-api-key ${shellQuote(anthropicApiKey)}`
-    : openaiApiKey
-      ? `--openai-api-key ${shellQuote(openaiApiKey)}`
-      : openrouterApiKey
-        ? `--openai-api-key ${shellQuote(openrouterApiKey)}`
-        : subsidyProxyToken
-          ? `--openai-api-key ${shellQuote(subsidyProxyToken)}`
-          : "";
-
-  if (!authArg) return "";
-
-  return [
+  const args = [
     "node /app/dist/index.js onboard",
     "--non-interactive",
     "--accept-risk",
     "--mode local",
-    "--auth-choice apiKey",
-    authArg,
     `--gateway-port ${input.containerPort}`,
     "--gateway-bind lan",
     "--skip-daemon",
@@ -1200,7 +1195,22 @@ function buildOpenClawOnboardCommand(input: {
     "--skip-health",
     "--skip-ui",
     "--skip-skills",
-  ].join(" ");
+  ];
+
+  if (anthropicApiKey) {
+    args.push("--auth-choice apiKey", `--anthropic-api-key ${shellQuote(anthropicApiKey)}`);
+  } else if (openaiApiKey) {
+    args.push("--auth-choice apiKey", `--openai-api-key ${shellQuote(openaiApiKey)}`);
+  } else if (openrouterApiKey) {
+    args.push("--auth-choice apiKey", `--openai-api-key ${shellQuote(openrouterApiKey)}`);
+  } else if (subsidyProxyToken) {
+    args.push("--auth-choice apiKey", `--openai-api-key ${shellQuote(subsidyProxyToken)}`);
+  } else {
+    // Keep gateway bootstrap non-interactive for test deployments that omit provider keys.
+    args.push("--auth-choice apiKey", `--openai-api-key ${shellQuote(bootstrapApiKey)}`);
+  }
+
+  return args.join(" ");
 }
 
 function getAdvancedBootstrapMessage() {
@@ -1438,14 +1448,14 @@ async function launchViaSsh(input: LaunchInput) {
     `-e TELEGRAM_ENABLED=${telegramEnabled}`,
     telegramBotToken ? `-e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : "",
     gatewayToken ? `-e GATEWAY_TOKEN=${shellQuote(gatewayToken)}` : "",
-    simpleAgentOpenAiApiKey ? `-e ADMINAGENT_LLM_API_KEY=${shellQuote(simpleAgentOpenAiApiKey)}` : "",
-    resolvedSimpleAgentLlmUrl ? `-e ADMINAGENT_LLM_URL=${shellQuote(resolvedSimpleAgentLlmUrl)}` : "",
-    // Latest AdminAgent stores/reads provider keys from these env vars.
+    simpleAgentOpenAiApiKey ? `-e SIMPLEAGENT_LLM_API_KEY=${shellQuote(simpleAgentOpenAiApiKey)}` : "",
+    resolvedSimpleAgentLlmUrl ? `-e SIMPLEAGENT_LLM_URL=${shellQuote(resolvedSimpleAgentLlmUrl)}` : "",
+    // Latest SimpleAgent stores/reads provider keys from these env vars.
     simpleAgentOpenAiApiKey ? `-e OPENAI_API_KEY=${shellQuote(simpleAgentOpenAiApiKey)}` : "",
     simpleAgentAnthropicApiKey ? `-e ANTHROPIC_API_KEY=${shellQuote(simpleAgentAnthropicApiKey)}` : "",
     simpleAgentGoogleApiKey ? `-e GOOGLE_API_KEY=${shellQuote(simpleAgentGoogleApiKey)}` : "",
-    simpleAgentModel ? `-e ADMINAGENT_MODEL=${shellQuote(simpleAgentModel)}` : "",
-    simpleAgentMcpServersJson ? `-e ADMINAGENT_MCP_SERVERS_JSON=${shellQuote(simpleAgentMcpServersJson)}` : "",
+    simpleAgentModel ? `-e SIMPLEAGENT_MODEL=${shellQuote(simpleAgentModel)}` : "",
+    simpleAgentMcpServersJson ? `-e SIMPLEAGENT_MCP_SERVERS_JSON=${shellQuote(simpleAgentMcpServersJson)}` : "",
     resolvedSimpleAgentLlmUrl ? `-e OPENAI_BASE_URL=${shellQuote(resolvedSimpleAgentLlmUrl)}` : "",
     resolvedSimpleAgentLlmUrl ? `-e OPENAI_API_BASE=${shellQuote(resolvedSimpleAgentLlmUrl)}` : "",
     `-e PORT=${containerPort}`,
@@ -1512,6 +1522,12 @@ async function launchViaSsh(input: LaunchInput) {
           // Upstream caption endpoint keeps a startup-time provider reference; apply settings-saved key updates there too.
           "sed -i 's/response = model_provider\\._sync_generate_content(/response = task_manager._model_provider._sync_generate_content(/g' " +
             `"${videoMemoryBuildDir}/flask_app/app.py"`,
+          // Upstream Dockerfile currently points to a non-existent MediaMTX artifact path.
+          "sed -i 's/mediamtx_\\${MEDIAMTX_VERSION}_linux_amd64/mediamtx_v\\${MEDIAMTX_VERSION}_linux_amd64/g' " +
+            `"${videoMemoryBuildDir}/Dockerfile"`,
+          // Upstream main currently has a quoting typo that breaks startup on Python import.
+          "sed -i \"s/time.strftime(\\\"%Y-%m-%d %H:%M:%S\\\"/time.strftime('%Y-%m-%d %H:%M:%S'/g\" " +
+            `"${videoMemoryBuildDir}/videomemory/system/stream_ingestors/video_stream_ingestor.py"`,
           `docker build -t "${videoMemoryImage}" "${videoMemoryBuildDir}"`,
         ]
       : isSimpleAgentWithVideoMemory
@@ -1570,14 +1586,15 @@ async function launchViaEcs(input: LaunchInput) {
   const securityGroups = parseCsvEnv("ECS_SECURITY_GROUP_IDS");
   const executionRoleArn = requireEnv("ECS_EXECUTION_ROLE_ARN");
   const taskRoleArn = readTrimmedEnv("ECS_TASK_ROLE_ARN");
-  const servicePrefix = readTrimmedEnv("ECS_SERVICE_PREFIX") || "oneclick-agent";
+  const defaultServicePrefix = readTrimmedEnv("ECS_SERVICE_PREFIX") || "oneclick-agent";
+  const servicePrefix = input.ecsServicePrefixOverride?.trim() || defaultServicePrefix;
   const launchType = readTrimmedEnv("ECS_LAUNCH_TYPE") || "FARGATE";
   const assignPublicIp = (readTrimmedEnv("ECS_ASSIGN_PUBLIC_IP") || "true").toLowerCase() === "false"
     ? "DISABLED"
     : "ENABLED";
   const deploymentFlavor = normalizeDeploymentFlavor(input.deploymentFlavor);
   const isOpenClawRuntime = deploymentFlavor === "deploy_openclaw_free";
-  const isSimpleAgentWithOttoAuthEcs = deploymentFlavor === "simple_agent_ottoauth_ecs";
+  const isSimpleAgentWithOttoAuthEcs = isOttoAuthEcsFlavor(deploymentFlavor);
   const image = getRuntimeImage(deploymentFlavor);
   const gatewayToken = getGatewayToken();
   const containerPort = getRuntimePort(deploymentFlavor);
@@ -1650,16 +1667,16 @@ async function launchViaEcs(input: LaunchInput) {
     input.anthropicApiKey?.trim() ? { name: "ANTHROPIC_API_KEY", value: input.anthropicApiKey.trim() } : null,
     input.openrouterApiKey?.trim() ? { name: "OPENROUTER_API_KEY", value: input.openrouterApiKey.trim() } : null,
     !isOpenClawRuntime && input.openaiApiKey?.trim()
-      ? { name: "ADMINAGENT_LLM_API_KEY", value: input.openaiApiKey.trim() }
+      ? { name: "SIMPLEAGENT_LLM_API_KEY", value: input.openaiApiKey.trim() }
       : null,
     !isOpenClawRuntime && resolvedSimpleAgentLlmUrl
-      ? { name: "ADMINAGENT_LLM_URL", value: resolvedSimpleAgentLlmUrl }
+      ? { name: "SIMPLEAGENT_LLM_URL", value: resolvedSimpleAgentLlmUrl }
       : null,
     !isOpenClawRuntime && simpleAgentModel
-      ? { name: "ADMINAGENT_MODEL", value: simpleAgentModel }
+      ? { name: "SIMPLEAGENT_MODEL", value: simpleAgentModel }
       : null,
     !isOpenClawRuntime && simpleAgentMcpServersJson
-      ? { name: "ADMINAGENT_MCP_SERVERS_JSON", value: simpleAgentMcpServersJson }
+      ? { name: "SIMPLEAGENT_MCP_SERVERS_JSON", value: simpleAgentMcpServersJson }
       : null,
     input.subsidyProxyToken?.trim() && input.subsidyProxyBaseUrl?.trim() && !input.openaiApiKey && !input.anthropicApiKey && !input.openrouterApiKey
       ? { name: "OPENAI_API_KEY", value: input.subsidyProxyToken.trim() }
@@ -1726,6 +1743,7 @@ async function launchViaEcs(input: LaunchInput) {
       }
       scriptSteps.push(
         "node /app/dist/index.js config set gateway.bind lan || true",
+        `node /app/dist/index.js config set gateway.port ${containerPort} || true`,
         `node /app/dist/index.js config set gateway.auth.token ${shellQuote(gatewayToken)} || true`,
       );
       if (input.telegramBotToken?.trim()) {
@@ -1744,22 +1762,18 @@ async function launchViaEcs(input: LaunchInput) {
           // Subsidy mode relies on env-based OpenAI-compatible auth; onboarding is memory-heavy and can OOM free-tier tasks.
           scriptSteps.push("echo '[oneclick] skipping onboard bootstrap for subsidy fallback' >&2");
         } else {
-          // Keep gateway startup fast/reliable; run onboarding asynchronously so failures do not block container readiness.
+          // Run onboarding before gateway startup to avoid bootstrap races on fresh ECS task state.
           scriptSteps.push(
-            "echo '[oneclick] starting onboarding in background' >&2",
-            [
-              "( ",
-              `${onboardCommand} >/tmp/oneclick-onboard.log 2>&1 || true;`,
-              ...(shouldAllowInsecureControlUi()
-                ? [
-                    "echo '[oneclick] reapply control UI auth flags after onboard' >&2;",
-                    "node /app/dist/index.js config set gateway.controlUi.allowInsecureAuth true || true;",
-                    "node /app/dist/index.js config set gateway.controlUi.dangerouslyDisableDeviceAuth true || true;",
-                  ]
-                : []),
-              " ) &",
-            ].join(" "),
+            "echo '[oneclick] running onboarding bootstrap' >&2",
+            `${onboardCommand} >/tmp/oneclick-onboard.log 2>&1 || true`,
           );
+          if (shouldAllowInsecureControlUi()) {
+            scriptSteps.push(
+              "echo '[oneclick] reapply control UI auth flags after onboard' >&2",
+              "node /app/dist/index.js config set gateway.controlUi.allowInsecureAuth true || true",
+              "node /app/dist/index.js config set gateway.controlUi.dangerouslyDisableDeviceAuth true || true",
+            );
+          }
         }
       }
       void deploymentFlavor;

@@ -118,7 +118,8 @@ async function resolveServicePublicIp(region: string, cluster: string, serviceNa
 }
 
 async function fetchText(url: string) {
-  const res = await fetch(url);
+  const requestTimeoutMs = Number(process.env.ECS_SMOKE_HTTP_REQUEST_TIMEOUT_MS ?? "8000");
+  const res = await fetch(url, { signal: AbortSignal.timeout(requestTimeoutMs) });
   const text = await res.text();
   return { res, text };
 }
@@ -132,11 +133,29 @@ function mustMatch(text: string, pattern: RegExp, label: string) {
 }
 
 async function runRuntimeHttpSmoke(baseUrl: string) {
-  console.log(`Runtime HTTP smoke: ${baseUrl}`);
+  const startupTimeoutMs = Number(process.env.ECS_SMOKE_HTTP_STARTUP_TIMEOUT_MS ?? "300000");
+  const retryIntervalMs = Number(process.env.ECS_SMOKE_HTTP_RETRY_INTERVAL_MS ?? "3000");
+  const deadline = Date.now() + startupTimeoutMs;
+  console.log(`Runtime HTTP smoke: ${baseUrl} (startup wait ${startupTimeoutMs}ms)`);
 
-  const shell = await fetchText(`${baseUrl}/`);
-  if (!shell.res.ok) {
-    throw new Error(`Runtime shell request failed (${shell.res.status})`);
+  let shell: Awaited<ReturnType<typeof fetchText>> | null = null;
+  let lastError: unknown = null;
+  while (Date.now() < deadline) {
+    try {
+      const nextShell = await fetchText(`${baseUrl}/`);
+      if (!nextShell.res.ok) {
+        throw new Error(`Runtime shell request failed (${nextShell.res.status})`);
+      }
+      shell = nextShell;
+      break;
+    } catch (error) {
+      lastError = error;
+      await sleep(retryIntervalMs);
+    }
+  }
+  if (!shell) {
+    const lastMessage = lastError instanceof Error ? lastError.message : String(lastError ?? "unknown");
+    throw new Error(`Runtime shell did not become reachable within ${startupTimeoutMs}ms: ${lastMessage}`);
   }
   if (!shell.text.includes("<openclaw-app></openclaw-app>")) {
     throw new Error("Runtime shell is not serving OpenClaw Control UI markup.");
@@ -196,7 +215,7 @@ function parseEcsRuntimeId(runtimeId: string) {
 
 async function main() {
   const region = requireEnv("AWS_REGION");
-  const pollCount = Number(process.env.ECS_SMOKE_POLL_COUNT ?? "36");
+  const pollCount = Number(process.env.ECS_SMOKE_POLL_COUNT ?? "90");
   const pollIntervalMs = Number(process.env.ECS_SMOKE_POLL_INTERVAL_MS ?? "5000");
   const runtimePort = Number(process.env.OPENCLAW_CONTAINER_PORT ?? "18789");
   const deploymentId = `smoke-${Date.now()}`;
@@ -209,6 +228,7 @@ async function main() {
       deploymentId,
       userId,
       runtimeSlugSource: "smoke-test",
+      deploymentFlavor: "deploy_openclaw_free",
     });
     runtimeId = first.runtimeId;
     console.log(`Created runtimeId=${first.runtimeId}`);
@@ -222,6 +242,7 @@ async function main() {
       deploymentId,
       userId,
       runtimeSlugSource: "smoke-test",
+      deploymentFlavor: "deploy_openclaw_free",
     });
     if (second.runtimeId !== first.runtimeId) {
       throw new Error("Expected same runtimeId on second launch for same deployment/service.");
@@ -247,6 +268,7 @@ async function main() {
     if (!runningTaskObserved) {
       console.warn("Warning: service did not report running task within poll window (may still be starting).");
       await printServiceDiagnostics(region, parsed.cluster, parsed.serviceName);
+      throw new Error("ECS service never reached running state within smoke poll window.");
     } else {
       const publicIp = await resolveServicePublicIp(region, parsed.cluster, parsed.serviceName);
       if (!publicIp) {

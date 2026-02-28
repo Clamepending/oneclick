@@ -27,6 +27,12 @@ type DeploymentJob = {
 
 const queueName = "deployment-jobs";
 
+type DeploymentStrategy = {
+  provider: "mock" | "ssh" | "ecs";
+  strategy: "legacy_default" | "ecs_ottoauth" | "ecs_ottoauth_canary";
+  ecsServicePrefixOverride: string | null;
+};
+
 function getQueueConnection() {
   const redisUrl = process.env.REDIS_URL;
   if (!redisUrl) {
@@ -92,14 +98,32 @@ function readTrimmedEnv(name: string) {
   return raw.trim().replace(/^"(.*)"$/, "$1").replace(/\\n/g, "").trim();
 }
 
-function resolveProviderForDeployment(
+function resolveDeploymentStrategy(
   defaultProvider: "mock" | "ssh" | "ecs",
   deploymentFlavor: DeploymentFlavor,
-): "mock" | "ssh" | "ecs" {
-  if (isOttoAuthEcsFlavor(deploymentFlavor)) return "ecs";
-  return defaultProvider;
+): DeploymentStrategy {
+  if (isOttoAuthEcsFlavor(deploymentFlavor)) {
+    if (deploymentFlavor === "simple_agent_ottoauth_ecs_canary") {
+      const defaultServicePrefix = readTrimmedEnv("ECS_SERVICE_PREFIX") || "oneclick-agent";
+      const canaryServicePrefix = readTrimmedEnv("ECS_CANARY_SERVICE_PREFIX") || `${defaultServicePrefix}-canary`;
+      return {
+        provider: "ecs",
+        strategy: "ecs_ottoauth_canary",
+        ecsServicePrefixOverride: canaryServicePrefix,
+      };
+    }
+    return {
+      provider: "ecs",
+      strategy: "ecs_ottoauth",
+      ecsServicePrefixOverride: null,
+    };
+  }
+  return {
+    provider: defaultProvider,
+    strategy: "legacy_default",
+    ecsServicePrefixOverride: null,
+  };
 }
-
 
 function resolveDefaultProvider(): "mock" | "ssh" | "ecs" {
   const configured = readTrimmedEnv("DEPLOY_PROVIDER").toLowerCase();
@@ -550,7 +574,8 @@ export async function processDeploymentJob(job: DeploymentJob) {
     [job.deploymentId],
   );
   const selectedDeploymentFlavor = normalizeDeploymentFlavor(providerSelectionRow.rows[0]?.deployment_flavor);
-  const provider = resolveProviderForDeployment(defaultProvider, selectedDeploymentFlavor);
+  const deploymentStrategy = resolveDeploymentStrategy(defaultProvider, selectedDeploymentFlavor);
+  const provider = deploymentStrategy.provider;
   if (provider === "ecs" && selectedDeploymentFlavor === "simple_agent_videomemory_free") {
     throw new Error(
       "simple_agent_videomemory_free is not supported on ECS yet. Choose Simple Agent, OttoAgent, or Deploy OpenClaw.",
@@ -623,7 +648,9 @@ export async function processDeploymentJob(job: DeploymentJob) {
       `UPDATE deployments SET host_name = $1, status = 'starting', error = NULL, updated_at = NOW() WHERE id = $2`,
       [provider, job.deploymentId],
     );
-    await appendEvent(job.deploymentId, "starting", `Using provider ${provider}`);
+    const strategySuffix =
+      deploymentStrategy.strategy === "legacy_default" ? "" : ` (strategy=${deploymentStrategy.strategy})`;
+    await appendEvent(job.deploymentId, "starting", `Using provider ${provider}${strategySuffix}`);
   }
 
   let runtime: Awaited<ReturnType<typeof launchUserContainer>> | null = null;
@@ -723,6 +750,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
     subsidyProxyBaseUrl,
     deploymentFlavor,
     providerOverride: provider,
+    ecsServicePrefixOverride: deploymentStrategy.ecsServicePrefixOverride,
   });
   await pool.query(
     `UPDATE deployments

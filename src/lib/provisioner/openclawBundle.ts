@@ -67,7 +67,7 @@ export function shouldAllowInsecureControlUi() {
 }
 
 export function getSimpleAgentImage() {
-  return readEnv("SIMPLE_AGENT_IMAGE") || "oneclick/adminagent:main";
+  return readEnv("SIMPLE_AGENT_IMAGE") || "oneclick/simpleagent:main";
 }
 
 export function getSimpleAgentPort() {
@@ -79,7 +79,7 @@ export function getSimpleAgentStartCommand() {
 }
 
 export function getSimpleAgentBuildRepo() {
-  return readEnv("SIMPLE_AGENT_BUILD_REPO") || "https://github.com/Clamepending/adminagent.git#main";
+  return readEnv("SIMPLE_AGENT_BUILD_REPO") || "https://github.com/Clamepending/simpleagent.git#main";
 }
 
 export function shouldBuildSimpleAgentImage() {
