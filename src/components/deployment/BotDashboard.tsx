@@ -24,6 +24,7 @@ type DeploymentSummary = {
   hasOpenrouterApiKey: boolean;
   hasTelegramBotToken: boolean;
   readyUrl: string | null;
+  videoMemoryUrl?: string | null;
   error: string | null;
   updatedAt: string;
 };
@@ -281,6 +282,11 @@ export function BotDashboard({ deployments }: Props) {
                     <Link className="button" href={`/runtime/${deployment.id}`}>
                       Open UI
                     </Link>
+                    {deployment.videoMemoryUrl ? (
+                      <a className="button secondary" href={deployment.videoMemoryUrl} target="_blank" rel="noreferrer">
+                        Open VideoMemory
+                      </a>
+                    ) : null}
                   </div>
                 ) : null}
                 <DeploymentActions

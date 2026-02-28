@@ -3,6 +3,7 @@ import { auth, signIn } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
 import { BotDashboard } from "@/components/deployment/BotDashboard";
 import { buildBotDashboardUrl } from "@/lib/bots/botDashboardUrl";
+import { buildVideoMemoryUrl } from "@/lib/runtime/videoMemoryUrl";
 import { deactivateExpiredFreeTrialsForUser } from "@/lib/trialEnforcement";
 
 type DeploymentSummary = {
@@ -133,6 +134,12 @@ export default async function HomePage() {
               hasOpenrouterApiKey: deployment.has_openrouter_api_key,
               hasTelegramBotToken: deployment.has_telegram_bot_token,
               readyUrl: deployment.ready_url,
+              videoMemoryUrl: buildVideoMemoryUrl({
+                deploymentId: deployment.id,
+                deploymentFlavor: deployment.deployment_flavor,
+                runtimeId: deployment.runtime_id,
+                status: deployment.status,
+              }),
               error: deployment.error,
               updatedAt: deployment.updated_at,
             }))}

@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
 import { normalizeDeploymentFlavor } from "@/lib/plans";
 import { DeploymentActions } from "@/components/deployment/DeploymentActions";
+import { buildVideoMemoryUrl } from "@/lib/runtime/videoMemoryUrl";
 import { deactivateExpiredFreeTrialsForUser } from "@/lib/trialEnforcement";
 
 type BotIdentityRow = {
@@ -115,6 +116,12 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
           <div style={{ display: "grid", gap: 10 }}>
             {deploymentsResult.rows.map((deployment) => {
               const statusMeta = getStatusMeta(deployment.status);
+              const videoMemoryUrl = buildVideoMemoryUrl({
+                deploymentId: deployment.id,
+                deploymentFlavor: deployment.deployment_flavor,
+                runtimeId: deployment.runtime_id,
+                status: deployment.status,
+              });
               return (
                 <div
                   key={deployment.id}
@@ -174,6 +181,16 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
                         <a className="button" href={deployment.ready_url} target="_blank" rel="noreferrer">
                           Open UI
                         </a>
+                        {videoMemoryUrl ? (
+                          <a
+                            className="button secondary"
+                            href={videoMemoryUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open VideoMemory
+                          </a>
+                        ) : null}
                         {deployment.deploy_provider === "ecs" ? (
                           <p className="muted" style={{ margin: 0 }}>
                             Use the HTTPS runtime URL (button above), not a raw ECS IP/port URL.
