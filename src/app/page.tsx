@@ -24,6 +24,7 @@ type DeploymentSummary = {
   has_openrouter_api_key: boolean;
   has_telegram_bot_token: boolean;
   ready_url: string | null;
+  video_memory_ready_at: string | null;
   error: string | null;
   updated_at: string;
 };
@@ -78,6 +79,7 @@ export default async function HomePage() {
            CASE WHEN COALESCE(d.openrouter_api_key, '') <> '' THEN TRUE ELSE FALSE END AS has_openrouter_api_key,
            CASE WHEN COALESCE(d.telegram_bot_token, '') <> '' THEN TRUE ELSE FALSE END AS has_telegram_bot_token,
            d.ready_url,
+           d.video_memory_ready_at,
            d.error,
            d.updated_at
          FROM deployments d
@@ -139,6 +141,8 @@ export default async function HomePage() {
                 deploymentFlavor: deployment.deployment_flavor,
                 runtimeId: deployment.runtime_id,
                 status: deployment.status,
+                videoMemoryReadyAt: deployment.video_memory_ready_at,
+                requireReadyMarker: true,
               }),
               error: deployment.error,
               updatedAt: deployment.updated_at,

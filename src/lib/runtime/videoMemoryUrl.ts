@@ -31,12 +31,14 @@ export function buildVideoMemoryUrl(input: {
   deploymentFlavor: string | null | undefined;
   runtimeId: string | null | undefined;
   status: string | null | undefined;
+  videoMemoryReadyAt?: string | null | undefined;
+  requireReadyMarker?: boolean;
 }) {
   if ((input.status ?? "").trim().toLowerCase() !== "ready") return null;
+  if (input.requireReadyMarker && !input.videoMemoryReadyAt) return null;
   if (normalizeDeploymentFlavor(input.deploymentFlavor) !== "simple_agent_videomemory_free") return null;
   const host = parseSshRuntimeHost(input.runtimeId);
   if (!host) return null;
   const port = buildAssignedPort(`${input.deploymentId}-videomemory`);
   return `http://${host}:${port}/`;
 }
-

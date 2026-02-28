@@ -72,6 +72,7 @@ export async function ensureSchema() {
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS deactivation_reason TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS monthly_price_cents INT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS deployment_flavor TEXT NOT NULL DEFAULT 'basic';`);
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS video_memory_ready_at TIMESTAMPTZ;`);
   await pool.query(`ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS model_provider TEXT;`);
   await pool.query(`ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS model_api_key TEXT;`);
   await pool.query(`ALTER TABLE onboarding_sessions ADD COLUMN IF NOT EXISTS telegram_bot_token TEXT;`);

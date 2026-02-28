@@ -23,6 +23,7 @@ type DeploymentRow = {
   plan_tier: string | null;
   deployment_flavor: string | null;
   ready_url: string | null;
+  video_memory_ready_at: string | null;
   error: string | null;
   created_at: string;
   updated_at: string;
@@ -78,6 +79,7 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
        plan_tier,
        deployment_flavor,
        ready_url,
+       video_memory_ready_at,
        error,
        created_at,
        updated_at
@@ -121,6 +123,8 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
                 deploymentFlavor: deployment.deployment_flavor,
                 runtimeId: deployment.runtime_id,
                 status: deployment.status,
+                videoMemoryReadyAt: deployment.video_memory_ready_at,
+                requireReadyMarker: true,
               });
               return (
                 <div

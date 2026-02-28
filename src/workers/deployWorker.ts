@@ -598,6 +598,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
      SET ready_url = $1,
          runtime_id = $2,
          deploy_provider = $3,
+         video_memory_ready_at = NULL,
          updated_at = NOW()
      WHERE id = $4`,
     [runtime.readyUrl, runtime.runtimeId, runtime.deployProvider, job.deploymentId],
@@ -621,6 +622,14 @@ export async function processDeploymentJob(job: DeploymentJob) {
     }
     await appendEvent(job.deploymentId, "starting", "Waiting for VideoMemory sidecar health check");
     await waitForVideoMemoryReady({ videoMemoryUrl });
+    await pool.query(
+      `UPDATE deployments
+       SET video_memory_ready_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $1`,
+      [job.deploymentId],
+    );
+    await appendEvent(job.deploymentId, "starting", "VideoMemory sidecar health check passed");
   }
 
   await pool.query(
