@@ -24,7 +24,12 @@ import {
   getRuntimePort,
   getRuntimeStartCommand,
   getSimpleAgentBuildRepo,
+  getVideoMemoryBuildRepo,
+  getVideoMemoryImage,
+  getVideoMemoryPort,
+  getVideoMemoryStartCommand,
   shouldBuildSimpleAgentImage,
+  shouldBuildVideoMemoryImage,
   shouldAllowInsecureControlUi,
 } from "@/lib/provisioner/openclawBundle";
 import { destroyDedicatedVm } from "@/lib/provisioner/dedicatedVm";
@@ -343,6 +348,10 @@ function buildRuntimeName(input: { runtimeSlugSource?: string | null; userId: st
   return joined.slice(0, 63);
 }
 
+function buildVideoMemoryContainerName(containerName: string) {
+  return `${containerName}-videomemory`.slice(0, 63);
+}
+
 function buildRuntimeUrlFromDomain(runtimeSlugSource: string | null | undefined, userId: string) {
   const baseDomain = getRuntimeBaseDomain();
   if (!baseDomain) return null;
@@ -356,7 +365,7 @@ function buildRuntimeUrlFromDomain(runtimeSlugSource: string | null | undefined,
 function buildAssignedPort(deploymentId: string) {
   const base = Number(process.env.OPENCLAW_HOST_PORT_BASE ?? "20000");
   const span = Number(process.env.OPENCLAW_HOST_PORT_SPAN ?? "10000");
-  const hex = deploymentId.replace(/-/g, "").slice(-6);
+  const hex = sha1Hex(deploymentId).slice(0, 8);
   const offset = Number.parseInt(hex, 16) % span;
   return base + offset;
 }
@@ -545,6 +554,19 @@ function splitStartCommand(command: string) {
     .filter(Boolean);
 }
 
+function parseGitRepoSpec(repo: string) {
+  const trimmed = repo.trim();
+  if (!trimmed) return { url: "", ref: "" };
+  const hashIndex = trimmed.lastIndexOf("#");
+  if (hashIndex <= 0) {
+    return { url: trimmed, ref: "" };
+  }
+  return {
+    url: trimmed.slice(0, hashIndex),
+    ref: trimmed.slice(hashIndex + 1).trim(),
+  };
+}
+
 function buildOpenClawOnboardCommand(input: {
   anthropicApiKey?: string | null;
   openaiApiKey?: string | null;
@@ -713,12 +735,17 @@ async function launchViaSsh(input: LaunchInput) {
 
   const deploymentFlavor = normalizeDeploymentFlavor(input.deploymentFlavor);
   const isOpenClawRuntime = deploymentFlavor === "deploy_openclaw_free";
+  const isSimpleAgentWithVideoMemory = deploymentFlavor === "simple_agent_videomemory_free";
   const image = getRuntimeImage(deploymentFlavor);
   const containerPort = getRuntimePort(deploymentFlavor);
   const startCommand = getRuntimeStartCommand(deploymentFlavor);
+  const videoMemoryImage = getVideoMemoryImage();
+  const videoMemoryContainerPort = getVideoMemoryPort();
+  const videoMemoryStartCommand = getVideoMemoryStartCommand();
   const allowInsecureControlUi = shouldAllowInsecureControlUi();
   const gatewayToken = getGatewayToken();
   const hostPort = buildAssignedPort(input.deploymentId);
+  const videoMemoryHostPort = buildAssignedPort(`${input.deploymentId}-videomemory`);
   const telegramBotToken = input.telegramBotToken?.trim() || "";
   const telegramEnabled = telegramBotToken ? "true" : "false";
   const openaiApiKey = input.openaiApiKey?.trim() || "";
@@ -751,6 +778,10 @@ async function launchViaSsh(input: LaunchInput) {
   const resolvedSimpleAgentLlmUrl = simpleAgentLlmUrl || subsidyProxyBaseUrl;
   const shouldBuildSimpleAgent = !isOpenClawRuntime && shouldBuildSimpleAgentImage();
   const simpleAgentBuildRepo = getSimpleAgentBuildRepo();
+  const shouldBuildVideoMemory = isSimpleAgentWithVideoMemory && shouldBuildVideoMemoryImage();
+  const videoMemoryBuildRepo = getVideoMemoryBuildRepo();
+  const videoMemoryRepoSpec = parseGitRepoSpec(videoMemoryBuildRepo);
+  const videoMemoryBuildDir = `/tmp/oneclick-videomemory-${sanitizeSegment(input.deploymentId)}`;
   const simpleAgentRuntimeArgs = [
     `-e TELEGRAM_ENABLED=${telegramEnabled}`,
     telegramBotToken ? `-e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : "",
@@ -771,25 +802,42 @@ async function launchViaSsh(input: LaunchInput) {
   const safeUser = sanitizeSegment(input.userId);
   const safeDeployment = sanitizeSegment(input.deploymentId);
   const containerName = buildRuntimeName(input);
+  const videoMemoryContainerName = buildVideoMemoryContainerName(containerName);
   const configBase = readTrimmedEnv("OPENCLAW_CONFIG_MOUNT_BASE") || "/var/lib/oneclick/openclaw";
   const workspaceSuffix = readTrimmedEnv("OPENCLAW_WORKSPACE_SUFFIX") || "workspace";
   const userDir = `${configBase}/${safeUser}/${safeDeployment}`;
   const workspaceDir = `${userDir}/${workspaceSuffix}`;
+  const videoMemoryDataDir = `${userDir}/videomemory-data`;
 
   const remoteScript = [
     `set -e`,
     `>&2 echo "oneclick-debug image=${image} container=${containerName} hostPort=${hostPort} containerPort=${containerPort}"`,
     `if ! command -v docker >/dev/null 2>&1; then >&2 echo "[oneclick] waiting briefly for cloud-init"; if command -v cloud-init >/dev/null 2>&1; then timeout 180 cloud-init status --wait || true; fi; fi`,
-    `if ! command -v docker >/dev/null 2>&1; then >&2 echo "[oneclick] installing docker via apt"; export DEBIAN_FRONTEND=noninteractive; for i in $(seq 1 30); do if apt-get -o DPkg::Lock::Timeout=120 update -y && apt-get -o DPkg::Lock::Timeout=120 install -y docker.io; then break; fi; sleep 5; done; fi`,
+    `if ! command -v docker >/dev/null 2>&1; then >&2 echo "[oneclick] installing docker via apt"; export DEBIAN_FRONTEND=noninteractive; for i in $(seq 1 30); do if apt-get -o DPkg::Lock::Timeout=120 update -y && apt-get -o DPkg::Lock::Timeout=120 install -y docker.io git; then break; fi; sleep 5; done; fi`,
+    `if ! command -v git >/dev/null 2>&1; then >&2 echo "[oneclick] installing git via apt"; export DEBIAN_FRONTEND=noninteractive; for i in $(seq 1 30); do if apt-get -o DPkg::Lock::Timeout=120 update -y && apt-get -o DPkg::Lock::Timeout=120 install -y git; then break; fi; sleep 5; done; fi`,
     `if command -v docker >/dev/null 2>&1; then systemctl enable docker || true; systemctl restart docker || true; fi`,
     `for i in $(seq 1 120); do if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then break; fi; sleep 2; done`,
     `if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then >&2 echo "[oneclick] docker install/daemon startup failed"; exit 1; fi`,
-    `mkdir -p "${userDir}" "${workspaceDir}"`,
-    `chown -R 1000:1000 "${userDir}" "${workspaceDir}" || true`,
+    `mkdir -p "${userDir}" "${workspaceDir}" "${videoMemoryDataDir}"`,
+    `chown -R 1000:1000 "${userDir}" "${workspaceDir}" "${videoMemoryDataDir}" || true`,
     ...(shouldBuildSimpleAgent
       ? [`docker build -t "${image}" "${simpleAgentBuildRepo}"`]
       : [`docker pull "${image}"`]),
-    `docker rm -f "${containerName}" >/dev/null 2>&1 || true`,
+    `docker rm -f "${containerName}" "${videoMemoryContainerName}" >/dev/null 2>&1 || true`,
+    ...(shouldBuildVideoMemory
+      ? [
+          `rm -rf "${videoMemoryBuildDir}" && git clone --depth 1 ${videoMemoryRepoSpec.ref ? `--branch ${shellQuote(videoMemoryRepoSpec.ref)} ` : ""}${shellQuote(videoMemoryRepoSpec.url)} "${videoMemoryBuildDir}"`,
+          // Upstream Dockerfile currently points to a non-existent MediaMTX artifact path.
+          "sed -i 's/mediamtx_\\${MEDIAMTX_VERSION}_linux_amd64/mediamtx_v\\${MEDIAMTX_VERSION}_linux_amd64/g' " +
+            `"${videoMemoryBuildDir}/Dockerfile"`,
+          // Upstream main currently has a quoting typo that breaks startup on Python import.
+          "sed -i \"s/time.strftime(\\\"%Y-%m-%d %H:%M:%S\\\"/time.strftime('%Y-%m-%d %H:%M:%S'/g\" " +
+            `"${videoMemoryBuildDir}/videomemory/system/stream_ingestors/video_stream_ingestor.py"`,
+          `docker build -t "${videoMemoryImage}" "${videoMemoryBuildDir}"`,
+        ]
+      : isSimpleAgentWithVideoMemory
+        ? [`docker pull "${videoMemoryImage}"`]
+        : []),
     ...(telegramBotToken && setTelegramPluginConfig
       ? [
           `docker run --rm -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" "${image}" config set plugins.entries.telegram.enabled true`,
@@ -803,6 +851,11 @@ async function launchViaSsh(input: LaunchInput) {
     isOpenClawRuntime
       ? `docker run -d --name "${containerName}" --restart unless-stopped --memory=${resourceFlags.memory} --memory-swap=${resourceFlags.memory} --cpus=${resourceFlags.cpus} --pids-limit=${resourceFlags.pids} --shm-size=${resourceFlags.shmSize} --log-opt max-size=${resourceFlags.logMaxSize} --log-opt max-file=${resourceFlags.logMaxFiles}${resourceFlags.writableLayerSize ? ` --storage-opt size=${resourceFlags.writableLayerSize}` : ""} -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" -e OPENCLAW_GATEWAY_TOKEN=${shellQuote(gatewayToken)} -e OPENCLAW_ALLOW_INSECURE_CONTROL_UI=${allowInsecureControlUi ? "true" : "false"} -e NODE_OPTIONS=${shellQuote(openclawNodeOptions)} -e TELEGRAM_ENABLED=${telegramEnabled}${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""}${!openaiApiKey && !anthropicApiKey && !openrouterApiKey && subsidyProxyBaseUrl && subsidyProxyToken ? ` -e OPENAI_API_KEY=${shellQuote(subsidyProxyToken)} -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)}` : ""} -p "${hostPort}:${containerPort}" "${image}" ${startCommand}`
       : `docker run -d --name "${containerName}" --restart unless-stopped --memory=${resourceFlags.memory} --memory-swap=${resourceFlags.memory} --cpus=${resourceFlags.cpus} --pids-limit=${resourceFlags.pids} --shm-size=${resourceFlags.shmSize} --log-opt max-size=${resourceFlags.logMaxSize} --log-opt max-file=${resourceFlags.logMaxFiles}${resourceFlags.writableLayerSize ? ` --storage-opt size=${resourceFlags.writableLayerSize}` : ""} -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" ${simpleAgentRuntimeArgs} -p "${hostPort}:${containerPort}" "${image}"${startCommand ? ` ${startCommand}` : ""}`,
+    ...(isSimpleAgentWithVideoMemory
+      ? [
+          `docker run -d --name "${videoMemoryContainerName}" --restart unless-stopped --memory=1024m --memory-swap=1024m --cpus=0.75 --pids-limit=512 --shm-size=256m --log-opt max-size=10m --log-opt max-file=3 -v "${videoMemoryDataDir}:/app/data"${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""} -p "${videoMemoryHostPort}:${videoMemoryContainerPort}" "${videoMemoryImage}"${videoMemoryStartCommand ? ` ${videoMemoryStartCommand}` : ""}`,
+        ]
+      : []),
   ].join(" && ");
 
   const launchTimeoutMs = Number(readTrimmedEnv("OPENCLAW_SSH_LAUNCH_TIMEOUT_MS") || "1800000");
@@ -1191,7 +1244,7 @@ export async function destroyUserRuntime(input: DestroyInput) {
     try {
       await runSshCommand(
         parsed.sshTarget,
-        `if command -v docker >/dev/null 2>&1; then docker rm -f "${parsed.containerName}" >/dev/null 2>&1 || true; fi`,
+        `if command -v docker >/dev/null 2>&1; then docker rm -f "${parsed.containerName}" "${buildVideoMemoryContainerName(parsed.containerName)}" >/dev/null 2>&1 || true; fi`,
       );
     } catch (error) {
       dockerCleanupError = error instanceof Error ? error : new Error(String(error));

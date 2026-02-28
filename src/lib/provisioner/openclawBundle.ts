@@ -86,6 +86,26 @@ export function shouldBuildSimpleAgentImage() {
   return readBool("SIMPLE_AGENT_BUILD_ON_HOST", true);
 }
 
+export function getVideoMemoryImage() {
+  return readEnv("VIDEOMEMORY_IMAGE") || "oneclick/videomemory:main";
+}
+
+export function getVideoMemoryPort() {
+  return Number(readEnv("VIDEOMEMORY_CONTAINER_PORT") || "5050");
+}
+
+export function getVideoMemoryStartCommand() {
+  return readEnv("VIDEOMEMORY_START_COMMAND") || "";
+}
+
+export function getVideoMemoryBuildRepo() {
+  return readEnv("VIDEOMEMORY_BUILD_REPO") || "https://github.com/Clamepending/videomemory.git#main";
+}
+
+export function shouldBuildVideoMemoryImage() {
+  return readBool("VIDEOMEMORY_BUILD_ON_HOST", true);
+}
+
 export function getRuntimeImage(flavor: DeploymentFlavor | null | undefined) {
   const normalized = normalizeDeploymentFlavor(flavor);
   return normalized === "deploy_openclaw_free" ? getOpenClawImage() : getSimpleAgentImage();

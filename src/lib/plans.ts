@@ -1,5 +1,8 @@
 export type PlanTier = "free" | "paid";
-export type DeploymentFlavor = "simple_agent_free" | "deploy_openclaw_free";
+export type DeploymentFlavor =
+  | "simple_agent_free"
+  | "simple_agent_videomemory_free"
+  | "deploy_openclaw_free";
 
 export const FREE_TRIAL_DAYS = 30;
 export const PAID_MONTHLY_PRICE_CENTS = 2000;
@@ -11,6 +14,7 @@ export function normalizePlanTier(value: string | null | undefined): PlanTier {
 export function normalizeDeploymentFlavor(value: string | null | undefined): DeploymentFlavor {
   const normalized = value?.trim().toLowerCase() || "";
   if (normalized === "simple_agent_free") return "simple_agent_free";
+  if (normalized === "simple_agent_videomemory_free") return "simple_agent_videomemory_free";
   if (normalized === "deploy_openclaw_free") return "deploy_openclaw_free";
   if (normalized === "do_vm" || normalized === "basic" || normalized === "lightsail") {
     return "deploy_openclaw_free";
@@ -24,7 +28,9 @@ export function planDisplayName(plan: PlanTier) {
 
 export function deploymentModeDisplayName(plan: PlanTier, flavor: DeploymentFlavor) {
   void plan;
-  return flavor === "deploy_openclaw_free" ? "Deploy OpenClaw (Free)" : "Simple Agent (Free)";
+  if (flavor === "deploy_openclaw_free") return "Deploy OpenClaw (Free)";
+  if (flavor === "simple_agent_videomemory_free") return "Simple Agent + VideoMemory (Free)";
+  return "Simple Agent (Free)";
 }
 
 export function planPriceLabel(plan: PlanTier) {

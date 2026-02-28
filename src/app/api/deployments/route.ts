@@ -456,7 +456,9 @@ export async function POST(request: Request) {
       deploymentId,
       selectedDeploymentFlavor === "deploy_openclaw_free"
         ? "Selected deployment type: Deploy OpenClaw (Free)."
-        : "Selected deployment type: Simple Agent (Free).",
+        : selectedDeploymentFlavor === "simple_agent_videomemory_free"
+          ? "Selected deployment type: Simple Agent + VideoMemory (Free)."
+          : "Selected deployment type: Simple Agent (Free).",
     ],
   );
 

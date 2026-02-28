@@ -17,7 +17,7 @@ function generateDefaultBotName() {
 export default function OnboardingPage() {
   const router = useRouter();
   const [botName, setBotName] = useState(() => generateDefaultBotName());
-  const [deploymentFlavor, setDeploymentFlavor] = useState<"simple_agent_free" | "deploy_openclaw_free">(
+  const [deploymentFlavor, setDeploymentFlavor] = useState<"simple_agent_free" | "simple_agent_videomemory_free" | "deploy_openclaw_free">(
     "simple_agent_free",
   );
   const [loading, setLoading] = useState(false);

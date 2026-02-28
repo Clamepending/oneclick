@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 type Props = {
   deploymentId: string;
   botName?: string | null;
-  deploymentFlavor?: "simple_agent_free" | "deploy_openclaw_free" | null;
+  deploymentFlavor?: "simple_agent_free" | "simple_agent_videomemory_free" | "deploy_openclaw_free" | null;
   hasOpenaiApiKey: boolean;
   hasAnthropicApiKey: boolean;
   hasOpenrouterApiKey: boolean;
