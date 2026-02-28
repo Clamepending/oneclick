@@ -1507,12 +1507,6 @@ async function launchViaSsh(input: LaunchInput) {
     ...(shouldBuildVideoMemory
       ? [
           `rm -rf "${videoMemoryBuildDir}" && git clone --depth 1 ${videoMemoryRepoSpec.ref ? `--branch ${shellQuote(videoMemoryRepoSpec.ref)} ` : ""}${shellQuote(videoMemoryRepoSpec.url)} "${videoMemoryBuildDir}"`,
-          // Upstream Dockerfile currently points to a non-existent MediaMTX artifact path.
-          "sed -i 's/mediamtx_\\${MEDIAMTX_VERSION}_linux_amd64/mediamtx_v\\${MEDIAMTX_VERSION}_linux_amd64/g' " +
-            `"${videoMemoryBuildDir}/Dockerfile"`,
-          // Upstream main currently has a quoting typo that breaks startup on Python import.
-          "sed -i \"s/time.strftime(\\\"%Y-%m-%d %H:%M:%S\\\"/time.strftime('%Y-%m-%d %H:%M:%S'/g\" " +
-            `"${videoMemoryBuildDir}/videomemory/system/stream_ingestors/video_stream_ingestor.py"`,
           `docker build -t "${videoMemoryImage}" "${videoMemoryBuildDir}"`,
         ]
       : isSimpleAgentWithVideoMemory
