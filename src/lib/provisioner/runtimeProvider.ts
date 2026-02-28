@@ -778,6 +778,8 @@ async function launchViaSsh(input: LaunchInput) {
   const resolvedSimpleAgentLlmUrl = simpleAgentLlmUrl || subsidyProxyBaseUrl;
   const shouldBuildSimpleAgent = !isOpenClawRuntime && shouldBuildSimpleAgentImage();
   const simpleAgentBuildRepo = getSimpleAgentBuildRepo();
+  const simpleAgentRepoSpec = parseGitRepoSpec(simpleAgentBuildRepo);
+  const simpleAgentBuildDir = `/tmp/oneclick-adminagent-${sanitizeSegment(input.deploymentId)}`;
   const shouldBuildVideoMemory = isSimpleAgentWithVideoMemory && shouldBuildVideoMemoryImage();
   const videoMemoryBuildRepo = getVideoMemoryBuildRepo();
   const videoMemoryRepoSpec = parseGitRepoSpec(videoMemoryBuildRepo);
@@ -815,13 +817,73 @@ async function launchViaSsh(input: LaunchInput) {
     `if ! command -v docker >/dev/null 2>&1; then >&2 echo "[oneclick] waiting briefly for cloud-init"; if command -v cloud-init >/dev/null 2>&1; then timeout 180 cloud-init status --wait || true; fi; fi`,
     `if ! command -v docker >/dev/null 2>&1; then >&2 echo "[oneclick] installing docker via apt"; export DEBIAN_FRONTEND=noninteractive; for i in $(seq 1 30); do if apt-get -o DPkg::Lock::Timeout=120 update -y && apt-get -o DPkg::Lock::Timeout=120 install -y docker.io git; then break; fi; sleep 5; done; fi`,
     `if ! command -v git >/dev/null 2>&1; then >&2 echo "[oneclick] installing git via apt"; export DEBIAN_FRONTEND=noninteractive; for i in $(seq 1 30); do if apt-get -o DPkg::Lock::Timeout=120 update -y && apt-get -o DPkg::Lock::Timeout=120 install -y git; then break; fi; sleep 5; done; fi`,
+    `if ! command -v python3 >/dev/null 2>&1; then >&2 echo "[oneclick] installing python3 via apt"; export DEBIAN_FRONTEND=noninteractive; for i in $(seq 1 30); do if apt-get -o DPkg::Lock::Timeout=120 update -y && apt-get -o DPkg::Lock::Timeout=120 install -y python3; then break; fi; sleep 5; done; fi`,
     `if command -v docker >/dev/null 2>&1; then systemctl enable docker || true; systemctl restart docker || true; fi`,
     `for i in $(seq 1 120); do if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then break; fi; sleep 2; done`,
     `if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then >&2 echo "[oneclick] docker install/daemon startup failed"; exit 1; fi`,
     `mkdir -p "${userDir}" "${workspaceDir}" "${videoMemoryDataDir}"`,
     `chown -R 1000:1000 "${userDir}" "${workspaceDir}" "${videoMemoryDataDir}" || true`,
     ...(shouldBuildSimpleAgent
-      ? [`docker build -t "${image}" "${simpleAgentBuildRepo}"`]
+      ? [
+          `rm -rf "${simpleAgentBuildDir}" && git clone --depth 1 ${simpleAgentRepoSpec.ref ? `--branch ${shellQuote(simpleAgentRepoSpec.ref)} ` : ""}${shellQuote(simpleAgentRepoSpec.url)} "${simpleAgentBuildDir}"`,
+          // Keep existing provider keys when fields are left blank in /api/config/settings.
+          `python3 - <<'PY'
+from pathlib import Path
+p = Path("${simpleAgentBuildDir}/app.py")
+t = p.read_text()
+t = t.replace(
+    '        openai_api_key = str(data.get("openai_api_key", "")).strip()\\n'
+    '        anthropic_api_key = str(data.get("anthropic_api_key", "")).strip()\\n'
+    '        google_api_key = str(data.get("google_api_key", "")).strip()\\n'
+    '        telegram_bot_token = str(data.get("telegram_bot_token", "")).strip()\\n',
+    '        if "openai_api_key" in data:\\n'
+    '            next_openai_api_key = str(data.get("openai_api_key", "")).strip()\\n'
+    '            if next_openai_api_key:\\n'
+    '                openai_api_key = next_openai_api_key\\n'
+    '        if "anthropic_api_key" in data:\\n'
+    '            next_anthropic_api_key = str(data.get("anthropic_api_key", "")).strip()\\n'
+    '            if next_anthropic_api_key:\\n'
+    '                anthropic_api_key = next_anthropic_api_key\\n'
+    '        if "google_api_key" in data:\\n'
+    '            next_google_api_key = str(data.get("google_api_key", "")).strip()\\n'
+    '            if next_google_api_key:\\n'
+    '                google_api_key = next_google_api_key\\n'
+    '        if "telegram_bot_token" in data:\\n'
+    '            next_telegram_bot_token = str(data.get("telegram_bot_token", "")).strip()\\n'
+    '            if next_telegram_bot_token:\\n'
+    '                telegram_bot_token = next_telegram_bot_token\\n',
+)
+t = t.replace(
+    '        const payload = (event || {}).payload;\\n'
+    '        const rendered = String((event || {}).rendered_message || "").trim();\\n'
+    '        if (rendered) {\\n'
+    '          body.textContent = rendered;\\n'
+    '        } else if (payload && typeof payload === "object") {\\n'
+    '          body.textContent = JSON.stringify(payload);\\n'
+    '        } else {\\n'
+    '          body.textContent = JSON.stringify(event);\\n'
+    '        }\\n',
+    '        const payload = (event || {}).payload;\\n'
+    '        const rendered = String((event || {}).rendered_message || "").trim();\\n'
+    '        const eventError = String((event || {}).error || "").trim();\\n'
+    '        if (eventError) {\\n'
+    '          body.textContent = "Error: " + eventError + (payload && typeof payload === "object" ? "\\\\n" + JSON.stringify(payload) : "");\\n'
+    '        } else if (rendered) {\\n'
+    '          body.textContent = rendered;\\n'
+    '        } else if (payload && typeof payload === "object") {\\n'
+    '          body.textContent = JSON.stringify(payload);\\n'
+    '        } else {\\n'
+    '          body.textContent = JSON.stringify(event);\\n'
+    '        }\\n',
+)
+t = t.replace(
+    '    default_model = os.getenv("ADMINAGENT_MODEL", "gpt-5-mini").strip() or "gpt-5-mini"',
+    '    default_model = os.getenv("ADMINAGENT_MODEL", "gpt-4o-mini").strip() or "gpt-4o-mini"',
+)
+p.write_text(t)
+PY`,
+          `docker build -t "${image}" "${simpleAgentBuildDir}"`,
+        ]
       : [`docker pull "${image}"`]),
     `docker rm -f "${containerName}" "${videoMemoryContainerName}" >/dev/null 2>&1 || true`,
     ...(shouldBuildVideoMemory
