@@ -18,6 +18,7 @@ import { createDedicatedSshHost, destroyDedicatedVm } from "@/lib/provisioner/de
 import type { Host } from "@/lib/provisioner/hostScheduler";
 import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runtimeProvider";
 import { probeRuntimeHttp } from "@/lib/runtimeHealth";
+import { buildVideoMemoryUrl } from "@/lib/runtime/videoMemoryUrl";
 
 type DeploymentJob = {
   deploymentId: string;
@@ -371,6 +372,20 @@ async function waitForRuntimeReady(input: {
   throw new Error(`Runtime failed port check at ${input.readyUrl} within ${defaultStartupTimeoutMs}ms`);
 }
 
+async function waitForVideoMemoryReady(input: { videoMemoryUrl: string }) {
+  const startupTimeoutMs = Number(readTrimmedEnv("VIDEOMEMORY_STARTUP_TIMEOUT_MS") || "180000");
+  const pollIntervalMs = Number(readTrimmedEnv("VIDEOMEMORY_STARTUP_POLL_INTERVAL_MS") || "3000");
+  const deadline = Date.now() + startupTimeoutMs;
+
+  while (Date.now() < deadline) {
+    const probe = await probeRuntimeHttp(input.videoMemoryUrl, 4000);
+    if (probe.ok) return;
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  throw new Error(`VideoMemory sidecar failed health check at ${input.videoMemoryUrl} within ${startupTimeoutMs}ms`);
+}
+
 export async function processDeploymentJob(job: DeploymentJob) {
   await ensureSchema();
   let advisoryLockAcquired = false;
@@ -594,6 +609,19 @@ export async function processDeploymentJob(job: DeploymentJob) {
     deployProvider: runtime.deployProvider,
     runtimeId: runtime.runtimeId,
   });
+  if (deploymentFlavor === "simple_agent_videomemory_free") {
+    const videoMemoryUrl = buildVideoMemoryUrl({
+      deploymentId: job.deploymentId,
+      deploymentFlavor,
+      runtimeId: runtime.runtimeId,
+      status: "ready",
+    });
+    if (!videoMemoryUrl) {
+      throw new Error("Failed to resolve VideoMemory URL for simple_agent_videomemory_free deployment.");
+    }
+    await appendEvent(job.deploymentId, "starting", "Waiting for VideoMemory sidecar health check");
+    await waitForVideoMemoryReady({ videoMemoryUrl });
+  }
 
   await pool.query(
     `UPDATE deployments
