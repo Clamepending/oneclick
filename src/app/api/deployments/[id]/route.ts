@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
+import { destroyDedicatedVm } from "@/lib/provisioner/dedicatedVm";
 import { destroyUserRuntime } from "@/lib/provisioner/runtimeProvider";
 import { probeRuntimeHttp } from "@/lib/runtimeHealth";
 import { deactivateExpiredFreeTrialsForUser } from "@/lib/trialEnforcement";
@@ -23,10 +24,37 @@ function isIgnorableRuntimeDestroyError(error: unknown) {
   const message = error.message.toLowerCase();
   return (
     message.includes("not found") ||
+    message.includes("404") ||
     message.includes("does not exist") ||
     message.includes("serviceinactive") ||
     message.includes("servicenotfound")
   );
+}
+
+function parseDedicatedVmId(hostName: string | null | undefined) {
+  const normalized = (hostName ?? "").trim();
+  if (!normalized) return null;
+  const match = normalized.match(/^(?:lightsail-vm|do-vm)-(\d+)$/);
+  return match?.[1] ?? null;
+}
+
+async function cleanupDeploymentRuntime(input: {
+  runtime_id: string | null;
+  deploy_provider: string | null;
+  ready_url: string | null;
+  host_name?: string | null;
+}) {
+  if (input.runtime_id) {
+    await destroyUserRuntime({
+      runtimeId: input.runtime_id,
+      deployProvider: input.deploy_provider,
+      readyUrl: input.ready_url,
+    });
+    return;
+  }
+  const vmId = parseDedicatedVmId(input.host_name);
+  if (!vmId) return;
+  await destroyDedicatedVm(vmId);
 }
 
 export async function GET(
@@ -80,6 +108,23 @@ export async function GET(
   }
 
   if (isStaleInProgressDeployment(item)) {
+    try {
+      await cleanupDeploymentRuntime({
+        runtime_id: item.runtime_id,
+        deploy_provider: item.deploy_provider,
+        ready_url: item.ready_url,
+        host_name: item.host_name,
+      });
+    } catch (error) {
+      if (!isIgnorableRuntimeDestroyError(error)) {
+        const details = error instanceof Error ? error.message : String(error);
+        await pool.query(
+          `INSERT INTO deployment_events (deployment_id, status, message)
+           VALUES ($1, 'failed', $2)`,
+          [item.id, `Stale deployment cleanup warning: ${details}`],
+        );
+      }
+    }
     const staleMessage = "Deployment timed out while in progress. Please redeploy.";
     await pool.query(
       `UPDATE deployments
@@ -148,12 +193,13 @@ export async function DELETE(
   const result = await pool.query<{
     id: string;
     status: string;
+    host_name: string | null;
     runtime_id: string | null;
     deploy_provider: string | null;
     ready_url: string | null;
     updated_at: string;
   }>(
-    `SELECT id, status, runtime_id, deploy_provider, ready_url, updated_at
+    `SELECT id, status, host_name, runtime_id, deploy_provider, ready_url, updated_at
      FROM deployments
      WHERE id = $1 AND user_id = $2`,
     [id, session.user.email],
@@ -165,6 +211,23 @@ export async function DELETE(
   }
 
   if (isStaleInProgressDeployment(deployment)) {
+    try {
+      await cleanupDeploymentRuntime({
+        runtime_id: deployment.runtime_id,
+        deploy_provider: deployment.deploy_provider,
+        ready_url: deployment.ready_url,
+        host_name: deployment.host_name,
+      });
+    } catch (error) {
+      if (!isIgnorableRuntimeDestroyError(error)) {
+        const details = error instanceof Error ? error.message : String(error);
+        await pool.query(
+          `INSERT INTO deployment_events (deployment_id, status, message)
+           VALUES ($1, 'failed', $2)`,
+          [deployment.id, `Stale deployment cleanup warning: ${details}`],
+        );
+      }
+    }
     const staleMessage = "Deployment timed out while in progress. Please redeploy.";
     await pool.query(
       `UPDATE deployments
@@ -183,17 +246,16 @@ export async function DELETE(
   }
 
   try {
-    if (deployment.runtime_id) {
-      try {
-        await destroyUserRuntime({
-          runtimeId: deployment.runtime_id,
-          deployProvider: deployment.deploy_provider,
-          readyUrl: deployment.ready_url,
-        });
-      } catch (error) {
-        if (!isIgnorableRuntimeDestroyError(error)) {
-          throw error;
-        }
+    try {
+      await cleanupDeploymentRuntime({
+        runtime_id: deployment.runtime_id,
+        deploy_provider: deployment.deploy_provider,
+        ready_url: deployment.ready_url,
+        host_name: deployment.host_name,
+      });
+    } catch (error) {
+      if (!isIgnorableRuntimeDestroyError(error)) {
+        throw error;
       }
     }
 

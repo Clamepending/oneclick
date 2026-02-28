@@ -3,6 +3,7 @@ export type DeploymentFlavor =
   | "simple_agent_free"
   | "simple_agent_videomemory_free"
   | "simple_agent_ottoauth_ecs"
+  | "simple_agent_ottoauth_ecs_canary"
   | "deploy_openclaw_free"
   | "ottoagent_free";
 
@@ -19,6 +20,9 @@ export function normalizeDeploymentFlavor(value: string | null | undefined): Dep
   if (normalized === "simple_agent_videomemory_free") return "simple_agent_videomemory_free";
   if (normalized === "simple_agent_ottoauth_ecs" || normalized === "simple_agent_ottoauth_ecs_free") {
     return "simple_agent_ottoauth_ecs";
+  }
+  if (normalized === "simple_agent_ottoauth_ecs_canary" || normalized === "simple_agent_ottoauth_ecs_test") {
+    return "simple_agent_ottoauth_ecs_canary";
   }
   if (normalized === "deploy_openclaw_free") return "deploy_openclaw_free";
   if (normalized === "ottoagent_free" || normalized === "ottoagent" || normalized === "simple_agent_ottoagent_free") {
@@ -39,8 +43,18 @@ export function deploymentModeDisplayName(plan: PlanTier, flavor: DeploymentFlav
   if (flavor === "deploy_openclaw_free") return "Deploy OpenClaw (Free)";
   if (flavor === "simple_agent_videomemory_free") return "Simple Agent + VideoMemory (Free)";
   if (flavor === "simple_agent_ottoauth_ecs") return "Simple Agent + OttoAuth (ECS)";
+  if (flavor === "simple_agent_ottoauth_ecs_canary") return "Simple Agent + OttoAuth (ECS Canary)";
   if (flavor === "ottoagent_free") return "OttoAgent (Free)";
   return "Simple Agent (Free)";
+}
+
+export function isOttoAuthEcsFlavor(flavor: DeploymentFlavor | null | undefined) {
+  const normalized = normalizeDeploymentFlavor(flavor);
+  return (
+    normalized === "simple_agent_ottoauth_ecs" ||
+    normalized === "simple_agent_ottoauth_ecs_canary" ||
+    normalized === "ottoagent_free"
+  );
 }
 
 export function planPriceLabel(plan: PlanTier) {

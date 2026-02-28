@@ -7,6 +7,8 @@ import {
   normalizePlanTier,
   type DeploymentFlavor,
 } from "@/lib/plans";
+import { destroyDedicatedVm } from "@/lib/provisioner/dedicatedVm";
+import { destroyUserRuntime } from "@/lib/provisioner/runtimeProvider";
 import { getRuntimeBaseDomain } from "@/lib/subdomainConfig";
 import { deactivateExpiredFreeTrialsForUser } from "@/lib/trialEnforcement";
 import { buildRuntimeSubdomain, normalizeBotName } from "@/lib/provisioner/runtimeSlug";
@@ -165,26 +167,87 @@ function readLimitEnv(name: string) {
   return Math.floor(parsed);
 }
 
+function isIgnorableRuntimeDestroyError(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("not found") ||
+    message.includes("404") ||
+    message.includes("does not exist") ||
+    message.includes("serviceinactive") ||
+    message.includes("servicenotfound")
+  );
+}
+
+function parseDedicatedVmId(hostName: string | null | undefined) {
+  const normalized = (hostName ?? "").trim();
+  if (!normalized) return null;
+  const match = normalized.match(/^(?:lightsail-vm|do-vm)-(\d+)$/);
+  return match?.[1] ?? null;
+}
+
+async function cleanupDeploymentRuntime(input: {
+  runtime_id: string | null;
+  deploy_provider: string | null;
+  ready_url: string | null;
+  host_name: string | null;
+}) {
+  if (input.runtime_id) {
+    await destroyUserRuntime({
+      runtimeId: input.runtime_id,
+      deployProvider: input.deploy_provider,
+      readyUrl: input.ready_url,
+    });
+    return;
+  }
+  const vmId = parseDedicatedVmId(input.host_name);
+  if (!vmId) return;
+  await destroyDedicatedVm(vmId);
+}
+
 async function failStaleInProgressDeployments(userId: string) {
   const staleAfterMs = Number(process.env.DEPLOY_STALE_STARTING_TIMEOUT_MS ?? "900000");
   const staleMessage =
     "Deployment timed out while in progress. The deployment worker may be unavailable. Please redeploy.";
-  await pool.query(
-    `WITH stale AS (
-       UPDATE deployments
+  const stale = await pool.query<{
+    id: string;
+    host_name: string | null;
+    runtime_id: string | null;
+    deploy_provider: string | null;
+    ready_url: string | null;
+  }>(
+    `SELECT id, host_name, runtime_id, deploy_provider, ready_url
+     FROM deployments
+     WHERE user_id = $1
+       AND status IN ('queued', 'starting')
+       AND updated_at < NOW() - ($2::double precision * INTERVAL '1 millisecond')`,
+    [userId, staleAfterMs],
+  );
+
+  for (const row of stale.rows) {
+    let eventMessage = staleMessage;
+    try {
+      await cleanupDeploymentRuntime(row);
+    } catch (error) {
+      if (!isIgnorableRuntimeDestroyError(error)) {
+        const details = error instanceof Error ? error.message : String(error);
+        eventMessage = `${staleMessage} Cleanup warning: ${details}`;
+      }
+    }
+    await pool.query(
+      `UPDATE deployments
        SET status = 'failed',
            error = $2,
            updated_at = NOW()
-       WHERE user_id = $1
-         AND status IN ('queued', 'starting')
-         AND updated_at < NOW() - ($3::double precision * INTERVAL '1 millisecond')
-       RETURNING id
-     )
-     INSERT INTO deployment_events (deployment_id, status, message)
-     SELECT id, 'failed', $2
-     FROM stale`,
-    [userId, staleMessage, staleAfterMs],
-  );
+       WHERE id = $1`,
+      [row.id, staleMessage],
+    );
+    await pool.query(
+      `INSERT INTO deployment_events (deployment_id, status, message)
+       VALUES ($1, 'failed', $2)`,
+      [row.id, eventMessage],
+    );
+  }
 }
 
 function startInProcessDeployment(deploymentId: string, userId: string) {
@@ -425,6 +488,37 @@ export async function POST(request: Request) {
       }
     }
 
+    const active = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text as count
+       FROM deployments
+       WHERE user_id = $1 AND status IN ('queued', 'starting')`,
+      [session.user.email],
+    );
+
+    const maxActive = Number(process.env.DEPLOY_MAX_ACTIVE_PER_USER ?? "1");
+    if (Number(active.rows[0]?.count ?? "0") >= maxActive) {
+      return NextResponse.json(
+        { ok: false, error: "You already have an active deployment in progress." },
+        { status: 409 },
+      );
+    }
+
+    const perUserReadyLimit = readLimitEnv("DEPLOY_MAX_READY_PER_USER");
+    if (perUserReadyLimit !== null) {
+      const activeReady = await pool.query<{ count: string }>(
+        `SELECT COUNT(*)::text as count
+         FROM deployments
+         WHERE user_id = $1 AND status = 'ready'`,
+        [session.user.email],
+      );
+      if (Number(activeReady.rows[0]?.count ?? "0") >= perUserReadyLimit) {
+        return NextResponse.json(
+          { ok: false, error: "You have reached the maximum number of running bots for your account." },
+          { status: 409 },
+        );
+      }
+    }
+
     const deploymentId = newDeploymentId();
     const onboarding = await pool.query<{
     bot_name: string | null;
@@ -544,6 +638,8 @@ export async function POST(request: Request) {
         ? "Selected deployment type: Deploy OpenClaw (Free)."
         : selectedDeploymentFlavor === "simple_agent_ottoauth_ecs"
           ? "Selected deployment type: Simple Agent + OttoAuth (ECS)."
+        : selectedDeploymentFlavor === "simple_agent_ottoauth_ecs_canary"
+          ? "Selected deployment type: Simple Agent + OttoAuth (ECS Canary)."
         : selectedDeploymentFlavor === "ottoagent_free"
           ? "Selected deployment type: OttoAgent (Free)."
         : selectedDeploymentFlavor === "simple_agent_videomemory_free"

@@ -13,7 +13,7 @@ import {
   type ECSClientConfig,
 } from "@aws-sdk/client-ecs";
 import { ensureSchema, pool } from "@/lib/db";
-import { normalizeDeploymentFlavor, type DeploymentFlavor } from "@/lib/plans";
+import { isOttoAuthEcsFlavor, normalizeDeploymentFlavor, type DeploymentFlavor } from "@/lib/plans";
 import { createDedicatedSshHost, destroyDedicatedVm } from "@/lib/provisioner/dedicatedVm";
 import type { Host } from "@/lib/provisioner/hostScheduler";
 import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runtimeProvider";
@@ -96,8 +96,18 @@ function resolveProviderForDeployment(
   defaultProvider: "mock" | "ssh" | "ecs",
   deploymentFlavor: DeploymentFlavor,
 ): "mock" | "ssh" | "ecs" {
-  if (deploymentFlavor === "simple_agent_ottoauth_ecs") return "ecs";
+  if (isOttoAuthEcsFlavor(deploymentFlavor)) return "ecs";
   return defaultProvider;
+}
+
+
+function resolveDefaultProvider(): "mock" | "ssh" | "ecs" {
+  const configured = readTrimmedEnv("DEPLOY_PROVIDER").toLowerCase();
+  if (configured === "mock" || configured === "ssh" || configured === "ecs") {
+    return configured;
+  }
+  // Production-safe fallback: prefer ECS when DEPLOY_PROVIDER is missing/invalid.
+  return "ecs";
 }
 
 function buildAwsConfigWithTrimmedCreds(region: string): ECSClientConfig {
@@ -329,7 +339,13 @@ async function assertFlavorRuntimeConformance(input: {
 }) {
   if (input.deploymentFlavor !== "ottoagent_free") return;
 
-  if ((input.deployProvider ?? "").trim() !== "ssh") {
+  const provider = (input.deployProvider ?? "").trim();
+  if (provider === "ecs") {
+    // OttoAgent ECS flavor validation is handled by runtime health checks + deployment strategy routing.
+    return;
+  }
+
+  if (provider !== "ssh") {
     throw new Error(
       `OttoAgent deployment requires SSH provider runtime validation, but deploy provider is "${input.deployProvider ?? "unknown"}".`,
     );
@@ -344,13 +360,13 @@ async function assertFlavorRuntimeConformance(input: {
   const mcpContainerName = buildOttoAgentMcpContainerName(parsed.containerName);
   await probeSshContainerRunning(parsed.sshTarget, mcpContainerName);
   const envLines = await readSshContainerEnv(parsed.sshTarget, parsed.containerName);
-  const mcpServersLine = envLines.find((line) => line.startsWith("ADMINAGENT_MCP_SERVERS_JSON="));
+  const mcpServersLine = envLines.find((line) => line.startsWith("SIMPLEAGENT_MCP_SERVERS_JSON="));
   if (!mcpServersLine) {
     throw new Error(
-      "OttoAgent runtime missing ADMINAGENT_MCP_SERVERS_JSON on main container; queue worker is likely outdated.",
+      "OttoAgent runtime missing SIMPLEAGENT_MCP_SERVERS_JSON on main container; queue worker is likely outdated.",
     );
   }
-  const mcpConfig = mcpServersLine.slice("ADMINAGENT_MCP_SERVERS_JSON=".length);
+  const mcpConfig = mcpServersLine.slice("SIMPLEAGENT_MCP_SERVERS_JSON=".length);
   if (!mcpConfig.includes("ottoagent") && !mcpConfig.includes("ottoauth")) {
     throw new Error(
       "OttoAgent runtime MCP config does not include ottoauth/ottoagent server entry; refusing to mark deployment ready.",
@@ -521,7 +537,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
     return;
   }
   await appendEvent(job.deploymentId, "starting", "Scheduling runtime host");
-  const defaultProvider: "mock" | "ssh" | "ecs" = "ssh";
+  const defaultProvider = resolveDefaultProvider();
 
   const providerSelectionRow = await pool.query<{
     plan_tier: string | null;
@@ -535,6 +551,11 @@ export async function processDeploymentJob(job: DeploymentJob) {
   );
   const selectedDeploymentFlavor = normalizeDeploymentFlavor(providerSelectionRow.rows[0]?.deployment_flavor);
   const provider = resolveProviderForDeployment(defaultProvider, selectedDeploymentFlavor);
+  if (provider === "ecs" && selectedDeploymentFlavor === "simple_agent_videomemory_free") {
+    throw new Error(
+      "simple_agent_videomemory_free is not supported on ECS yet. Choose Simple Agent, OttoAgent, or Deploy OpenClaw.",
+    );
+  }
   const providerRequiresHost = provider === "ssh" || provider === "mock";
 
   const currentHostRow = await pool.query<{ host_name: string | null; status: string }>(
@@ -549,6 +570,41 @@ export async function processDeploymentJob(job: DeploymentJob) {
       await appendEvent(job.deploymentId, "starting", `Cleaning previous VM ${currentHostName} before retry`);
       await destroyDedicatedVm(vmMatch[1]).catch(() => {});
     }
+  }
+
+  // Enforce one runtime per user by destroying previous runtimes that may still be active.
+  const previousDeployments = await pool.query<{
+    id: string;
+    runtime_id: string | null;
+    deploy_provider: string | null;
+    ready_url: string | null;
+  }>(
+    `SELECT id, runtime_id, deploy_provider, ready_url
+     FROM deployments
+     WHERE user_id = $1
+       AND id <> $2
+       AND status IN ('ready', 'starting', 'failed')
+       AND runtime_id IS NOT NULL`,
+    [job.userId, job.deploymentId],
+  );
+
+  for (const previous of previousDeployments.rows) {
+    if (!previous.runtime_id) continue;
+    await destroyUserRuntime({
+      runtimeId: previous.runtime_id,
+      deployProvider: previous.deploy_provider,
+      readyUrl: previous.ready_url,
+    });
+
+    await pool.query(
+      `UPDATE deployments
+       SET status = 'failed',
+           error = 'Replaced by newer deployment',
+           updated_at = NOW()
+       WHERE id = $1`,
+      [previous.id],
+    );
+    await appendEvent(previous.id, "failed", "Replaced by newer deployment");
   }
 
   let host: Host | undefined;
