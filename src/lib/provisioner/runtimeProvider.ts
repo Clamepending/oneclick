@@ -1417,6 +1417,7 @@ async function launchViaSsh(input: LaunchInput) {
     isSimpleAgentWithVideoMemory
       ? videoMemoryStartCommand || defaultVideoMemoryMcpStartCommand
       : videoMemoryStartCommand;
+  const videoMemoryWebhookUrl = `http://host.docker.internal:${hostPort}/hooks/videomemory-alert`;
   const simpleAgentMcpServers: Array<{ id: string; transport: "http"; url: string }> = [];
   if (isSimpleAgentWithVideoMemory) {
     simpleAgentMcpServers.push({
@@ -1436,6 +1437,7 @@ async function launchViaSsh(input: LaunchInput) {
   const simpleAgentRuntimeArgs = [
     `-e TELEGRAM_ENABLED=${telegramEnabled}`,
     telegramBotToken ? `-e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : "",
+    gatewayToken ? `-e GATEWAY_TOKEN=${shellQuote(gatewayToken)}` : "",
     simpleAgentOpenAiApiKey ? `-e ADMINAGENT_LLM_API_KEY=${shellQuote(simpleAgentOpenAiApiKey)}` : "",
     resolvedSimpleAgentLlmUrl ? `-e ADMINAGENT_LLM_URL=${shellQuote(resolvedSimpleAgentLlmUrl)}` : "",
     // Latest AdminAgent stores/reads provider keys from these env vars.
@@ -1532,7 +1534,7 @@ async function launchViaSsh(input: LaunchInput) {
       : []),
     ...(isSimpleAgentWithVideoMemory
       ? [
-          `docker run -d --name "${videoMemoryContainerName}" --restart unless-stopped --memory=1024m --memory-swap=1024m --cpus=0.75 --pids-limit=512 --shm-size=256m --log-opt max-size=10m --log-opt max-file=3 -v "${videoMemoryDataDir}:/app/data" -e VIDEOMEMORY_MCP_PORT=${videoMemoryMcpContainerPort} -e RTMP_SERVER_HOST=${shellQuote(videoMemoryPublicHost)} -e RTMP_INGEST_INTERNAL_HOST=127.0.0.1${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""} -p "${videoMemoryHostPort}:${videoMemoryContainerPort}" -p "${videoMemoryMcpHostPort}:${videoMemoryMcpContainerPort}" -p "1935:1935" -p "8554:8554" -p "8890:8890/udp" -p "8889:8889" "${videoMemoryImage}"${resolvedVideoMemoryStartCommand ? ` ${resolvedVideoMemoryStartCommand}` : ""}`,
+          `docker run -d --name "${videoMemoryContainerName}" --restart unless-stopped --add-host host.docker.internal:host-gateway --memory=1024m --memory-swap=1024m --cpus=0.75 --pids-limit=512 --shm-size=256m --log-opt max-size=10m --log-opt max-file=3 -v "${videoMemoryDataDir}:/app/data" -e VIDEOMEMORY_MCP_PORT=${videoMemoryMcpContainerPort} -e VIDEOMEMORY_OPENCLAW_WEBHOOK_URL=${shellQuote(videoMemoryWebhookUrl)} -e VIDEOMEMORY_OPENCLAW_WEBHOOK_TOKEN=${shellQuote(gatewayToken)} -e RTMP_SERVER_HOST=${shellQuote(videoMemoryPublicHost)} -e RTMP_INGEST_INTERNAL_HOST=127.0.0.1${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""} -p "${videoMemoryHostPort}:${videoMemoryContainerPort}" -p "${videoMemoryMcpHostPort}:${videoMemoryMcpContainerPort}" -p "1935:1935" -p "8554:8554" -p "8890:8890/udp" -p "8889:8889" "${videoMemoryImage}"${resolvedVideoMemoryStartCommand ? ` ${resolvedVideoMemoryStartCommand}` : ""}`,
         ]
       : []),
   ].join(" && ");
