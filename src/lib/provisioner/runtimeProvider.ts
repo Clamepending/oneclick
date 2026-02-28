@@ -736,6 +736,7 @@ async function launchViaSsh(input: LaunchInput) {
   const deploymentFlavor = normalizeDeploymentFlavor(input.deploymentFlavor);
   const isOpenClawRuntime = deploymentFlavor === "deploy_openclaw_free";
   const isSimpleAgentWithVideoMemory = deploymentFlavor === "simple_agent_videomemory_free";
+  const vmPublicHost = parseUserAndHost(sshTarget).host;
   const image = getRuntimeImage(deploymentFlavor);
   const containerPort = getRuntimePort(deploymentFlavor);
   const startCommand = getRuntimeStartCommand(deploymentFlavor);
@@ -872,7 +873,7 @@ async function launchViaSsh(input: LaunchInput) {
       : `docker run -d --name "${containerName}" --restart unless-stopped --add-host host.docker.internal:host-gateway --memory=${resourceFlags.memory} --memory-swap=${resourceFlags.memory} --cpus=${resourceFlags.cpus} --pids-limit=${resourceFlags.pids} --shm-size=${resourceFlags.shmSize} --log-opt max-size=${resourceFlags.logMaxSize} --log-opt max-file=${resourceFlags.logMaxFiles}${resourceFlags.writableLayerSize ? ` --storage-opt size=${resourceFlags.writableLayerSize}` : ""} -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" ${simpleAgentRuntimeArgs} -p "${hostPort}:${containerPort}" "${image}"${startCommand ? ` ${startCommand}` : ""}`,
     ...(isSimpleAgentWithVideoMemory
       ? [
-          `docker run -d --name "${videoMemoryContainerName}" --restart unless-stopped --memory=1024m --memory-swap=1024m --cpus=0.75 --pids-limit=512 --shm-size=256m --log-opt max-size=10m --log-opt max-file=3 -v "${videoMemoryDataDir}:/app/data" -e VIDEOMEMORY_MCP_PORT=${videoMemoryMcpContainerPort}${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""} -p "${videoMemoryHostPort}:${videoMemoryContainerPort}" -p "${videoMemoryMcpHostPort}:${videoMemoryMcpContainerPort}" "${videoMemoryImage}"${resolvedVideoMemoryStartCommand ? ` ${resolvedVideoMemoryStartCommand}` : ""}`,
+          `docker run -d --name "${videoMemoryContainerName}" --restart unless-stopped --memory=1024m --memory-swap=1024m --cpus=0.75 --pids-limit=512 --shm-size=256m --log-opt max-size=10m --log-opt max-file=3 -v "${videoMemoryDataDir}:/app/data" -e VIDEOMEMORY_MCP_PORT=${videoMemoryMcpContainerPort} -e RTMP_SERVER_HOST=${shellQuote(vmPublicHost)} -e RTMP_INGEST_INTERNAL_HOST=127.0.0.1${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""} -p "${videoMemoryHostPort}:${videoMemoryContainerPort}" -p "${videoMemoryMcpHostPort}:${videoMemoryMcpContainerPort}" -p "1935:1935" -p "8554:8554" -p "8890:8890/udp" -p "8889:8889" "${videoMemoryImage}"${resolvedVideoMemoryStartCommand ? ` ${resolvedVideoMemoryStartCommand}` : ""}`,
         ]
       : []),
   ].join(" && ");
