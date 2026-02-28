@@ -123,7 +123,6 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
                 runtimeId: deployment.runtime_id,
                 status: deployment.status,
                 videoMemoryReadyAt: deployment.video_memory_ready_at,
-                requireReadyMarker: true,
               });
               return (
                 <div

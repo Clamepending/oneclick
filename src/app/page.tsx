@@ -142,7 +142,6 @@ export default async function HomePage() {
                 runtimeId: deployment.runtime_id,
                 status: deployment.status,
                 videoMemoryReadyAt: deployment.video_memory_ready_at,
-                requireReadyMarker: true,
               }),
               error: deployment.error,
               updatedAt: deployment.updated_at,
