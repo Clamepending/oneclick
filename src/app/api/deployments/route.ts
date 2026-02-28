@@ -131,11 +131,12 @@ async function readDeployRequest(request: Request) {
       botName: null as string | null,
       planTier: null as "free" | "paid" | null,
       deploymentFlavor: null as DeploymentFlavor | null,
+      sourceDeploymentId: null as string | null,
     };
   }
 
   const payload = (await request.json().catch(() => null)) as
-    | { botName?: unknown; planTier?: unknown; deploymentFlavor?: unknown }
+    | { botName?: unknown; planTier?: unknown; deploymentFlavor?: unknown; sourceDeploymentId?: unknown }
     | null;
   if (!payload) {
     return {
@@ -143,6 +144,7 @@ async function readDeployRequest(request: Request) {
       botName: null as string | null,
       planTier: null as "free" | "paid" | null,
       deploymentFlavor: null as DeploymentFlavor | null,
+      sourceDeploymentId: null as string | null,
     };
   }
   if (payload.botName !== undefined && typeof payload.botName !== "string") {
@@ -154,16 +156,24 @@ async function readDeployRequest(request: Request) {
   if (payload.deploymentFlavor !== undefined && typeof payload.deploymentFlavor !== "string") {
     return { ok: false as const, error: "deploymentFlavor must be a string" };
   }
+  if (payload.sourceDeploymentId !== undefined && typeof payload.sourceDeploymentId !== "string") {
+    return { ok: false as const, error: "sourceDeploymentId must be a string" };
+  }
 
   const botName = payload.botName?.trim() ?? "";
   if (payload.botName !== undefined && (!botName || botName.length > 80)) {
     return { ok: false as const, error: "botName must be 1-80 characters" };
+  }
+  const sourceDeploymentId = payload.sourceDeploymentId?.trim() ?? "";
+  if (payload.sourceDeploymentId !== undefined && (!sourceDeploymentId || sourceDeploymentId.length > 80)) {
+    return { ok: false as const, error: "sourceDeploymentId must be 1-80 characters" };
   }
   return {
     ok: true as const,
     botName: botName || null,
     planTier: payload.planTier ? normalizePlanTier(payload.planTier) : null,
     deploymentFlavor: payload.deploymentFlavor ? normalizeDeploymentFlavor(payload.deploymentFlavor) : null,
+    sourceDeploymentId: sourceDeploymentId || null,
   };
 }
 
@@ -391,8 +401,27 @@ export async function POST(request: Request) {
      LIMIT 1`,
     [session.user.email],
   );
+    const sourceDeployment = parsedPayload.sourceDeploymentId
+      ? await pool.query<{
+          id: string;
+          bot_name: string | null;
+          deployment_flavor: string | null;
+        }>(
+          `SELECT id, bot_name, deployment_flavor
+           FROM deployments
+           WHERE id = $1 AND user_id = $2
+           LIMIT 1`,
+          [parsedPayload.sourceDeploymentId, session.user.email],
+        )
+      : null;
+    const sourceDeploymentRow = sourceDeployment?.rows[0] ?? null;
+    if (parsedPayload.sourceDeploymentId && !sourceDeploymentRow) {
+      return NextResponse.json({ ok: false, error: "Source deployment not found." }, { status: 404 });
+    }
+
     const fallbackBotName = onboarding.rows[0]?.bot_name?.trim() || "MyAssistant";
-    const botName = parsedPayload.botName ?? fallbackBotName;
+    const sourceBotName = sourceDeploymentRow?.bot_name?.trim() || null;
+    const botName = parsedPayload.botName ?? sourceBotName ?? fallbackBotName;
     // Deployment keys must come from explicit setup inputs for that deployment.
     // Do not inherit stale model keys from onboarding session history.
     const openaiApiKey = null;
@@ -400,6 +429,7 @@ export async function POST(request: Request) {
     const telegramBotToken = onboarding.rows[0]?.telegram_bot_token?.trim() || null;
     const selectedPlan = "free";
     const selectedDeploymentFlavor =
+      normalizeDeploymentFlavor(sourceDeploymentRow?.deployment_flavor) ??
       parsedPayload.deploymentFlavor ??
       normalizeDeploymentFlavor(onboarding.rows[0]?.deployment_flavor) ??
       "simple_agent_free";
@@ -461,6 +491,13 @@ export async function POST(request: Request) {
           : "Selected deployment type: Simple Agent (Free).",
     ],
   );
+  if (sourceDeploymentRow) {
+    await pool.query(
+      `INSERT INTO deployment_events (deployment_id, status, message)
+       VALUES ($1, 'queued', $2)`,
+      [deploymentId, `Redeploy requested from ${sourceDeploymentRow.id}; preserving deployment type.`],
+    );
+  }
 
     try {
       const queueInfo = getQueueModeInfo();

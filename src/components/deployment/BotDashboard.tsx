@@ -296,7 +296,6 @@ export function BotDashboard({ deployments }: Props) {
                   deployProvider={deployment.deployProvider}
                   compact
                   botName={deployment.botName}
-                  deploymentFlavor={normalizeDeploymentFlavor(deployment.deploymentFlavor)}
                 />
               </div>
             );

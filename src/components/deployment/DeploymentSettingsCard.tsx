@@ -74,9 +74,10 @@ export function DeploymentSettingsCard({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            sourceDeploymentId: deploymentId,
             botName: botName ?? undefined,
             planTier: "free",
-            deploymentFlavor: deploymentFlavor ?? "simple_agent_free",
+            deploymentFlavor: deploymentFlavor ?? undefined,
           }),
         });
         const redeployBody = (await redeployResponse.json().catch(() => null)) as

@@ -10,7 +10,6 @@ type Props = {
   deployProvider?: string | null;
   compact?: boolean;
   botName?: string | null;
-  deploymentFlavor?: "simple_agent_free" | "simple_agent_videomemory_free" | "deploy_openclaw_free";
 };
 
 export function DeploymentActions({
@@ -18,7 +17,6 @@ export function DeploymentActions({
   status,
   compact = false,
   botName,
-  deploymentFlavor = "simple_agent_free",
 }: Props) {
   const router = useRouter();
   const [error, setError] = useState("");
@@ -35,9 +33,9 @@ export function DeploymentActions({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          sourceDeploymentId: deploymentId,
           botName: botName ?? undefined,
           planTier: "free",
-          deploymentFlavor,
         }),
       });
       const payload = (await response.json()) as { id?: string; error?: string };
