@@ -99,7 +99,7 @@ export function getVideoMemoryStartCommand() {
 }
 
 export function getVideoMemoryBuildRepo() {
-  return readEnv("VIDEOMEMORY_BUILD_REPO") || "https://github.com/Clamepending/videomemory.git#main";
+  return readEnv("VIDEOMEMORY_BUILD_REPO") || "https://github.com/Clamepending/videomemory.git#MCP-ify";
 }
 
 export function shouldBuildVideoMemoryImage() {

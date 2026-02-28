@@ -784,8 +784,13 @@ async function launchViaSsh(input: LaunchInput) {
   const videoMemoryBuildRepo = getVideoMemoryBuildRepo();
   const videoMemoryRepoSpec = parseGitRepoSpec(videoMemoryBuildRepo);
   const videoMemoryBuildDir = `/tmp/oneclick-videomemory-${sanitizeSegment(input.deploymentId)}`;
+  const defaultVideoMemoryMcpStartCommand = `bash -lc ${shellQuote(
+    `/app/deploy/start-cloud.sh & uv run python -m videomemory.mcp_server --transport http --host 0.0.0.0 --port ${videoMemoryMcpContainerPort} --api-base-url http://127.0.0.1:${videoMemoryContainerPort}; wait -n`,
+  )}`;
   const resolvedVideoMemoryStartCommand =
-    isSimpleAgentWithVideoMemory ? videoMemoryStartCommand || "bash /app/deploy/start-with-mcp.sh" : videoMemoryStartCommand;
+    isSimpleAgentWithVideoMemory
+      ? videoMemoryStartCommand || defaultVideoMemoryMcpStartCommand
+      : videoMemoryStartCommand;
   const simpleAgentMcpServersJson = isSimpleAgentWithVideoMemory
     ? JSON.stringify([
         {
