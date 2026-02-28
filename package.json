@@ -12,6 +12,7 @@
     "aws:bootstrap": "bash scripts/aws-ecs-bootstrap.sh",
     "aws:env": "bash scripts/aws-ecs-print-env.sh",
     "aws:bootstrap:from-env": "bash scripts/aws-ecs-bootstrap-from-env.sh",
+    "aws:deploy-worker": "tsx scripts/deploy-sqs-consumer-lambda.ts",
     "aws:smoke": "tsx scripts/ecs-smoke-test.ts",
     "cost:guard:sweep": "tsx scripts/cost-guard-sweep.ts",
     "env:upsert": "node scripts/upsert-env-file.mjs"

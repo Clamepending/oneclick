@@ -101,7 +101,7 @@ export function getOttoAgentStartCommand() {
 }
 
 export function getOttoAgentBuildRepo() {
-  return readEnv("OTTOAGENT_BUILD_REPO") || "../ottoagent";
+  return readEnv("OTTOAGENT_BUILD_REPO") || getSimpleAgentBuildRepo();
 }
 
 export function shouldBuildOttoAgentImage() {
@@ -125,7 +125,7 @@ export function getOttoAgentMcpStartCommand() {
 }
 
 export function getOttoAgentMcpBuildRepo() {
-  return readEnv("OTTOAGENT_MCP_BUILD_REPO") || "../ottoagent-mcp";
+  return readEnv("OTTOAGENT_MCP_BUILD_REPO");
 }
 
 export function shouldBuildOttoAgentMcpImage() {

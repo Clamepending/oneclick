@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { GetFunctionConfigurationCommand, LambdaClient, type LambdaClientConfig } from "@aws-sdk/client-lambda";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
 import {
@@ -83,6 +84,77 @@ function readBoolEnv(name: string, fallback = false) {
   if (["1", "true", "yes", "on"].includes(value)) return true;
   if (["0", "false", "no", "off"].includes(value)) return false;
   return fallback;
+}
+
+function buildAwsConfigWithTrimmedCreds(region: string): LambdaClientConfig {
+  const accessKeyId = readTrimmedEnv("AWS_ACCESS_KEY_ID");
+  const secretAccessKey = readTrimmedEnv("AWS_SECRET_ACCESS_KEY");
+  const sessionToken = readTrimmedEnv("AWS_SESSION_TOKEN");
+  if (!accessKeyId || !secretAccessKey) {
+    return { region };
+  }
+  return {
+    region,
+    credentials: {
+      accessKeyId,
+      secretAccessKey,
+      sessionToken: sessionToken || undefined,
+    },
+  };
+}
+
+function parseCsvSet(value: string) {
+  return new Set(
+    value
+      .split(",")
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+async function ensureQueueWorkerSupportsFlavor(input: {
+  selectedDeploymentFlavor: DeploymentFlavor;
+  queueInfo: QueueModeInfo;
+}) {
+  if (!input.queueInfo.usable) return { ok: true as const };
+  if (input.selectedDeploymentFlavor !== "ottoagent_free") return { ok: true as const };
+
+  const region = readTrimmedEnv("AWS_REGION");
+  if (!region) {
+    return {
+      ok: false as const,
+      error:
+        "OttoAgent deployments require AWS_REGION so OneClick can verify queue worker compatibility.",
+    };
+  }
+
+  const functionName = readTrimmedEnv("DEPLOY_QUEUE_LAMBDA_FUNCTION_NAME") || "oneclick-sqs-deploy-consumer";
+  try {
+    const lambda = new LambdaClient(buildAwsConfigWithTrimmedCreds(region));
+    const config = await lambda.send(
+      new GetFunctionConfigurationCommand({
+        FunctionName: functionName,
+      }),
+    );
+    const workerFeatures = parseCsvSet(
+      config.Environment?.Variables?.DEPLOY_WORKER_FEATURES ?? "",
+    );
+    if (workerFeatures.has("ottoagent_free")) {
+      return { ok: true as const };
+    }
+    return {
+      ok: false as const,
+      error:
+        `OttoAgent deployments are blocked because queue worker ${functionName} is outdated (missing DEPLOY_WORKER_FEATURES=ottoagent_free). Update the Lambda consumer and retry.`,
+    };
+  } catch (error) {
+    const details = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false as const,
+      error:
+        `OttoAgent deployments are blocked because OneClick could not verify queue worker ${functionName}: ${details}`,
+    };
+  }
 }
 
 function readLimitEnv(name: string) {
@@ -439,6 +511,15 @@ export async function POST(request: Request) {
       parsedPayload.deploymentFlavor ??
       onboardingDeploymentFlavor ??
       "simple_agent_free";
+    const queueInfo = getQueueModeInfo();
+    const vercelRuntime = isVercelRuntime();
+    const workerCompatibility = await ensureQueueWorkerSupportsFlavor({
+      selectedDeploymentFlavor,
+      queueInfo,
+    });
+    if (!workerCompatibility.ok) {
+      return NextResponse.json({ ok: false, error: workerCompatibility.error }, { status: 503 });
+    }
     const reservation = await reserveBotIdentity(session.user.email, botName);
     if (!reservation.ok) {
       return NextResponse.json({ ok: false, error: reservation.error }, { status: 409 });
@@ -492,6 +573,8 @@ export async function POST(request: Request) {
       deploymentId,
       selectedDeploymentFlavor === "deploy_openclaw_free"
         ? "Selected deployment type: Deploy OpenClaw (Free)."
+        : selectedDeploymentFlavor === "simple_agent_ottoauth_ecs"
+          ? "Selected deployment type: Simple Agent + OttoAuth (ECS)."
         : selectedDeploymentFlavor === "ottoagent_free"
           ? "Selected deployment type: OttoAgent (Free)."
         : selectedDeploymentFlavor === "simple_agent_videomemory_free"
@@ -508,8 +591,6 @@ export async function POST(request: Request) {
   }
 
     try {
-      const queueInfo = getQueueModeInfo();
-      const vercelRuntime = isVercelRuntime();
       await pool.query(
       `INSERT INTO deployment_events (deployment_id, status, message)
        VALUES ($1, 'queued', $2)`,

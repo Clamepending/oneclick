@@ -70,7 +70,7 @@ OttoAgent flavor env knobs:
 - `OTTOAGENT_MCP_IMAGE` / `OTTOAGENT_MCP_BUILD_ON_HOST` / `OTTOAGENT_MCP_BUILD_REPO`
 - `OTTOAGENT_MCP_PORT` / `OTTOAGENT_MCP_PATH` / `OTTOAGENT_MCP_START_COMMAND`
 - optional passthroughs for MCP container auth/config: `OTTOAGENT_MCP_BASE_URL`, `OTTOAGENT_MCP_TOKEN`
-- default build repo paths assume sibling directories: `../ottoagent` and `../ottoagent-mcp`
+- `OTTOAGENT_MCP_BUILD_REPO` is optional; if omitted, OneClick builds a built-in OttoAuth MCP HTTP bridge image.
 
 ## Run
 
@@ -121,6 +121,16 @@ npm run aws:bootstrap
 Then copy values from `.env.aws-ecs` into your app runtime env (`.env.local`, Vercel env, etc.) and set `DEPLOY_PROVIDER=ecs`.
 
 Infra source: `infra/aws/`
+
+### SQS Lambda consumer sync
+
+Deploying app code does not automatically update the SQS Lambda consumer bundle. After worker/deploy logic changes, run:
+
+```bash
+npm run aws:deploy-worker
+```
+
+This updates `oneclick-sqs-deploy-consumer` code and stamps `DEPLOY_WORKER_FEATURES` so app can block unsupported deployment flavors (for example `ottoagent_free`) instead of silently launching partial runtimes.
 
 ### ECS runtime smoke test (recommended)
 

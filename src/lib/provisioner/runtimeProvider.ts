@@ -608,6 +608,192 @@ function parseGitRepoSpec(repo: string) {
   };
 }
 
+function getBuiltinOttoAuthMcpBridgeDockerfile() {
+  return [
+    "FROM node:20-alpine",
+    "WORKDIR /app",
+    "COPY server.mjs /app/server.mjs",
+    "EXPOSE 8787",
+    'CMD ["node", "/app/server.mjs"]',
+    "",
+  ].join("\n");
+}
+
+function getBuiltinOttoAuthMcpBridgeServer() {
+  return `
+import http from "node:http";
+
+const HOST = process.env.HOST || "0.0.0.0";
+const PORT = Number(process.env.OTTOAGENT_MCP_PORT || process.env.PORT || "8787");
+const RAW_PATH = process.env.OTTOAGENT_MCP_PATH || "/mcp";
+const MCP_PATH = RAW_PATH.startsWith("/") ? RAW_PATH : \`/\${RAW_PATH}\`;
+const BASE_URL = (process.env.OTTOAUTH_BASE_URL || process.env.OTTOAGENT_BASE_URL || "https://ottoauth.vercel.app").replace(/\\/$/, "");
+const AUTH_TOKEN = process.env.OTTOAUTH_TOKEN || process.env.OTTOAGENT_TOKEN || "";
+
+function writeJson(res, statusCode, body) {
+  res.statusCode = statusCode;
+  res.setHeader("content-type", "application/json");
+  res.end(JSON.stringify(body));
+}
+
+function mcpResult(id, result) {
+  return { jsonrpc: "2.0", id, result };
+}
+
+function mcpError(id, message, code = -32000) {
+  return { jsonrpc: "2.0", id, error: { code, message } };
+}
+
+function toolList() {
+  return [
+    {
+      name: "ottoauth_list_services",
+      description: "List OttoAuth services from /api/services.",
+      inputSchema: { type: "object", properties: {} },
+    },
+    {
+      name: "ottoauth_get_service",
+      description: "Get OttoAuth service details by id from /api/services/:id.",
+      inputSchema: {
+        type: "object",
+        required: ["id"],
+        properties: { id: { type: "string" } },
+      },
+    },
+    {
+      name: "ottoauth_http_request",
+      description: "Generic OttoAuth HTTP request. Path must start with /api/.",
+      inputSchema: {
+        type: "object",
+        required: ["method", "path"],
+        properties: {
+          method: { type: "string", enum: ["GET", "POST", "PUT", "PATCH", "DELETE"] },
+          path: { type: "string" },
+          query: { type: "object", additionalProperties: true },
+          body: { type: "object", additionalProperties: true },
+        },
+      },
+    },
+  ];
+}
+
+function buildHeaders() {
+  const headers = { "content-type": "application/json" };
+  if (AUTH_TOKEN) {
+    headers.authorization = \`Bearer \${AUTH_TOKEN}\`;
+  }
+  return headers;
+}
+
+function mapResultContent(value) {
+  return [{ type: "text", text: JSON.stringify(value, null, 2) }];
+}
+
+async function callOttoAuth(method, path, query, body) {
+  if (!String(path || "").startsWith("/api/")) {
+    throw new Error("path must start with /api/");
+  }
+  const url = new URL(path, BASE_URL);
+  if (query && typeof query === "object") {
+    for (const [key, value] of Object.entries(query)) {
+      if (value === undefined || value === null) continue;
+      url.searchParams.set(key, String(value));
+    }
+  }
+  const response = await fetch(url.toString(), {
+    method,
+    headers: buildHeaders(),
+    body: method === "GET" || method === "DELETE" ? undefined : JSON.stringify(body || {}),
+  });
+  const text = await response.text();
+  let parsed = null;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    parsed = text;
+  }
+  if (!response.ok) {
+    throw new Error(\`OttoAuth request failed: \${response.status} \${response.statusText}\`);
+  }
+  return parsed;
+}
+
+async function handleRpc(payload) {
+  const id = payload?.id ?? null;
+  const method = String(payload?.method || "");
+  const params = payload?.params && typeof payload.params === "object" ? payload.params : {};
+
+  if (method === "initialize") {
+    return mcpResult(id, {
+      protocolVersion: "2024-11-05",
+      capabilities: { tools: { listChanged: false } },
+      serverInfo: { name: "ottoauth-http-mcp", version: "0.1.0" },
+    });
+  }
+  if (method === "notifications/initialized") {
+    return mcpResult(id, {});
+  }
+  if (method === "tools/list") {
+    return mcpResult(id, { tools: toolList() });
+  }
+  if (method === "tools/call") {
+    const name = String(params.name || "");
+    const args = params.arguments && typeof params.arguments === "object" ? params.arguments : {};
+    try {
+      if (name === "ottoauth_list_services") {
+        const result = await callOttoAuth("GET", "/api/services");
+        return mcpResult(id, { content: mapResultContent(result), structuredContent: result });
+      }
+      if (name === "ottoauth_get_service") {
+        const serviceId = String(args.id || "").trim();
+        if (!serviceId) return mcpError(id, "Missing required argument: id", -32602);
+        const result = await callOttoAuth("GET", \`/api/services/\${encodeURIComponent(serviceId)}\`);
+        return mcpResult(id, { content: mapResultContent(result), structuredContent: result });
+      }
+      if (name === "ottoauth_http_request") {
+        const httpMethod = String(args.method || "GET").toUpperCase();
+        const path = String(args.path || "");
+        const query = args.query && typeof args.query === "object" ? args.query : undefined;
+        const body = args.body && typeof args.body === "object" ? args.body : undefined;
+        const result = await callOttoAuth(httpMethod, path, query, body);
+        return mcpResult(id, { content: mapResultContent(result), structuredContent: result });
+      }
+      return mcpError(id, \`Unknown tool: \${name}\`, -32601);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return mcpError(id, message, -32000);
+    }
+  }
+
+  return mcpError(id, \`Unknown method: \${method}\`, -32601);
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url || "/", \`http://\${HOST}:\${PORT}\`);
+  if (url.pathname === "/healthz") {
+    return writeJson(res, 200, { ok: true, baseUrl: BASE_URL });
+  }
+  if (req.method !== "POST" || url.pathname !== MCP_PATH) {
+    return writeJson(res, 404, { error: "not found" });
+  }
+  const chunks = [];
+  for await (const chunk of req) chunks.push(Buffer.from(chunk));
+  let payload = null;
+  try {
+    payload = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+  } catch {
+    return writeJson(res, 400, mcpError(null, "Invalid JSON payload", -32700));
+  }
+  const response = await handleRpc(payload);
+  return writeJson(res, 200, response);
+});
+
+server.listen(PORT, HOST, () => {
+  console.log(\`[ottoauth-http-mcp] listening on \${HOST}:\${PORT}\${MCP_PATH} base=\${BASE_URL}\`);
+});
+`;
+}
+
 function buildOpenClawOnboardCommand(input: {
   anthropicApiKey?: string | null;
   openaiApiKey?: string | null;
@@ -847,9 +1033,11 @@ async function launchViaSsh(input: LaunchInput) {
   );
   const simpleAgentBuildRepo = isSimpleAgentWithOttoAgentMcp ? getOttoAgentBuildRepo() : getSimpleAgentBuildRepo();
   const shouldBuildOttoAgentMcp = isSimpleAgentWithOttoAgentMcp && shouldBuildOttoAgentMcpImage();
-  const ottoAgentMcpBuildRepo = getOttoAgentMcpBuildRepo();
-  const ottoAgentMcpRepoSpec = parseGitRepoSpec(ottoAgentMcpBuildRepo);
+  const ottoAgentMcpBuildRepo = getOttoAgentMcpBuildRepo().trim();
+  const ottoAgentMcpRepoSpec = ottoAgentMcpBuildRepo ? parseGitRepoSpec(ottoAgentMcpBuildRepo) : null;
   const ottoAgentMcpBuildDir = `/tmp/oneclick-ottoagent-mcp-${sanitizeSegment(input.deploymentId)}`;
+  const ottoAuthMcpBridgeServerBase64 = Buffer.from(getBuiltinOttoAuthMcpBridgeServer(), "utf8").toString("base64");
+  const ottoAuthMcpBridgeDockerfileBase64 = Buffer.from(getBuiltinOttoAuthMcpBridgeDockerfile(), "utf8").toString("base64");
   const shouldBuildVideoMemory = isSimpleAgentWithVideoMemory && shouldBuildVideoMemoryImage();
   const videoMemoryBuildRepo = getVideoMemoryBuildRepo();
   const videoMemoryRepoSpec = parseGitRepoSpec(videoMemoryBuildRepo);
@@ -900,9 +1088,11 @@ async function launchViaSsh(input: LaunchInput) {
   const containerName = buildRuntimeName(input);
   const ottoAgentMcpContainerName = buildOttoAgentMcpContainerName(containerName);
   const videoMemoryContainerName = buildVideoMemoryContainerName(containerName);
-  const ottoAgentMcpBaseUrl = readTrimmedEnv("OTTOAGENT_MCP_BASE_URL");
+  const ottoAgentMcpBaseUrl = readTrimmedEnv("OTTOAGENT_MCP_BASE_URL") || "https://ottoauth.vercel.app";
   const ottoAgentMcpToken = readTrimmedEnv("OTTOAGENT_MCP_TOKEN");
   const ottoAgentMcpRuntimeArgs = [
+    `-e OTTOAGENT_MCP_PORT=${ottoAgentMcpContainerPort}`,
+    `-e OTTOAGENT_MCP_PATH=${shellQuote(ottoAgentMcpPath)}`,
     ottoAgentMcpBaseUrl ? `-e OTTOAGENT_BASE_URL=${shellQuote(ottoAgentMcpBaseUrl)}` : "",
     ottoAgentMcpBaseUrl ? `-e OTTOAUTH_BASE_URL=${shellQuote(ottoAgentMcpBaseUrl)}` : "",
     ottoAgentMcpToken ? `-e OTTOAGENT_TOKEN=${shellQuote(ottoAgentMcpToken)}` : "",
@@ -932,10 +1122,17 @@ async function launchViaSsh(input: LaunchInput) {
       : [`docker pull "${image}"`]),
     `docker rm -f "${containerName}" "${videoMemoryContainerName}" "${ottoAgentMcpContainerName}" >/dev/null 2>&1 || true`,
     ...(shouldBuildOttoAgentMcp
-      ? [
-          `rm -rf "${ottoAgentMcpBuildDir}" && git clone --depth 1 ${ottoAgentMcpRepoSpec.ref ? `--branch ${shellQuote(ottoAgentMcpRepoSpec.ref)} ` : ""}${shellQuote(ottoAgentMcpRepoSpec.url)} "${ottoAgentMcpBuildDir}"`,
-          `docker build -t "${ottoAgentMcpImage}" "${ottoAgentMcpBuildDir}"`,
-        ]
+      ? ottoAgentMcpRepoSpec
+        ? [
+            `rm -rf "${ottoAgentMcpBuildDir}" && git clone --depth 1 ${ottoAgentMcpRepoSpec.ref ? `--branch ${shellQuote(ottoAgentMcpRepoSpec.ref)} ` : ""}${shellQuote(ottoAgentMcpRepoSpec.url)} "${ottoAgentMcpBuildDir}"`,
+            `docker build -t "${ottoAgentMcpImage}" "${ottoAgentMcpBuildDir}"`,
+          ]
+        : [
+            `rm -rf "${ottoAgentMcpBuildDir}" && mkdir -p "${ottoAgentMcpBuildDir}"`,
+            `printf '%s' '${ottoAuthMcpBridgeServerBase64}' | base64 -d > "${ottoAgentMcpBuildDir}/server.mjs"`,
+            `printf '%s' '${ottoAuthMcpBridgeDockerfileBase64}' | base64 -d > "${ottoAgentMcpBuildDir}/Dockerfile"`,
+            `docker build -t "${ottoAgentMcpImage}" "${ottoAgentMcpBuildDir}"`,
+          ]
       : isSimpleAgentWithOttoAgentMcp
         ? [`docker pull "${ottoAgentMcpImage}"`]
         : []),
@@ -1012,13 +1209,19 @@ async function launchViaEcs(input: LaunchInput) {
     ? "DISABLED"
     : "ENABLED";
   const deploymentFlavor = normalizeDeploymentFlavor(input.deploymentFlavor);
+  const isOpenClawRuntime = deploymentFlavor === "deploy_openclaw_free";
+  const isSimpleAgentWithOttoAuthEcs = deploymentFlavor === "simple_agent_ottoauth_ecs";
   const image = getRuntimeImage(deploymentFlavor);
   const gatewayToken = getGatewayToken();
   const containerPort = getRuntimePort(deploymentFlavor);
   const startCommand = getRuntimeStartCommand(deploymentFlavor);
   const command = splitStartCommand(startCommand);
-  const isPhioranexOpenClawImage =
-    deploymentFlavor === "deploy_openclaw_free" && image.toLowerCase().includes("ghcr.io/phioranex/openclaw-docker");
+  const ottoAgentMcpImage = getOttoAgentMcpImage();
+  const ottoAgentMcpContainerPort = getOttoAgentMcpPort();
+  const ottoAgentMcpPath = normalizeMcpPath(getOttoAgentMcpPath());
+  const ottoAgentMcpStartCommand = getOttoAgentMcpStartCommand();
+  const ottoAgentMcpCommand = splitStartCommand(ottoAgentMcpStartCommand);
+  const isPhioranexOpenClawImage = isOpenClawRuntime && image.toLowerCase().includes("ghcr.io/phioranex/openclaw-docker");
   const planTier = normalizePlanTier(input.planTier);
   const { cpu, memory } = getEcsPlanResources(planTier);
   const platformVersion = readTrimmedEnv("ECS_PLATFORM_VERSION");
@@ -1029,6 +1232,31 @@ async function launchViaEcs(input: LaunchInput) {
   const awslogsPrefix = readTrimmedEnv("ECS_LOG_STREAM_PREFIX") || "oneclick";
   const telemetryEnv = readTrimmedEnv("OPENCLAW_TELEMETRY");
   const openclawNodeOptions = readTrimmedEnv("OPENCLAW_NODE_OPTIONS") || "--max-old-space-size=1536";
+  const simpleAgentModel = isOpenClawRuntime
+    ? ""
+    : (
+      (isSimpleAgentWithOttoAuthEcs ? readTrimmedEnv("OTTOAGENT_MODEL") : "") ||
+      readTrimmedEnv("SIMPLE_AGENT_MODEL") ||
+      "gpt-4o-mini"
+    );
+  const simpleAgentLlmUrl = isOpenClawRuntime
+    ? ""
+    : (
+      (isSimpleAgentWithOttoAuthEcs ? readTrimmedEnv("OTTOAGENT_LLM_URL") : "") ||
+      readTrimmedEnv("SIMPLE_AGENT_LLM_URL")
+    );
+  const resolvedSimpleAgentLlmUrl = simpleAgentLlmUrl || input.subsidyProxyBaseUrl?.trim() || "";
+  const simpleAgentMcpServersJson = isSimpleAgentWithOttoAuthEcs
+    ? JSON.stringify([
+        {
+          id: "ottoagent",
+          transport: "http",
+          url: `http://127.0.0.1:${ottoAgentMcpContainerPort}${ottoAgentMcpPath}`,
+        },
+      ])
+    : "";
+  const ottoAgentMcpBaseUrl = readTrimmedEnv("OTTOAGENT_MCP_BASE_URL");
+  const ottoAgentMcpToken = readTrimmedEnv("OTTOAGENT_MCP_TOKEN");
   const efsFileSystemId = readTrimmedEnv("ECS_EFS_FILE_SYSTEM_ID");
   const efsAccessPointId = readTrimmedEnv("ECS_EFS_ACCESS_POINT_ID");
   const efsTransitEncryption = (readTrimmedEnv("ECS_EFS_TRANSIT_ENCRYPTION") || "ENABLED").toUpperCase();
@@ -1054,6 +1282,18 @@ async function launchViaEcs(input: LaunchInput) {
     input.openaiApiKey?.trim() ? { name: "OPENAI_API_KEY", value: input.openaiApiKey.trim() } : null,
     input.anthropicApiKey?.trim() ? { name: "ANTHROPIC_API_KEY", value: input.anthropicApiKey.trim() } : null,
     input.openrouterApiKey?.trim() ? { name: "OPENROUTER_API_KEY", value: input.openrouterApiKey.trim() } : null,
+    !isOpenClawRuntime && input.openaiApiKey?.trim()
+      ? { name: "ADMINAGENT_LLM_API_KEY", value: input.openaiApiKey.trim() }
+      : null,
+    !isOpenClawRuntime && resolvedSimpleAgentLlmUrl
+      ? { name: "ADMINAGENT_LLM_URL", value: resolvedSimpleAgentLlmUrl }
+      : null,
+    !isOpenClawRuntime && simpleAgentModel
+      ? { name: "ADMINAGENT_MODEL", value: simpleAgentModel }
+      : null,
+    !isOpenClawRuntime && simpleAgentMcpServersJson
+      ? { name: "ADMINAGENT_MCP_SERVERS_JSON", value: simpleAgentMcpServersJson }
+      : null,
     input.subsidyProxyToken?.trim() && input.subsidyProxyBaseUrl?.trim() && !input.openaiApiKey && !input.anthropicApiKey && !input.openrouterApiKey
       ? { name: "OPENAI_API_KEY", value: input.subsidyProxyToken.trim() }
       : null,
@@ -1063,8 +1303,15 @@ async function launchViaEcs(input: LaunchInput) {
     input.subsidyProxyToken?.trim() && input.subsidyProxyBaseUrl?.trim() && !input.openaiApiKey && !input.anthropicApiKey && !input.openrouterApiKey
       ? { name: "OPENAI_API_BASE", value: input.subsidyProxyBaseUrl.trim() }
       : null,
+    { name: "PORT", value: String(containerPort) },
     openclawNodeOptions ? { name: "NODE_OPTIONS", value: openclawNodeOptions } : null,
     telemetryEnv ? { name: "OPENCLAW_TELEMETRY", value: telemetryEnv } : null,
+  ].filter((entry): entry is { name: string; value: string } => Boolean(entry));
+  const ottoAgentMcpEnvironment = [
+    ottoAgentMcpBaseUrl ? { name: "OTTOAGENT_BASE_URL", value: ottoAgentMcpBaseUrl } : null,
+    ottoAgentMcpBaseUrl ? { name: "OTTOAUTH_BASE_URL", value: ottoAgentMcpBaseUrl } : null,
+    ottoAgentMcpToken ? { name: "OTTOAGENT_TOKEN", value: ottoAgentMcpToken } : null,
+    ottoAgentMcpToken ? { name: "OTTOAUTH_TOKEN", value: ottoAgentMcpToken } : null,
   ].filter((entry): entry is { name: string; value: string } => Boolean(entry));
 
   const containerMountPoints = efsEnabled
@@ -1221,6 +1468,60 @@ async function launchViaEcs(input: LaunchInput) {
           name: configVolumeName,
         },
       ];
+  const containerDefinitions = [
+    {
+      name: containerName,
+      image,
+      entryPoint: entryPointOverride,
+      essential: true,
+      command: commandOverride,
+      environment,
+      mountPoints: containerMountPoints,
+      portMappings: [
+        {
+          containerPort,
+          protocol: "tcp" as const,
+        },
+      ],
+      logConfiguration: awslogsGroup
+        ? {
+            logDriver: "awslogs" as const,
+            options: {
+              "awslogs-group": awslogsGroup,
+              "awslogs-region": region,
+              "awslogs-stream-prefix": awslogsPrefix,
+            },
+          }
+        : undefined,
+    },
+    ...(isSimpleAgentWithOttoAuthEcs
+      ? [
+          {
+            name: `${containerName}-ottoauth-mcp`.slice(0, 255),
+            image: ottoAgentMcpImage,
+            essential: true,
+            command: ottoAgentMcpCommand.length > 0 ? ottoAgentMcpCommand : undefined,
+            environment: ottoAgentMcpEnvironment,
+            portMappings: [
+              {
+                containerPort: ottoAgentMcpContainerPort,
+                protocol: "tcp" as const,
+              },
+            ],
+            logConfiguration: awslogsGroup
+              ? {
+                  logDriver: "awslogs" as const,
+                  options: {
+                    "awslogs-group": awslogsGroup,
+                    "awslogs-region": region,
+                    "awslogs-stream-prefix": `${awslogsPrefix}-ottoauth-mcp`,
+                  },
+                }
+              : undefined,
+          },
+        ]
+      : []),
+  ];
 
   const register = await ecsClient.send(
     new RegisterTaskDefinitionCommand({
@@ -1232,33 +1533,7 @@ async function launchViaEcs(input: LaunchInput) {
       executionRoleArn,
       taskRoleArn: taskRoleArn || undefined,
       volumes: taskVolumes,
-      containerDefinitions: [
-        {
-          name: containerName,
-          image,
-          entryPoint: entryPointOverride,
-          essential: true,
-          command: commandOverride,
-          environment,
-          mountPoints: containerMountPoints,
-          portMappings: [
-            {
-              containerPort,
-              protocol: "tcp",
-            },
-          ],
-          logConfiguration: awslogsGroup
-            ? {
-                logDriver: "awslogs",
-                options: {
-                  "awslogs-group": awslogsGroup,
-                  "awslogs-region": region,
-                  "awslogs-stream-prefix": awslogsPrefix,
-                },
-              }
-            : undefined,
-        },
-      ],
+      containerDefinitions,
     }),
   );
 
@@ -1344,6 +1619,16 @@ async function launchViaEcs(input: LaunchInput) {
 }
 
 export async function launchUserContainer(input: LaunchInput) {
+  if (input.providerOverride === "ecs") {
+    return launchViaEcs(input);
+  }
+  if (input.providerOverride === "ssh" || input.providerOverride === "mock") {
+    return launchViaSsh(input);
+  }
+  const configuredProvider = readTrimmedEnv("DEPLOY_PROVIDER").toLowerCase();
+  if (configuredProvider === "ecs") {
+    return launchViaEcs(input);
+  }
   return launchViaSsh(input);
 }
 

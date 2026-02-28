@@ -92,9 +92,12 @@ function readTrimmedEnv(name: string) {
   return raw.trim().replace(/^"(.*)"$/, "$1").replace(/\\n/g, "").trim();
 }
 
-function resolveProviderForDeployment(_defaultProvider: string, deploymentFlavor: DeploymentFlavor) {
-  void deploymentFlavor;
-  return "ssh";
+function resolveProviderForDeployment(
+  defaultProvider: "mock" | "ssh" | "ecs",
+  deploymentFlavor: DeploymentFlavor,
+): "mock" | "ssh" | "ecs" {
+  if (deploymentFlavor === "simple_agent_ottoauth_ecs") return "ecs";
+  return defaultProvider;
 }
 
 function buildAwsConfigWithTrimmedCreds(region: string): ECSClientConfig {
@@ -246,6 +249,113 @@ async function probeSshContainerRunning(sshTarget: string, containerName: string
         readyTimeout: timeoutMs,
       });
   });
+}
+
+function buildOttoAgentMcpContainerName(containerName: string) {
+  return `${containerName}-ottoagent-mcp`.slice(0, 63);
+}
+
+async function readSshContainerEnv(sshTarget: string, containerName: string) {
+  const privateKeyRaw = process.env.DEPLOY_SSH_PRIVATE_KEY?.trim();
+  if (!privateKeyRaw) {
+    throw new Error("DEPLOY_SSH_PRIVATE_KEY is required for SSH runtime health checks.");
+  }
+  const privateKey = privateKeyRaw.replace(/\\n/g, "\n");
+  const timeoutMs = Number(process.env.OPENCLAW_SSH_TIMEOUT_MS ?? "120000");
+  const { user, host } = parseUserAndHost(sshTarget);
+  const safeContainer = containerName.replace(/"/g, '\\"');
+  const command = `docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' \"${safeContainer}\" 2>/dev/null || true`;
+
+  return await new Promise<string[]>((resolve, reject) => {
+    let settled = false;
+    const conn = new Client();
+    const timer = setTimeout(() => {
+      finish(new Error(`SSH env probe timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    const finish = (error?: Error, lines?: string[]) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      conn.end();
+      if (error) reject(error);
+      else resolve(lines ?? []);
+    };
+
+    conn
+      .on("ready", () => {
+        conn.exec(command, (execErr, stream) => {
+          if (execErr) {
+            finish(execErr);
+            return;
+          }
+          let stdout = "";
+          let stderr = "";
+          stream.on("data", (data: Buffer) => {
+            stdout += data.toString("utf8");
+          });
+          stream.stderr.on("data", (data: Buffer) => {
+            stderr += data.toString("utf8");
+          });
+          stream.on("close", () => {
+            if (stderr.trim()) {
+              finish(new Error(stderr.trim()));
+              return;
+            }
+            finish(
+              undefined,
+              stdout
+                .split("\n")
+                .map((line) => line.trim())
+                .filter(Boolean),
+            );
+          });
+        });
+      })
+      .on("error", (error) => finish(error))
+      .connect({
+        host,
+        username: user,
+        privateKey,
+        readyTimeout: timeoutMs,
+      });
+  });
+}
+
+async function assertFlavorRuntimeConformance(input: {
+  deploymentFlavor: DeploymentFlavor;
+  runtimeId: string;
+  deployProvider: string | null;
+}) {
+  if (input.deploymentFlavor !== "ottoagent_free") return;
+
+  if ((input.deployProvider ?? "").trim() !== "ssh") {
+    throw new Error(
+      `OttoAgent deployment requires SSH provider runtime validation, but deploy provider is "${input.deployProvider ?? "unknown"}".`,
+    );
+  }
+
+  const parsed = parseSshRuntimeId(input.runtimeId);
+  if (!parsed) {
+    throw new Error("OttoAgent deployment runtime id is not a valid SSH runtime id.");
+  }
+
+  await probeSshContainerRunning(parsed.sshTarget, parsed.containerName);
+  const mcpContainerName = buildOttoAgentMcpContainerName(parsed.containerName);
+  await probeSshContainerRunning(parsed.sshTarget, mcpContainerName);
+  const envLines = await readSshContainerEnv(parsed.sshTarget, parsed.containerName);
+  const mcpServersLine = envLines.find((line) => line.startsWith("ADMINAGENT_MCP_SERVERS_JSON="));
+  if (!mcpServersLine) {
+    throw new Error(
+      "OttoAgent runtime missing ADMINAGENT_MCP_SERVERS_JSON on main container; queue worker is likely outdated.",
+    );
+  }
+  const mcpConfig = mcpServersLine.slice("ADMINAGENT_MCP_SERVERS_JSON=".length);
+  if (!mcpConfig.includes("ottoagent") && !mcpConfig.includes("ottoauth")) {
+    throw new Error(
+      "OttoAgent runtime MCP config does not include ottoauth/ottoagent server entry; refusing to mark deployment ready.",
+    );
+  }
 }
 
 async function resolveEcsPublicIp(ecsClient: ECSClient, ec2Client: EC2Client, input: { cluster: string; serviceName: string }) {
@@ -411,7 +521,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
     return;
   }
   await appendEvent(job.deploymentId, "starting", "Scheduling runtime host");
-  const defaultProvider = "ssh";
+  const defaultProvider: "mock" | "ssh" | "ecs" = "ssh";
 
   const providerSelectionRow = await pool.query<{
     plan_tier: string | null;
@@ -591,7 +701,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
     subsidyProxyToken,
     subsidyProxyBaseUrl,
     deploymentFlavor,
-    providerOverride: "ssh",
+    providerOverride: provider,
   });
   await pool.query(
     `UPDATE deployments
@@ -610,6 +720,15 @@ export async function processDeploymentJob(job: DeploymentJob) {
     deployProvider: runtime.deployProvider,
     runtimeId: runtime.runtimeId,
   });
+  if (deploymentFlavor === "ottoagent_free") {
+    await appendEvent(job.deploymentId, "starting", "Validating OttoAgent MCP runtime wiring");
+    await assertFlavorRuntimeConformance({
+      deploymentFlavor,
+      runtimeId: runtime.runtimeId,
+      deployProvider: runtime.deployProvider,
+    });
+    await appendEvent(job.deploymentId, "starting", "OttoAgent MCP runtime validation passed");
+  }
   if (deploymentFlavor === "simple_agent_videomemory_free") {
     const videoMemoryUrl = buildVideoMemoryUrl({
       deploymentId: job.deploymentId,
