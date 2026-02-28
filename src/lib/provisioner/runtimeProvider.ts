@@ -742,10 +742,12 @@ async function launchViaSsh(input: LaunchInput) {
   const videoMemoryImage = getVideoMemoryImage();
   const videoMemoryContainerPort = getVideoMemoryPort();
   const videoMemoryStartCommand = getVideoMemoryStartCommand();
+  const videoMemoryMcpContainerPort = Number(readTrimmedEnv("VIDEOMEMORY_MCP_PORT") || "8765");
   const allowInsecureControlUi = shouldAllowInsecureControlUi();
   const gatewayToken = getGatewayToken();
   const hostPort = buildAssignedPort(input.deploymentId);
   const videoMemoryHostPort = buildAssignedPort(`${input.deploymentId}-videomemory`);
+  const videoMemoryMcpHostPort = buildAssignedPort(`${input.deploymentId}-videomemory-mcp`);
   const telegramBotToken = input.telegramBotToken?.trim() || "";
   const telegramEnabled = telegramBotToken ? "true" : "false";
   const openaiApiKey = input.openaiApiKey?.trim() || "";
@@ -782,6 +784,17 @@ async function launchViaSsh(input: LaunchInput) {
   const videoMemoryBuildRepo = getVideoMemoryBuildRepo();
   const videoMemoryRepoSpec = parseGitRepoSpec(videoMemoryBuildRepo);
   const videoMemoryBuildDir = `/tmp/oneclick-videomemory-${sanitizeSegment(input.deploymentId)}`;
+  const resolvedVideoMemoryStartCommand =
+    isSimpleAgentWithVideoMemory ? videoMemoryStartCommand || "bash /app/deploy/start-with-mcp.sh" : videoMemoryStartCommand;
+  const simpleAgentMcpServersJson = isSimpleAgentWithVideoMemory
+    ? JSON.stringify([
+        {
+          id: "videomemory",
+          transport: "http",
+          url: `http://host.docker.internal:${videoMemoryMcpHostPort}/mcp`,
+        },
+      ])
+    : "";
   const simpleAgentRuntimeArgs = [
     `-e TELEGRAM_ENABLED=${telegramEnabled}`,
     telegramBotToken ? `-e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : "",
@@ -792,6 +805,7 @@ async function launchViaSsh(input: LaunchInput) {
     simpleAgentAnthropicApiKey ? `-e ANTHROPIC_API_KEY=${shellQuote(simpleAgentAnthropicApiKey)}` : "",
     simpleAgentGoogleApiKey ? `-e GOOGLE_API_KEY=${shellQuote(simpleAgentGoogleApiKey)}` : "",
     simpleAgentModel ? `-e ADMINAGENT_MODEL=${shellQuote(simpleAgentModel)}` : "",
+    simpleAgentMcpServersJson ? `-e ADMINAGENT_MCP_SERVERS_JSON=${shellQuote(simpleAgentMcpServersJson)}` : "",
     resolvedSimpleAgentLlmUrl ? `-e OPENAI_BASE_URL=${shellQuote(resolvedSimpleAgentLlmUrl)}` : "",
     resolvedSimpleAgentLlmUrl ? `-e OPENAI_API_BASE=${shellQuote(resolvedSimpleAgentLlmUrl)}` : "",
     `-e PORT=${containerPort}`,
@@ -850,10 +864,10 @@ async function launchViaSsh(input: LaunchInput) {
       : []),
     isOpenClawRuntime
       ? `docker run -d --name "${containerName}" --restart unless-stopped --memory=${resourceFlags.memory} --memory-swap=${resourceFlags.memory} --cpus=${resourceFlags.cpus} --pids-limit=${resourceFlags.pids} --shm-size=${resourceFlags.shmSize} --log-opt max-size=${resourceFlags.logMaxSize} --log-opt max-file=${resourceFlags.logMaxFiles}${resourceFlags.writableLayerSize ? ` --storage-opt size=${resourceFlags.writableLayerSize}` : ""} -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" -e OPENCLAW_GATEWAY_TOKEN=${shellQuote(gatewayToken)} -e OPENCLAW_ALLOW_INSECURE_CONTROL_UI=${allowInsecureControlUi ? "true" : "false"} -e NODE_OPTIONS=${shellQuote(openclawNodeOptions)} -e TELEGRAM_ENABLED=${telegramEnabled}${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""}${!openaiApiKey && !anthropicApiKey && !openrouterApiKey && subsidyProxyBaseUrl && subsidyProxyToken ? ` -e OPENAI_API_KEY=${shellQuote(subsidyProxyToken)} -e OPENAI_BASE_URL=${shellQuote(subsidyProxyBaseUrl)} -e OPENAI_API_BASE=${shellQuote(subsidyProxyBaseUrl)}` : ""} -p "${hostPort}:${containerPort}" "${image}" ${startCommand}`
-      : `docker run -d --name "${containerName}" --restart unless-stopped --memory=${resourceFlags.memory} --memory-swap=${resourceFlags.memory} --cpus=${resourceFlags.cpus} --pids-limit=${resourceFlags.pids} --shm-size=${resourceFlags.shmSize} --log-opt max-size=${resourceFlags.logMaxSize} --log-opt max-file=${resourceFlags.logMaxFiles}${resourceFlags.writableLayerSize ? ` --storage-opt size=${resourceFlags.writableLayerSize}` : ""} -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" ${simpleAgentRuntimeArgs} -p "${hostPort}:${containerPort}" "${image}"${startCommand ? ` ${startCommand}` : ""}`,
+      : `docker run -d --name "${containerName}" --restart unless-stopped --add-host host.docker.internal:host-gateway --memory=${resourceFlags.memory} --memory-swap=${resourceFlags.memory} --cpus=${resourceFlags.cpus} --pids-limit=${resourceFlags.pids} --shm-size=${resourceFlags.shmSize} --log-opt max-size=${resourceFlags.logMaxSize} --log-opt max-file=${resourceFlags.logMaxFiles}${resourceFlags.writableLayerSize ? ` --storage-opt size=${resourceFlags.writableLayerSize}` : ""} -v "${userDir}:/home/node/.openclaw" -v "${workspaceDir}:/home/node/.openclaw/workspace" ${simpleAgentRuntimeArgs} -p "${hostPort}:${containerPort}" "${image}"${startCommand ? ` ${startCommand}` : ""}`,
     ...(isSimpleAgentWithVideoMemory
       ? [
-          `docker run -d --name "${videoMemoryContainerName}" --restart unless-stopped --memory=1024m --memory-swap=1024m --cpus=0.75 --pids-limit=512 --shm-size=256m --log-opt max-size=10m --log-opt max-file=3 -v "${videoMemoryDataDir}:/app/data"${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""} -p "${videoMemoryHostPort}:${videoMemoryContainerPort}" "${videoMemoryImage}"${videoMemoryStartCommand ? ` ${videoMemoryStartCommand}` : ""}`,
+          `docker run -d --name "${videoMemoryContainerName}" --restart unless-stopped --memory=1024m --memory-swap=1024m --cpus=0.75 --pids-limit=512 --shm-size=256m --log-opt max-size=10m --log-opt max-file=3 -v "${videoMemoryDataDir}:/app/data" -e VIDEOMEMORY_MCP_PORT=${videoMemoryMcpContainerPort}${telegramBotToken ? ` -e TELEGRAM_BOT_TOKEN=${shellQuote(telegramBotToken)}` : ""}${openaiApiKey ? ` -e OPENAI_API_KEY=${shellQuote(openaiApiKey)}` : ""}${anthropicApiKey ? ` -e ANTHROPIC_API_KEY=${shellQuote(anthropicApiKey)}` : ""}${openrouterApiKey ? ` -e OPENROUTER_API_KEY=${shellQuote(openrouterApiKey)}` : ""} -p "${videoMemoryHostPort}:${videoMemoryContainerPort}" -p "${videoMemoryMcpHostPort}:${videoMemoryMcpContainerPort}" "${videoMemoryImage}"${resolvedVideoMemoryStartCommand ? ` ${resolvedVideoMemoryStartCommand}` : ""}`,
         ]
       : []),
   ].join(" && ");
