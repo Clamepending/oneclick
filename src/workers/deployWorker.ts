@@ -831,13 +831,44 @@ export async function processDeploymentJob(job: DeploymentJob) {
 }
 
 export async function markDeploymentFailed(deploymentId: string, error: unknown) {
-  const message = error instanceof Error ? error.message : "Unexpected deployment failure";
+  const message = resolveErrorMessage(error);
   await pool.query(
     `UPDATE deployments SET status = 'failed', error = $1, updated_at = NOW() WHERE id = $2`,
     [message, deploymentId],
   );
   await appendEvent(deploymentId, "failed", message);
   return message;
+}
+
+function resolveErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    const message = error.message?.trim();
+    if (message && message.toLowerCase() !== "unknown") return message;
+    if (error.name?.trim()) {
+      return message ? `${error.name}: ${message}` : error.name;
+    }
+    return message || "Unexpected deployment failure";
+  }
+  if (error && typeof error === "object") {
+    const name = String((error as { name?: unknown }).name ?? "").trim();
+    const type = String((error as { __type?: unknown }).__type ?? "").trim();
+    const message = String((error as { message?: unknown }).message ?? "").trim();
+    if (message && message.toLowerCase() !== "unknown") {
+      return name ? `${name}: ${message}` : message;
+    }
+    if (name && message) {
+      return `${name}: ${message}`;
+    }
+    if (name) return name;
+    if (type) return type;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return "Unexpected deployment failure";
+    }
+  }
+  if (typeof error === "string" && error.trim()) return error.trim();
+  return "Unexpected deployment failure";
 }
 
 export function startDeploymentWorker() {

@@ -610,6 +610,20 @@ function parseEcsRuntimeId(runtimeId: string) {
   return { cluster: split[0], serviceName: split[1] };
 }
 
+function isIgnorableEcsDeleteError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const name = String((error as { name?: unknown }).name ?? "").toLowerCase();
+  const type = String((error as { __type?: unknown }).__type ?? "").toLowerCase();
+  const message = String((error as { message?: unknown }).message ?? "").toLowerCase();
+  return (
+    name.includes("servicenotfound") ||
+    type.includes("servicenotfound") ||
+    message.includes("servicenotfound") ||
+    message.includes("service not found") ||
+    message.includes("serviceinactive")
+  );
+}
+
 function splitStartCommand(command: string) {
   return command
     .trim()
@@ -2047,13 +2061,19 @@ export async function destroyUserRuntime(input: DestroyInput) {
     }
     const region = requireEnv("AWS_REGION");
     const ecsClient = new ECSClient(buildAwsConfigWithTrimmedCreds(region));
-    await ecsClient.send(
-      new DeleteServiceCommand({
-        cluster: parsed.cluster,
-        service: parsed.serviceName,
-        force: true,
-      }),
-    );
+    try {
+      await ecsClient.send(
+        new DeleteServiceCommand({
+          cluster: parsed.cluster,
+          service: parsed.serviceName,
+          force: true,
+        }),
+      );
+    } catch (error) {
+      if (!isIgnorableEcsDeleteError(error)) {
+        throw error;
+      }
+    }
     await cleanupEcsAlbRouting({ region, serviceName: parsed.serviceName });
     return;
   }
