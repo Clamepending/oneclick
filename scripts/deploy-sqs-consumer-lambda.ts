@@ -48,6 +48,11 @@ function parseCsv(value: string) {
     .filter(Boolean);
 }
 
+const REQUIRED_WORKER_FEATURES = [
+  "ottoagent_free",
+  "simple_agent_ottoauth_ecs_canary",
+];
+
 async function waitForFunctionUpdateComplete(lambda: LambdaClient, functionName: string) {
   const maxAttempts = 60;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -112,7 +117,7 @@ async function main() {
   );
   const currentEnv = { ...(current.Environment?.Variables ?? {}) };
   const currentFeatures = parseCsv(currentEnv.DEPLOY_WORKER_FEATURES ?? "").map((item) => item.toLowerCase());
-  const mergedFeatures = Array.from(new Set([...currentFeatures, "ottoagent_free"])).join(",");
+  const mergedFeatures = Array.from(new Set([...currentFeatures, ...REQUIRED_WORKER_FEATURES])).join(",");
 
   const nextEnv = {
     ...currentEnv,

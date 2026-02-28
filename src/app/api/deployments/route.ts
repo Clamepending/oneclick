@@ -114,19 +114,32 @@ function parseCsvSet(value: string) {
   );
 }
 
+function getRequiredWorkerFeature(
+  selectedDeploymentFlavor: DeploymentFlavor,
+): { feature: string; label: string } | null {
+  if (selectedDeploymentFlavor === "ottoagent_free") {
+    return { feature: "ottoagent_free", label: "OttoAgent" };
+  }
+  if (selectedDeploymentFlavor === "simple_agent_ottoauth_ecs_canary") {
+    return { feature: "simple_agent_ottoauth_ecs_canary", label: "ECS canary" };
+  }
+  return null;
+}
+
 async function ensureQueueWorkerSupportsFlavor(input: {
   selectedDeploymentFlavor: DeploymentFlavor;
   queueInfo: QueueModeInfo;
 }) {
   if (!input.queueInfo.usable) return { ok: true as const };
-  if (input.selectedDeploymentFlavor !== "ottoagent_free") return { ok: true as const };
+  const requiredFeature = getRequiredWorkerFeature(input.selectedDeploymentFlavor);
+  if (!requiredFeature) return { ok: true as const };
 
   const region = readTrimmedEnv("AWS_REGION");
   if (!region) {
     return {
       ok: false as const,
       error:
-        "OttoAgent deployments require AWS_REGION so OneClick can verify queue worker compatibility.",
+        `${requiredFeature.label} deployments require AWS_REGION so OneClick can verify queue worker compatibility.`,
     };
   }
 
@@ -141,20 +154,20 @@ async function ensureQueueWorkerSupportsFlavor(input: {
     const workerFeatures = parseCsvSet(
       config.Environment?.Variables?.DEPLOY_WORKER_FEATURES ?? "",
     );
-    if (workerFeatures.has("ottoagent_free")) {
+    if (workerFeatures.has(requiredFeature.feature) || workerFeatures.has("*")) {
       return { ok: true as const };
     }
     return {
       ok: false as const,
       error:
-        `OttoAgent deployments are blocked because queue worker ${functionName} is outdated (missing DEPLOY_WORKER_FEATURES=ottoagent_free). Update the Lambda consumer and retry.`,
+        `${requiredFeature.label} deployments are blocked because queue worker ${functionName} is outdated (missing DEPLOY_WORKER_FEATURES=${requiredFeature.feature}). Update the Lambda consumer and retry.`,
     };
   } catch (error) {
     const details = error instanceof Error ? error.message : String(error);
     return {
       ok: false as const,
       error:
-        `OttoAgent deployments are blocked because OneClick could not verify queue worker ${functionName}: ${details}`,
+        `${requiredFeature.label} deployments are blocked because OneClick could not verify queue worker ${functionName}: ${details}`,
     };
   }
 }

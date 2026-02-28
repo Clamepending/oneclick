@@ -132,7 +132,7 @@ Deploying app code does not automatically update the SQS Lambda consumer bundle.
 npm run aws:deploy-worker
 ```
 
-This updates `oneclick-sqs-deploy-consumer` code and stamps `DEPLOY_WORKER_FEATURES` so app can block unsupported deployment flavors (for example `ottoagent_free`) instead of silently launching partial runtimes.
+This updates `oneclick-sqs-deploy-consumer` code and stamps `DEPLOY_WORKER_FEATURES` so app can block unsupported deployment flavors (for example `ottoagent_free` and `simple_agent_ottoauth_ecs_canary`) instead of silently launching partial runtimes.
 
 ### ECS runtime smoke test (recommended)
 

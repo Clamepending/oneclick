@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { config as loadEnv } from "dotenv";
 import { DescribeNetworkInterfacesCommand, EC2Client } from "@aws-sdk/client-ec2";
 import { DescribeServicesCommand, DescribeTasksCommand, ECSClient, ListTasksCommand } from "@aws-sdk/client-ecs";
+import { normalizeDeploymentFlavor, type DeploymentFlavor } from "@/lib/plans";
 import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runtimeProvider";
 
 loadEnv({ path: ".env", quiet: true });
@@ -132,18 +133,56 @@ function mustMatch(text: string, pattern: RegExp, label: string) {
   return match;
 }
 
-async function runRuntimeHttpSmoke(baseUrl: string) {
+async function runOptionalTelegramSmoke() {
+  const token = process.env.ECS_SMOKE_TELEGRAM_TOKEN?.trim();
+  if (!token) return;
+  console.log("Telegram smoke: validating bot token + deleteWebhook...");
+
+  const getMe = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+  if (!getMe.ok) {
+    throw new Error(`Telegram getMe failed (${getMe.status})`);
+  }
+
+  const deleteWebhook = await fetch(`https://api.telegram.org/bot${token}/deleteWebhook`, { method: "POST" });
+  if (!deleteWebhook.ok) {
+    throw new Error(`Telegram deleteWebhook failed (${deleteWebhook.status})`);
+  }
+
+  console.log("Telegram smoke passed.");
+}
+
+function parseEcsRuntimeId(runtimeId: string) {
+  if (!runtimeId.startsWith("ecs:")) throw new Error(`Unexpected runtime id: ${runtimeId}`);
+  const body = runtimeId.slice(4);
+  const [cluster, serviceName] = body.split("|");
+  if (!cluster || !serviceName) throw new Error(`Invalid ecs runtime id: ${runtimeId}`);
+  return { cluster, serviceName };
+}
+
+function runtimePortForFlavor(flavor: DeploymentFlavor) {
+  if (flavor === "deploy_openclaw_free") {
+    return Number(process.env.OPENCLAW_CONTAINER_PORT ?? "18789");
+  }
+  if (flavor === "ottoagent_free") {
+    return Number(process.env.OTTOAGENT_CONTAINER_PORT ?? process.env.SIMPLE_AGENT_CONTAINER_PORT ?? "18789");
+  }
+  return Number(process.env.SIMPLE_AGENT_CONTAINER_PORT ?? "18789");
+}
+
+async function runRuntimeHttpSmokeForFlavor(baseUrl: string, deploymentFlavor: DeploymentFlavor) {
+  const expectOpenClawUi = deploymentFlavor === "deploy_openclaw_free";
   const startupTimeoutMs = Number(process.env.ECS_SMOKE_HTTP_STARTUP_TIMEOUT_MS ?? "300000");
   const retryIntervalMs = Number(process.env.ECS_SMOKE_HTTP_RETRY_INTERVAL_MS ?? "3000");
   const deadline = Date.now() + startupTimeoutMs;
-  console.log(`Runtime HTTP smoke: ${baseUrl} (startup wait ${startupTimeoutMs}ms)`);
+  console.log(`Runtime HTTP smoke: ${baseUrl} (startup wait ${startupTimeoutMs}ms flavor=${deploymentFlavor})`);
 
   let shell: Awaited<ReturnType<typeof fetchText>> | null = null;
   let lastError: unknown = null;
   while (Date.now() < deadline) {
     try {
       const nextShell = await fetchText(`${baseUrl}/`);
-      if (!nextShell.res.ok) {
+      const acceptableStatus = expectOpenClawUi ? nextShell.res.ok : nextShell.res.status < 500;
+      if (!acceptableStatus) {
         throw new Error(`Runtime shell request failed (${nextShell.res.status})`);
       }
       shell = nextShell;
@@ -157,6 +196,12 @@ async function runRuntimeHttpSmoke(baseUrl: string) {
     const lastMessage = lastError instanceof Error ? lastError.message : String(lastError ?? "unknown");
     throw new Error(`Runtime shell did not become reachable within ${startupTimeoutMs}ms: ${lastMessage}`);
   }
+
+  if (!expectOpenClawUi) {
+    console.log("Runtime HTTP smoke passed.");
+    return;
+  }
+
   if (!shell.text.includes("<openclaw-app></openclaw-app>")) {
     throw new Error("Runtime shell is not serving OpenClaw Control UI markup.");
   }
@@ -187,48 +232,29 @@ async function runRuntimeHttpSmoke(baseUrl: string) {
   console.log("Runtime HTTP smoke passed.");
 }
 
-async function runOptionalTelegramSmoke() {
-  const token = process.env.ECS_SMOKE_TELEGRAM_TOKEN?.trim();
-  if (!token) return;
-  console.log("Telegram smoke: validating bot token + deleteWebhook...");
-
-  const getMe = await fetch(`https://api.telegram.org/bot${token}/getMe`);
-  if (!getMe.ok) {
-    throw new Error(`Telegram getMe failed (${getMe.status})`);
-  }
-
-  const deleteWebhook = await fetch(`https://api.telegram.org/bot${token}/deleteWebhook`, { method: "POST" });
-  if (!deleteWebhook.ok) {
-    throw new Error(`Telegram deleteWebhook failed (${deleteWebhook.status})`);
-  }
-
-  console.log("Telegram smoke passed.");
-}
-
-function parseEcsRuntimeId(runtimeId: string) {
-  if (!runtimeId.startsWith("ecs:")) throw new Error(`Unexpected runtime id: ${runtimeId}`);
-  const body = runtimeId.slice(4);
-  const [cluster, serviceName] = body.split("|");
-  if (!cluster || !serviceName) throw new Error(`Invalid ecs runtime id: ${runtimeId}`);
-  return { cluster, serviceName };
-}
-
 async function main() {
   const region = requireEnv("AWS_REGION");
   const pollCount = Number(process.env.ECS_SMOKE_POLL_COUNT ?? "90");
   const pollIntervalMs = Number(process.env.ECS_SMOKE_POLL_INTERVAL_MS ?? "5000");
-  const runtimePort = Number(process.env.OPENCLAW_CONTAINER_PORT ?? "18789");
+  const deploymentFlavor = normalizeDeploymentFlavor(process.env.ECS_SMOKE_DEPLOYMENT_FLAVOR?.trim() || "deploy_openclaw_free");
+  const runtimePort = runtimePortForFlavor(deploymentFlavor);
+  const defaultServicePrefix = process.env.ECS_SERVICE_PREFIX?.trim() || "oneclick-agent";
+  const canaryServicePrefix = process.env.ECS_CANARY_SERVICE_PREFIX?.trim() || `${defaultServicePrefix}-canary`;
+  const ecsServicePrefixOverride =
+    deploymentFlavor === "simple_agent_ottoauth_ecs_canary" ? canaryServicePrefix : null;
   const deploymentId = `smoke-${Date.now()}`;
   const userId = `smoke-${randomUUID().slice(0, 8)}`;
   let runtimeId: string | null = null;
 
   try {
-    console.log("Creating ECS runtime...");
+    console.log(`Creating ECS runtime flavor=${deploymentFlavor}...`);
     const first = await launchUserContainer({
       deploymentId,
       userId,
       runtimeSlugSource: "smoke-test",
-      deploymentFlavor: "deploy_openclaw_free",
+      deploymentFlavor,
+      providerOverride: "ecs",
+      ecsServicePrefixOverride,
     });
     runtimeId = first.runtimeId;
     console.log(`Created runtimeId=${first.runtimeId}`);
@@ -242,7 +268,9 @@ async function main() {
       deploymentId,
       userId,
       runtimeSlugSource: "smoke-test",
-      deploymentFlavor: "deploy_openclaw_free",
+      deploymentFlavor,
+      providerOverride: "ecs",
+      ecsServicePrefixOverride,
     });
     if (second.runtimeId !== first.runtimeId) {
       throw new Error("Expected same runtimeId on second launch for same deployment/service.");
@@ -274,7 +302,7 @@ async function main() {
       if (!publicIp) {
         throw new Error("Smoke test could not resolve ECS task public IP after service reached running state.");
       }
-      await runRuntimeHttpSmoke(`http://${publicIp}:${runtimePort}`);
+      await runRuntimeHttpSmokeForFlavor(`http://${publicIp}:${runtimePort}`, deploymentFlavor);
       await runOptionalTelegramSmoke();
     }
 
