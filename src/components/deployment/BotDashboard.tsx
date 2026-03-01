@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { DeploymentActions } from "@/components/deployment/DeploymentActions";
 import { deploymentModeDisplayName, normalizeDeploymentFlavor, normalizePlanTier } from "@/lib/plans";
 
@@ -48,7 +47,6 @@ function getStatusMeta(status: DeploymentSummary["status"]) {
 }
 
 export function BotDashboard({ deployments }: Props) {
-  const router = useRouter();
   const groups = useMemo<BotGroup[]>(() => {
     const byBot = new Map<string, DeploymentSummary[]>();
     for (const deployment of deployments) {
@@ -116,10 +114,6 @@ export function BotDashboard({ deployments }: Props) {
               key={group.name}
               type="button"
               onClick={() => {
-                if (preview.botDashboardUrl && preview.status === "ready") {
-                  router.push(preview.botDashboardUrl);
-                  return;
-                }
                 setSelectedBotName(group.name);
               }}
               style={{
