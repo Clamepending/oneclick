@@ -855,10 +855,27 @@ export async function processDeploymentJob(job: DeploymentJob) {
 
 export async function markDeploymentFailed(deploymentId: string, error: unknown) {
   const message = resolveErrorMessage(error);
-  await pool.query(
-    `UPDATE deployments SET status = 'failed', error = $1, updated_at = NOW() WHERE id = $2`,
+  const updated = await pool.query<{ status: string }>(
+    `UPDATE deployments
+     SET status = 'failed',
+         error = $1,
+         updated_at = NOW()
+     WHERE id = $2
+       AND status <> 'ready'
+     RETURNING status`,
     [message, deploymentId],
   );
+  if (updated.rowCount === 0) {
+    const current = await pool.query<{ status: string }>(
+      `SELECT status FROM deployments WHERE id = $1 LIMIT 1`,
+      [deploymentId],
+    );
+    const currentStatus = (current.rows[0]?.status || "").trim().toLowerCase();
+    if (currentStatus === "ready") {
+      await appendEvent(deploymentId, "ready", `Ignored stale failure after deployment reached ready: ${message}`);
+      return message;
+    }
+  }
   await appendEvent(deploymentId, "failed", message);
   return message;
 }
