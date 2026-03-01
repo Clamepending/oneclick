@@ -42,7 +42,7 @@ function getQueueConnection() {
 }
 
 function useAdvisoryLocks() {
-  const value = (process.env.DEPLOY_USE_ADVISORY_LOCKS ?? "false").trim().toLowerCase();
+  const value = (process.env.DEPLOY_USE_ADVISORY_LOCKS ?? "true").trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
@@ -560,6 +560,18 @@ export async function processDeploymentJob(job: DeploymentJob) {
     await appendEvent(job.deploymentId, "ready", "Skipping retry because deployment is already ready");
     return;
   }
+  if (existingStatus === "failed") {
+    await appendEvent(job.deploymentId, "failed", "Skipping retry because deployment is already failed");
+    return;
+  }
+  if (existingStatus && existingStatus !== "queued" && existingStatus !== "starting") {
+    await appendEvent(
+      job.deploymentId,
+      "starting",
+      `Skipping retry because deployment is in status "${existingStatus}"`,
+    );
+    return;
+  }
   await appendEvent(job.deploymentId, "starting", "Scheduling runtime host");
   const defaultProvider = resolveDefaultProvider();
 
@@ -608,28 +620,39 @@ export async function processDeploymentJob(job: DeploymentJob) {
      FROM deployments
      WHERE user_id = $1
        AND id <> $2
-       AND status IN ('ready', 'starting', 'failed')
+       AND status IN ('ready', 'starting')
        AND runtime_id IS NOT NULL`,
     [job.userId, job.deploymentId],
   );
 
   for (const previous of previousDeployments.rows) {
     if (!previous.runtime_id) continue;
-    await destroyUserRuntime({
-      runtimeId: previous.runtime_id,
-      deployProvider: previous.deploy_provider,
-      readyUrl: previous.ready_url,
-    });
+    let replacementReason = "Replaced by newer deployment";
+    try {
+      await destroyUserRuntime({
+        runtimeId: previous.runtime_id,
+        deployProvider: previous.deploy_provider,
+        readyUrl: previous.ready_url,
+      });
+    } catch (error) {
+      const cleanupError = resolveErrorMessage(error).slice(0, 300);
+      replacementReason = `Replaced by newer deployment (cleanup warning: ${cleanupError})`;
+      await appendEvent(
+        job.deploymentId,
+        "starting",
+        `Previous runtime cleanup warning for ${previous.id}: ${cleanupError}. Continuing with new deployment.`,
+      );
+    }
 
     await pool.query(
       `UPDATE deployments
        SET status = 'failed',
-           error = 'Replaced by newer deployment',
+           error = $2,
            updated_at = NOW()
        WHERE id = $1`,
-      [previous.id],
+      [previous.id, replacementReason],
     );
-    await appendEvent(previous.id, "failed", "Replaced by newer deployment");
+    await appendEvent(previous.id, "failed", replacementReason);
   }
 
   let host: Host | undefined;
