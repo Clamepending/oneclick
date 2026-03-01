@@ -114,16 +114,33 @@ function parseCsvSet(value: string) {
   );
 }
 
-function getRequiredWorkerFeature(
+type WorkerFeatureRequirement = {
+  feature: string;
+  label: string;
+};
+
+const BASE_WORKER_FEATURE: WorkerFeatureRequirement = {
+  feature: "deployment_strategy_v2",
+  label: "deployment strategy v2",
+};
+
+function getRequiredWorkerFeatures(
   selectedDeploymentFlavor: DeploymentFlavor,
-): { feature: string; label: string } | null {
+): WorkerFeatureRequirement[] {
+  const required: WorkerFeatureRequirement[] = [BASE_WORKER_FEATURE];
   if (selectedDeploymentFlavor === "ottoagent_free") {
-    return { feature: "ottoagent_free", label: "OttoAgent" };
+    required.push({ feature: "ottoagent_free", label: "OttoAgent" });
+  }
+  if (selectedDeploymentFlavor === "simple_agent_ottoauth_ecs") {
+    required.push({ feature: "simple_agent_ottoauth_ecs", label: "Simple Agent + OttoAuth (ECS)" });
   }
   if (selectedDeploymentFlavor === "simple_agent_ottoauth_ecs_canary") {
-    return { feature: "simple_agent_ottoauth_ecs_canary", label: "ECS canary" };
+    required.push({ feature: "simple_agent_ottoauth_ecs_canary", label: "ECS canary" });
   }
-  return null;
+  if (selectedDeploymentFlavor === "simple_agent_videomemory_free") {
+    required.push({ feature: "simple_agent_videomemory_free", label: "Simple Agent + VideoMemory" });
+  }
+  return required;
 }
 
 async function ensureQueueWorkerSupportsFlavor(input: {
@@ -131,15 +148,14 @@ async function ensureQueueWorkerSupportsFlavor(input: {
   queueInfo: QueueModeInfo;
 }) {
   if (!input.queueInfo.usable) return { ok: true as const };
-  const requiredFeature = getRequiredWorkerFeature(input.selectedDeploymentFlavor);
-  if (!requiredFeature) return { ok: true as const };
+  const requiredFeatures = getRequiredWorkerFeatures(input.selectedDeploymentFlavor);
 
   const region = readTrimmedEnv("AWS_REGION");
   if (!region) {
     return {
       ok: false as const,
       error:
-        `${requiredFeature.label} deployments require AWS_REGION so OneClick can verify queue worker compatibility.`,
+        "Deployments require AWS_REGION so OneClick can verify queue worker compatibility.",
     };
   }
 
@@ -154,20 +170,54 @@ async function ensureQueueWorkerSupportsFlavor(input: {
     const workerFeatures = parseCsvSet(
       config.Environment?.Variables?.DEPLOY_WORKER_FEATURES ?? "",
     );
-    if (workerFeatures.has(requiredFeature.feature) || workerFeatures.has("*")) {
-      return { ok: true as const };
+    const missingFeatures = requiredFeatures
+      .filter((item) => !workerFeatures.has(item.feature) && !workerFeatures.has("*"))
+      .map((item) => item.feature);
+    if (missingFeatures.length > 0) {
+      return {
+        ok: false as const,
+        error:
+          `Deployments are blocked because queue worker ${functionName} is outdated (missing DEPLOY_WORKER_FEATURES=${missingFeatures.join(",")}). Update the Lambda consumer and retry.`,
+      };
     }
-    return {
-      ok: false as const,
-      error:
-        `${requiredFeature.label} deployments are blocked because queue worker ${functionName} is outdated (missing DEPLOY_WORKER_FEATURES=${requiredFeature.feature}). Update the Lambda consumer and retry.`,
-    };
+
+    const configuredProviderRaw = (config.Environment?.Variables?.DEPLOY_PROVIDER ?? "").trim().toLowerCase();
+    const configuredProvider =
+      configuredProviderRaw === "mock" || configuredProviderRaw === "ssh" || configuredProviderRaw === "ecs"
+        ? configuredProviderRaw
+        : "ecs";
+
+    if (input.selectedDeploymentFlavor === "simple_agent_videomemory_free" && configuredProvider !== "ssh") {
+      return {
+        ok: false as const,
+        error:
+          `Simple Agent + VideoMemory currently requires DEPLOY_PROVIDER=ssh on queue worker ${functionName}, but it is ${configuredProviderRaw || "unset"}. Choose an ECS flavor or update the worker provider intentionally.`,
+      };
+    }
+    if (input.selectedDeploymentFlavor === "simple_agent_videomemory_free") {
+      const hasDoToken = Boolean((config.Environment?.Variables?.DO_API_TOKEN ?? "").trim());
+      const hasSshKey = Boolean((config.Environment?.Variables?.DEPLOY_SSH_PRIVATE_KEY ?? "").trim());
+      const hasRuntimeBaseDomain = Boolean((config.Environment?.Variables?.RUNTIME_BASE_DOMAIN ?? "").trim());
+      const missing: string[] = [];
+      if (!hasDoToken) missing.push("DO_API_TOKEN");
+      if (!hasSshKey) missing.push("DEPLOY_SSH_PRIVATE_KEY");
+      if (!hasRuntimeBaseDomain) missing.push("RUNTIME_BASE_DOMAIN");
+      if (missing.length > 0) {
+        return {
+          ok: false as const,
+          error:
+            `Simple Agent + VideoMemory is blocked because queue worker ${functionName} is missing required SSH runtime env vars: ${missing.join(", ")}.`,
+        };
+      }
+    }
+
+    return { ok: true as const };
   } catch (error) {
     const details = error instanceof Error ? error.message : String(error);
     return {
       ok: false as const,
       error:
-        `${requiredFeature.label} deployments are blocked because OneClick could not verify queue worker ${functionName}: ${details}`,
+        `Deployments are blocked because OneClick could not verify queue worker ${functionName}: ${details}`,
     };
   }
 }

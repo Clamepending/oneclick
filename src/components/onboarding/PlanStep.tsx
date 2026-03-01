@@ -60,7 +60,7 @@ export function PlanStep({ deploymentFlavor, onDeploymentFlavorChange, onDeploy,
         >
           <strong>Simple Agent + VideoMemory (Free)</strong>
           <p className="muted" style={{ marginBottom: 0 }}>
-            Deploys `simpleagent` and `videomemory` together on one VM.
+            Deploys `simpleagent` and `videomemory` together on one VM (legacy SSH runtime, not ECS).
           </p>
         </button>
         <button
