@@ -626,29 +626,478 @@ async function readResponseBody(response: Response) {
   }
 }
 
-async function requestRuntimeJson(input: {
+type RuntimeRequestInput = {
   baseUrl: string;
   path: string;
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: Record<string, unknown>;
-}) {
+  headers?: Record<string, string>;
+  timeoutMs?: number;
+};
+
+type RuntimeRequestResult = {
+  ok: boolean;
+  status: number;
+  body: Record<string, unknown>;
+};
+
+async function requestRuntimeJsonResult(input: RuntimeRequestInput): Promise<RuntimeRequestResult> {
   const url = new URL(input.path, input.baseUrl).toString();
   const response = await fetch(url, {
     method: input.method ?? "GET",
-    headers: input.body ? { "content-type": "application/json" } : undefined,
+    headers: {
+      ...(input.body ? { "content-type": "application/json" } : {}),
+      ...(input.headers ?? {}),
+    },
     body: input.body ? JSON.stringify(input.body) : undefined,
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(input.timeoutMs ?? 15_000),
   });
   const parsedBody = await readResponseBody(response);
-  if (!response.ok) {
-    const details = typeof parsedBody === "object" && parsedBody !== null
-      ? (parsedBody as { detail?: string; error?: string; raw?: string })
-      : {};
+  return {
+    ok: response.ok,
+    status: response.status,
+    body: (parsedBody ?? {}) as Record<string, unknown>,
+  };
+}
+
+function summarizeRuntimeErrorBody(body: Record<string, unknown>) {
+  const detail = typeof body.detail === "string" ? body.detail : "";
+  const error = typeof body.error === "string" ? body.error : "";
+  const raw = typeof body.raw === "string" ? body.raw : "";
+  return detail || error || raw || "request failed";
+}
+
+function summarizeRuntimePayload(body: Record<string, unknown>) {
+  const summary = summarizeRuntimeErrorBody(body);
+  if (summary !== "request failed") return summary;
+  return JSON.stringify(body).slice(0, 500);
+}
+
+function readPositiveIntEnv(name: string, fallback: number) {
+  const raw = readTrimmedEnv(name);
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
+function extractChatAssistantMessage(body: Record<string, unknown>) {
+  return String(body.assistant_message ?? "").trim();
+}
+
+function extractBotObjectFromPayload(body: Record<string, unknown>) {
+  const nested = body.bot;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    return nested as Record<string, unknown>;
+  }
+  return body;
+}
+
+function readHeartbeatIntervalFromBotPayload(body: Record<string, unknown>) {
+  const bot = extractBotObjectFromPayload(body);
+  const raw = bot.heartbeat_interval_s;
+  if (raw === null || raw === undefined || raw === "") return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.floor(parsed);
+}
+
+function defaultHeartbeatMarkdown() {
+  const configured = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_DEFAULT_HEARTBEAT_CONTENT");
+  if (configured) return configured;
+  return [
+    "# Daily Heartbeat",
+    "",
+    "- Review the last 24h conversation summary.",
+    "- Check pending follow-ups and high-priority tasks.",
+    "- If action is needed, post a short update with concrete next steps.",
+    "- If no action is needed, reply with `noop`.",
+  ].join("\n");
+}
+
+async function requestRuntimeJson(input: RuntimeRequestInput) {
+  const result = await requestRuntimeJsonResult(input);
+  if (!result.ok) {
     throw new Error(
-      `${input.method ?? "GET"} ${input.path} failed (${response.status}): ${details.detail || details.error || details.raw || "request failed"}`,
+      `${input.method ?? "GET"} ${input.path} failed (${result.status}): ${summarizeRuntimeErrorBody(result.body)}`,
     );
   }
-  return parsedBody ?? {};
+  return result.body;
+}
+
+function buildOttoAuthProbeHeaders() {
+  const token = readTrimmedEnv("OTTOAGENT_MCP_TOKEN");
+  const headers: Record<string, string> = {};
+  if (!token) return headers;
+  headers.authorization = `Bearer ${token}`;
+  headers["x-agent-gateway-auth-token"] = token;
+  headers["x-agent-gateway-token"] = token;
+  headers["x-gateway-token"] = token;
+  return headers;
+}
+
+function parseToolNamesFromObject(body: Record<string, unknown>) {
+  const names = new Set<string>();
+
+  const collect = (value: unknown) => {
+    if (!Array.isArray(value)) return;
+    for (const entry of value) {
+      if (!entry || typeof entry !== "object") continue;
+      const name = String((entry as { name?: unknown }).name ?? "").trim();
+      if (name) names.add(name);
+    }
+  };
+
+  collect(body.tools);
+  collect(body.mcp_tools);
+  const mcp = body.mcp;
+  if (mcp && typeof mcp === "object" && !Array.isArray(mcp)) {
+    collect((mcp as { tools?: unknown }).tools);
+  }
+
+  return [...names].sort();
+}
+
+type RuntimeToolProbeResult = {
+  endpoint: string;
+  toolNames: string[];
+};
+
+async function discoverRuntimeMcpTools(baseUrl: string): Promise<RuntimeToolProbeResult> {
+  const candidateEndpoints = [
+    "/api/mcp/status",
+    "/api/mcp/tools",
+    "/api/config/tools",
+    "/health",
+    "/healthz",
+  ];
+
+  let sawReachableEndpoint = false;
+  let lastStatus = 0;
+  for (const endpoint of candidateEndpoints) {
+    const response = await requestRuntimeJsonResult({
+      baseUrl,
+      path: endpoint,
+      method: "GET",
+    });
+    lastStatus = response.status;
+    if (response.status === 404) continue;
+    sawReachableEndpoint = true;
+    if (response.status >= 500) {
+      throw new Error(`GET ${endpoint} returned ${response.status} while probing MCP tools.`);
+    }
+    const toolNames = parseToolNamesFromObject(response.body);
+    if (toolNames.length > 0) {
+      return {
+        endpoint,
+        toolNames,
+      };
+    }
+  }
+
+  if (!sawReachableEndpoint) {
+    throw new Error("Could not locate an MCP tools endpoint on shared runtime (all probes returned 404).");
+  }
+  throw new Error(`MCP tools probe succeeded but returned no tools (lastStatus=${lastStatus}).`);
+}
+
+function isOttoAuthToolName(name: string) {
+  const normalized = name.trim().toLowerCase();
+  return normalized.includes("ottoauth") || normalized.includes("ottoagent");
+}
+
+async function enableOttoAuthToolsByDefaultOnSharedRuntime(input: {
+  runtimeBaseUrl: string;
+}) {
+  // Try the newer microservices config endpoint first.
+  const mcpConfigToggle = await requestRuntimeJsonResult({
+    baseUrl: input.runtimeBaseUrl,
+    path: "/api/mcp/config",
+    method: "POST",
+    body: {
+      enabled: true,
+      mcp_enabled: true,
+    },
+  });
+  if (!mcpConfigToggle.ok && mcpConfigToggle.status !== 404) {
+    throw new Error(
+      `POST /api/mcp/config failed (${mcpConfigToggle.status}): ${summarizeRuntimePayload(mcpConfigToggle.body)}`,
+    );
+  }
+
+  const toolProbe = await discoverRuntimeMcpTools(input.runtimeBaseUrl);
+  const ottoAuthTools = toolProbe.toolNames.filter((name) => isOttoAuthToolName(name));
+  if (ottoAuthTools.length === 0) {
+    throw new Error(
+      `Cannot default-enable OttoAuth tools: no ottoauth/ottoagent tools detected on ${toolProbe.endpoint}.`,
+    );
+  }
+
+  const toolMap: Record<string, boolean> = {};
+  for (const toolName of ottoAuthTools) {
+    toolMap[toolName] = true;
+  }
+
+  // Legacy/simpleagent-compatible endpoint.
+  const configUpdateLegacy = await requestRuntimeJsonResult({
+    baseUrl: input.runtimeBaseUrl,
+    path: "/api/config/tools",
+    method: "POST",
+    body: {
+      mcp_enabled: true,
+      mcp_tools: toolMap,
+    },
+  });
+  if (!configUpdateLegacy.ok && configUpdateLegacy.status !== 404) {
+    throw new Error(
+      `POST /api/config/tools failed (${configUpdateLegacy.status}): ${summarizeRuntimePayload(configUpdateLegacy.body)}`,
+    );
+  }
+
+  // Newer microservices endpoint can also accept tool toggles.
+  const configUpdateMcp = await requestRuntimeJsonResult({
+    baseUrl: input.runtimeBaseUrl,
+    path: "/api/mcp/config",
+    method: "POST",
+    body: {
+      enabled: true,
+      mcp_enabled: true,
+      mcp_tools: toolMap,
+    },
+  });
+  if (!configUpdateMcp.ok && configUpdateMcp.status !== 404) {
+    throw new Error(
+      `POST /api/mcp/config (tool map) failed (${configUpdateMcp.status}): ${summarizeRuntimePayload(configUpdateMcp.body)}`,
+    );
+  }
+
+  const configured = configUpdateLegacy.ok || configUpdateMcp.ok;
+
+  return {
+    toolsEndpoint: toolProbe.endpoint,
+    ottoAuthToolCount: ottoAuthTools.length,
+    configured,
+    reason: configured ? ("updated" as const) : ("config_endpoint_missing" as const),
+  };
+}
+
+async function ensureDefaultMicroservicesHeartbeat(input: {
+  runtimeBaseUrl: string;
+  runtimeBotId: string;
+}) {
+  const defaultIntervalS = readPositiveIntEnv(
+    "SIMPLE_AGENT_MICROSERVICES_DEFAULT_HEARTBEAT_INTERVAL_S",
+    24 * 60 * 60,
+  );
+  const defaultContent = defaultHeartbeatMarkdown();
+  let updatedInterval = false;
+  let updatedContent = false;
+
+  const botResponse = await requestRuntimeJsonResult({
+    baseUrl: input.runtimeBaseUrl,
+    path: `/api/bots/${encodeURIComponent(input.runtimeBotId)}`,
+    method: "GET",
+  });
+  if (!botResponse.ok) {
+    throw new Error(
+      `GET /api/bots/${input.runtimeBotId} failed (${botResponse.status}): ${summarizeRuntimePayload(botResponse.body)}`,
+    );
+  }
+  const existingInterval = readHeartbeatIntervalFromBotPayload(botResponse.body);
+  if (existingInterval === null || existingInterval <= 0) {
+    const configUpdate = await requestRuntimeJsonResult({
+      baseUrl: input.runtimeBaseUrl,
+      path: `/api/bots/${encodeURIComponent(input.runtimeBotId)}/config`,
+      method: "POST",
+      body: {
+        heartbeat_interval_s: defaultIntervalS,
+      },
+    });
+    if (!configUpdate.ok) {
+      throw new Error(
+        `POST /api/bots/${input.runtimeBotId}/config failed (${configUpdate.status}): ${summarizeRuntimePayload(configUpdate.body)}`,
+      );
+    }
+    updatedInterval = true;
+  }
+
+  const contextResponse = await requestRuntimeJsonResult({
+    baseUrl: input.runtimeBaseUrl,
+    path: `/api/bots/${encodeURIComponent(input.runtimeBotId)}/context`,
+    method: "GET",
+  });
+  if (!contextResponse.ok) {
+    throw new Error(
+      `GET /api/bots/${input.runtimeBotId}/context failed (${contextResponse.status}): ${summarizeRuntimePayload(contextResponse.body)}`,
+    );
+  }
+  const filesRaw = contextResponse.body.files;
+  const files =
+    filesRaw && typeof filesRaw === "object" && !Array.isArray(filesRaw)
+      ? (filesRaw as Record<string, unknown>)
+      : {};
+  const heartbeatDoc = String(files["HEARTBEAT.md"] ?? "").trim();
+  if (!heartbeatDoc) {
+    const contextUpdate = await requestRuntimeJsonResult({
+      baseUrl: input.runtimeBaseUrl,
+      path: `/api/bots/${encodeURIComponent(input.runtimeBotId)}/context/HEARTBEAT.md`,
+      method: "POST",
+      body: {
+        content: defaultContent,
+      },
+    });
+    if (!contextUpdate.ok) {
+      throw new Error(
+        `POST /api/bots/${input.runtimeBotId}/context/HEARTBEAT.md failed (${contextUpdate.status}): ${summarizeRuntimePayload(contextUpdate.body)}`,
+      );
+    }
+    updatedContent = true;
+  }
+
+  return {
+    heartbeatIntervalS: existingInterval && existingInterval > 0 ? existingInterval : defaultIntervalS,
+    updatedInterval,
+    updatedContent,
+  };
+}
+
+function selectSafeOttoAuthProbeTool(toolNames: string[]) {
+  const prioritizedPatterns = [
+    /list[_-]?services/,
+    /http[_-]?request/,
+    /refresh[_-]?tools/,
+  ];
+  for (const pattern of prioritizedPatterns) {
+    const match = toolNames.find((name) => pattern.test(name.toLowerCase()));
+    if (!match) continue;
+    if (/http[_-]?request/i.test(match)) {
+      return { tool: match, arguments: { method: "GET", path: "/api/services" } as Record<string, unknown> };
+    }
+    return { tool: match, arguments: {} as Record<string, unknown> };
+  }
+  return null;
+}
+
+async function validateSharedMicroservicesOttoAuthRuntime(input: {
+  runtimeBaseUrl: string;
+  runtimeUserId: string;
+  runtimeBotId: string;
+}) {
+  const callbackProbe = await requestRuntimeJsonResult({
+    baseUrl: input.runtimeBaseUrl,
+    path: "/hooks/ottoauth",
+    method: "POST",
+    body: {
+      source: "oneclick_runtime_probe",
+      message: "oneclick shared runtime callback probe",
+      event_id: `probe-${Date.now()}`,
+    },
+    headers: buildOttoAuthProbeHeaders(),
+    timeoutMs: 10_000,
+  });
+  if (callbackProbe.status === 404) {
+    throw new Error("Shared runtime is missing /hooks/ottoauth callback route (received 404).");
+  }
+  if (!callbackProbe.ok) {
+    throw new Error(
+      `Shared runtime callback probe failed (${callbackProbe.status}): ${summarizeRuntimePayload(callbackProbe.body)}`,
+    );
+  }
+
+  const toolProbe = await discoverRuntimeMcpTools(input.runtimeBaseUrl);
+  const ottoAuthTools = toolProbe.toolNames.filter((name) => isOttoAuthToolName(name));
+  if (ottoAuthTools.length === 0) {
+    throw new Error(
+      `Shared runtime MCP tools from ${toolProbe.endpoint} do not include OttoAuth entries. ` +
+      `Detected tools: ${toolProbe.toolNames.slice(0, 8).join(", ") || "none"}.`,
+    );
+  }
+
+  const safeToolProbe = selectSafeOttoAuthProbeTool(ottoAuthTools);
+  if (!safeToolProbe) {
+    return {
+      callbackStatus: callbackProbe.status,
+      toolsEndpoint: toolProbe.endpoint,
+      ottoAuthToolCount: ottoAuthTools.length,
+      probeTool: null as string | null,
+    };
+  }
+
+  const sessionId = `hook:mcp-probe-${Date.now()}`;
+  const toolListChat = await requestRuntimeJsonResult({
+    baseUrl: input.runtimeBaseUrl,
+    path: "/api/chat",
+    method: "POST",
+    body: {
+      bot_id: input.runtimeBotId,
+      user_id: input.runtimeUserId,
+      session_id: sessionId,
+      message: "/mcp tools",
+      wait_for_response: true,
+      timeout_s: 60,
+    },
+  });
+  if (!toolListChat.ok) {
+    throw new Error(
+      `MCP chat tools probe failed (${toolListChat.status}): ${summarizeRuntimePayload(toolListChat.body)}`,
+    );
+  }
+  const toolsProbeStatus = String(toolListChat.body.status ?? "").trim().toLowerCase();
+  const toolsProbeMessage = extractChatAssistantMessage(toolListChat.body);
+  if (toolsProbeStatus !== "completed" || !toolsProbeMessage) {
+    throw new Error(
+      `MCP chat tools probe did not complete: status=${toolsProbeStatus || "unknown"} payload=${summarizeRuntimePayload(toolListChat.body)}`,
+    );
+  }
+  if (!toolsProbeMessage.toLowerCase().includes("mcp tools")) {
+    throw new Error(
+      `MCP chat tools probe returned unexpected output: ${toolsProbeMessage.slice(0, 300)}`,
+    );
+  }
+
+  const rawArgs = JSON.stringify(safeToolProbe.arguments ?? {});
+  const toolCallChat = await requestRuntimeJsonResult({
+    baseUrl: input.runtimeBaseUrl,
+    path: "/api/chat",
+    method: "POST",
+    body: {
+      bot_id: input.runtimeBotId,
+      user_id: input.runtimeUserId,
+      session_id: sessionId,
+      message: `/mcp call ${safeToolProbe.tool} ${rawArgs}`,
+      wait_for_response: true,
+      timeout_s: 75,
+    },
+  });
+  if (!toolCallChat.ok) {
+    throw new Error(
+      `MCP probe tool ${safeToolProbe.tool} chat call failed (${toolCallChat.status}): ${summarizeRuntimePayload(toolCallChat.body)}`,
+    );
+  }
+  const toolCallStatus = String(toolCallChat.body.status ?? "").trim().toLowerCase();
+  const toolCallMessage = extractChatAssistantMessage(toolCallChat.body);
+  if (toolCallStatus !== "completed" || !toolCallMessage) {
+    throw new Error(
+      `MCP probe tool ${safeToolProbe.tool} did not complete: status=${toolCallStatus || "unknown"} payload=${summarizeRuntimePayload(toolCallChat.body)}`,
+    );
+  }
+  const normalizedMessage = toolCallMessage.toLowerCase();
+  if (
+    normalizedMessage.includes("mcp tool call failed") ||
+    normalizedMessage.includes("unknown mcp command") ||
+    normalizedMessage.includes("usage: /mcp call")
+  ) {
+    throw new Error(
+      `MCP probe tool ${safeToolProbe.tool} failed via chat: ${toolCallMessage.slice(0, 300)}`,
+    );
+  }
+
+  return {
+    callbackStatus: callbackProbe.status,
+    toolsEndpoint: toolProbe.endpoint,
+    ottoAuthToolCount: ottoAuthTools.length,
+    probeTool: safeToolProbe.tool,
+  };
 }
 
 async function bootstrapSimpleAgentMicroservicesRuntime(input: {
@@ -852,8 +1301,9 @@ export async function processDeploymentJob(job: DeploymentJob) {
     runtime_id: string | null;
     deploy_provider: string | null;
     ready_url: string | null;
+    host_name: string | null;
   }>(
-    `SELECT id, runtime_id, deploy_provider, ready_url
+    `SELECT id, runtime_id, deploy_provider, ready_url, host_name
      FROM deployments
      WHERE user_id = $1
        AND id <> $2
@@ -870,6 +1320,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
         runtimeId: previous.runtime_id,
         deployProvider: previous.deploy_provider,
         readyUrl: previous.ready_url,
+        hostName: previous.host_name,
       });
     } catch (error) {
       const cleanupError = resolveErrorMessage(error).slice(0, 300);
@@ -1094,6 +1545,40 @@ export async function processDeploymentJob(job: DeploymentJob) {
       "starting",
       `Runtime bootstrap complete (user=${bootstrap.runtimeUserId} bot=${bootstrap.runtimeBotId})`,
     );
+    await appendEvent(job.deploymentId, "starting", "Ensuring default heartbeat schedule is set (24h)");
+    const heartbeatSetup = await ensureDefaultMicroservicesHeartbeat({
+      runtimeBaseUrl: resolveRuntimeBaseUrl(bootstrap.autoConnectUrl),
+      runtimeBotId: bootstrap.runtimeBotId,
+    });
+    await appendEvent(
+      job.deploymentId,
+      "starting",
+      `Heartbeat default check complete (interval=${heartbeatSetup.heartbeatIntervalS}s${heartbeatSetup.updatedInterval ? ", interval_updated" : ""}${heartbeatSetup.updatedContent ? ", doc_updated" : ""})`,
+    );
+    if (deploymentFlavor === "simple_agent_microservices_shared") {
+      await appendEvent(job.deploymentId, "starting", "Ensuring OttoAuth MCP tools are enabled by default");
+      const defaultEnable = await enableOttoAuthToolsByDefaultOnSharedRuntime({
+        runtimeBaseUrl: resolveRuntimeBaseUrl(bootstrap.autoConnectUrl),
+      });
+      await appendEvent(
+        job.deploymentId,
+        "starting",
+        defaultEnable.configured
+          ? `Default-enabled OttoAuth MCP tools (${defaultEnable.ottoAuthToolCount}) via shared MCP config endpoint`
+          : `Shared runtime does not expose tool config endpoints; continuing with runtime defaults (${defaultEnable.ottoAuthToolCount} OttoAuth tools discovered via ${defaultEnable.toolsEndpoint})`,
+      );
+      await appendEvent(job.deploymentId, "starting", "Validating OttoAuth MCP tools + callback wiring on shared runtime");
+      const validation = await validateSharedMicroservicesOttoAuthRuntime({
+        runtimeBaseUrl: resolveRuntimeBaseUrl(bootstrap.autoConnectUrl),
+        runtimeUserId: bootstrap.runtimeUserId,
+        runtimeBotId: bootstrap.runtimeBotId,
+      });
+      await appendEvent(
+        job.deploymentId,
+        "starting",
+        `Shared OttoAuth MCP validation passed (callback=${validation.callbackStatus} tools=${validation.ottoAuthToolCount} endpoint=${validation.toolsEndpoint}${validation.probeTool ? ` probeTool=${validation.probeTool}` : ""})`,
+      );
+    }
   }
   if (deploymentFlavor === "ottoagent_free") {
     await appendEvent(job.deploymentId, "starting", "Validating OttoAgent MCP runtime wiring");
@@ -1143,6 +1628,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
         runtimeId: runtime.runtimeId,
         deployProvider: runtime.deployProvider,
         readyUrl: runtime.readyUrl,
+        hostName: runtime.hostName,
       }).catch(() => {});
     } else if (dedicatedVmId) {
       await destroyDedicatedVm(dedicatedVmId).catch(() => {});

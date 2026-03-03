@@ -72,6 +72,7 @@ type DestroyInput = {
   runtimeId: string;
   deployProvider: string | null;
   readyUrl?: string | null;
+  hostName?: string | null;
 };
 
 function sanitizeSegment(value: string) {
@@ -623,6 +624,24 @@ function parseEcsRuntimeId(runtimeId: string) {
   return { cluster: split[0], serviceName: split[1] };
 }
 
+function parseDedicatedVmIdFromHostName(hostName: string | null | undefined) {
+  const normalized = (hostName ?? "").trim();
+  if (!normalized) return null;
+  const match = normalized.match(/^(?:lightsail-vm|do-vm)-(\d+)$/);
+  return match?.[1] ?? null;
+}
+
+function resolveRuntimeDestroyProvider(deployProvider: string | null | undefined, runtimeId: string) {
+  const normalized = (deployProvider ?? "").trim().toLowerCase();
+  if (normalized === "ssh" || normalized === "ecs" || normalized === "shared" || normalized === "mock") {
+    return normalized;
+  }
+  if (runtimeId.startsWith("ssh:")) return "ssh";
+  if (runtimeId.startsWith("ecs:")) return "ecs";
+  if (runtimeId.startsWith("shared:")) return "shared";
+  return normalized;
+}
+
 function isIgnorableEcsDeleteError(error: unknown) {
   if (!error || typeof error !== "object") return false;
   const name = String((error as { name?: unknown }).name ?? "").toLowerCase();
@@ -679,7 +698,7 @@ const RAW_PATH = process.env.OTTOAGENT_MCP_PATH || "/mcp";
 const MCP_PATH = RAW_PATH.startsWith("/") ? RAW_PATH : "/" + RAW_PATH;
 const BASE_URL = (process.env.OTTOAUTH_BASE_URL || process.env.OTTOAGENT_BASE_URL || "https://ottoauth.vercel.app").replace(/\\/$/, "");
 const AUTH_TOKEN = process.env.OTTOAUTH_TOKEN || process.env.OTTOAGENT_TOKEN || "";
-const REFRESH_INTERVAL_MS = Number(process.env.OTTOAGENT_MCP_REFRESH_MS || String(60 * 60 * 1000));
+const REFRESH_INTERVAL_MS = Number(process.env.OTTOAGENT_MCP_REFRESH_MS || String(24 * 60 * 60 * 1000));
 const HTTP_TIMEOUT_MS = Number(process.env.OTTOAGENT_MCP_HTTP_TIMEOUT_MS || "30000");
 const VALID_HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 
@@ -2315,30 +2334,43 @@ export async function launchUserContainer(input: LaunchInput) {
 }
 
 export async function destroyUserRuntime(input: DestroyInput) {
-  const provider = (input.deployProvider ?? "").trim();
+  const provider = resolveRuntimeDestroyProvider(input.deployProvider, input.runtimeId);
   if (provider === "ssh") {
     const parsed = parseSshRuntimeId(input.runtimeId);
-    if (!parsed) {
-      throw new Error("Invalid ssh runtime id format.");
-    }
-    let dockerCleanupError: Error | null = null;
-    try {
-      await runSshCommand(
-        parsed.sshTarget,
-        `if command -v docker >/dev/null 2>&1; then docker rm -f "${parsed.containerName}" "${buildVideoMemoryContainerName(parsed.containerName)}" "${buildOttoAgentMcpContainerName(parsed.containerName)}" >/dev/null 2>&1 || true; fi`,
-      );
-    } catch (error) {
-      dockerCleanupError = error instanceof Error ? error : new Error(String(error));
-    }
-    if (parsed.vmId) {
+    const vmId = parsed?.vmId ?? parseDedicatedVmIdFromHostName(input.hostName);
+
+    if (parsed) {
+      let dockerCleanupError: Error | null = null;
+      try {
+        await runSshCommand(
+          parsed.sshTarget,
+          `if command -v docker >/dev/null 2>&1; then docker rm -f "${parsed.containerName}" "${buildVideoMemoryContainerName(parsed.containerName)}" "${buildOttoAgentMcpContainerName(parsed.containerName)}" >/dev/null 2>&1 || true; fi`,
+        );
+      } catch (error) {
+        dockerCleanupError = error instanceof Error ? error : new Error(String(error));
+      }
+      if (vmId) {
+        await deleteRuntimeDnsRecordByHost(hostNameFromReadyUrl(input.readyUrl)).catch(() => {});
+        await destroyDedicatedVm(vmId);
+        return;
+      }
+      if (dockerCleanupError) {
+        throw dockerCleanupError;
+      }
       await deleteRuntimeDnsRecordByHost(hostNameFromReadyUrl(input.readyUrl)).catch(() => {});
-      await destroyDedicatedVm(parsed.vmId);
       return;
     }
-    if (dockerCleanupError) {
-      throw dockerCleanupError;
+
+    if (vmId) {
+      await deleteRuntimeDnsRecordByHost(hostNameFromReadyUrl(input.readyUrl)).catch(() => {});
+      await destroyDedicatedVm(vmId);
+      return;
     }
-    await deleteRuntimeDnsRecordByHost(hostNameFromReadyUrl(input.readyUrl)).catch(() => {});
+
+    throw new Error("Invalid ssh runtime id format.");
+  }
+  if (provider === "shared") {
+    // Shared runtimes are intentionally reused and not deleted per deployment.
     return;
   }
   if (provider === "ecs") {

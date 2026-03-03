@@ -69,10 +69,13 @@ Deployment flavors in onboarding:
 Simple Agent Microservices flavor env knobs:
 
 - required images: `SIMPLE_AGENT_MICROSERVICES_FRONTEND_IMAGE`, `SIMPLE_AGENT_MICROSERVICES_GATEWAY_IMAGE`, `SIMPLE_AGENT_MICROSERVICES_EXECUTION_IMAGE`, `SIMPLE_AGENT_MICROSERVICES_POST_IMAGE`
-- optional images/config: `SIMPLE_AGENT_MICROSERVICES_REDIS_IMAGE`, `SIMPLE_AGENT_MICROSERVICES_POSTGRES_IMAGE`, `SIMPLE_AGENT_MICROSERVICES_MCP_IMAGE`
+- optional images/config: `SIMPLE_AGENT_MICROSERVICES_REDIS_IMAGE`, `SIMPLE_AGENT_MICROSERVICES_POSTGRES_IMAGE`
+- OttoAuth MCP sidecar image/config (required for shared OttoAuth compatibility): `SIMPLE_AGENT_MICROSERVICES_MCP_IMAGE`, `SIMPLE_AGENT_MICROSERVICES_MCP_TOOL_SERVICE_URL`, `SIMPLE_AGENT_MICROSERVICES_MCP_AUTO_OFF_IDLE_S`, `SIMPLE_AGENT_MICROSERVICES_MCP_LOOP_INTERVAL_S`
 - optional runtime sizing: `SIMPLE_AGENT_MICROSERVICES_TASK_CPU`, `SIMPLE_AGENT_MICROSERVICES_TASK_MEMORY`
 - optional runtime behavior: `SIMPLE_AGENT_MICROSERVICES_FRONTEND_PORT` (default `18789`), `SIMPLE_AGENT_MICROSERVICES_HEALTH_PATH`, `SIMPLE_AGENT_MICROSERVICES_TELEGRAM_API_BASE`
 - shared runtime flavor: set `SIMPLE_AGENT_MICROSERVICES_SHARED_RUNTIME_ID` (recommended, `ecs:<cluster>|<service>`) or `SIMPLE_AGENT_MICROSERVICES_SHARED_BASE_URL`
+- default heartbeat bootstrap for microservices flavors: `SIMPLE_AGENT_MICROSERVICES_DEFAULT_HEARTBEAT_INTERVAL_S` (default `86400`, 24h), optional `SIMPLE_AGENT_MICROSERVICES_DEFAULT_HEARTBEAT_CONTENT`
+- OttoAuth MCP integration for shared flavor uses `OTTOAGENT_MCP_BASE_URL` (default `https://ottoauth.vercel.app`) and `OTTOAGENT_MCP_TOKEN`; shared deployments default-enable discovered OttoAuth MCP tools and validate tool discovery + callback route before marking deployment ready.
 
 OttoAgent flavor env knobs:
 
@@ -81,7 +84,7 @@ OttoAgent flavor env knobs:
 - `OTTOAGENT_MODEL` / `OTTOAGENT_LLM_URL`
 - `OTTOAGENT_MCP_IMAGE` / `OTTOAGENT_MCP_BUILD_ON_HOST` / `OTTOAGENT_MCP_BUILD_REPO`
 - `OTTOAGENT_MCP_PORT` / `OTTOAGENT_MCP_PATH` / `OTTOAGENT_MCP_START_COMMAND`
-- optional passthroughs for MCP container auth/config: `OTTOAGENT_MCP_BASE_URL`, `OTTOAGENT_MCP_TOKEN`
+- optional passthroughs for MCP container auth/config: `OTTOAGENT_MCP_BASE_URL`, `OTTOAGENT_MCP_TOKEN`, `OTTOAGENT_MCP_REFRESH_MS` (default `86400000`, 24h heartbeat/refresh)
 - `OTTOAGENT_MCP_BUILD_REPO` is optional; if omitted, OneClick builds a built-in OttoAuth MCP HTTP bridge image.
   - Built-in bridge behavior: keeps `ottoauth_list_services` / `ottoauth_get_service` / `ottoauth_http_request`, auto-discovers endpoint-specific OttoAuth tools from docs, and returns structured HTTP failure payloads (status/url/body) instead of generic RPC errors.
 
@@ -142,7 +145,7 @@ Deploying app code does not automatically update the SQS Lambda consumer bundle.
 npm run aws:deploy-worker
 ```
 
-This updates `oneclick-sqs-deploy-consumer` code and stamps `DEPLOY_WORKER_FEATURES` so app can block unsupported deployment flavors (for example `simple_agent_microservices_ecs`, `ottoagent_free`, and `simple_agent_ottoauth_ecs_canary`) instead of silently launching partial runtimes.
+This updates `oneclick-sqs-deploy-consumer` code and stamps `DEPLOY_WORKER_FEATURES` so app can block unsupported deployment flavors (for example `simple_agent_microservices_ecs`, `simple_agent_microservices_shared_ottoauth`, `ottoagent_free`, and `simple_agent_ottoauth_ecs_canary`) instead of silently launching partial runtimes.
 
 ### ECS runtime smoke test (recommended)
 
@@ -164,6 +167,33 @@ Optional Telegram probe validation (helps catch runtime Telegram regressions):
 
 ```bash
 ECS_SMOKE_TELEGRAM_TOKEN=<your-bot-token> npm run aws:smoke
+```
+
+### Shared Microservices OttoAuth smoke test (recommended)
+
+Use this after shared-runtime or OttoAuth MCP changes:
+
+```bash
+npm run aws:smoke:shared-ottoauth
+```
+
+Optional overrides:
+
+```bash
+# direct runtime URL override (otherwise uses SIMPLE_AGENT_MICROSERVICES_SHARED_* env)
+ECS_SHARED_OTTOAUTH_SMOKE_BASE_URL=https://runtime.example.com \
+npm run aws:smoke:shared-ottoauth
+
+# include mutating endpoint-tools in smoke run (default: false / skip mutating)
+ECS_SHARED_OTTOAUTH_SMOKE_ALLOW_MUTATING_TOOLS=true \
+npm run aws:smoke:shared-ottoauth
+```
+
+If your shared runtime is missing the `mcp-tool-service` sidecar, build/push and roll it in-place:
+
+```bash
+npm run aws:build:mcp-tool-service
+npm run aws:shared:mcp:ensure
 ```
 
 ### Optional AWS Budget Alerts

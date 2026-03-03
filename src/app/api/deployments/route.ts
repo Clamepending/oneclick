@@ -133,6 +133,7 @@ function getRequiredWorkerFeatures(
   }
   if (selectedDeploymentFlavor === "simple_agent_microservices_shared") {
     required.push({ feature: "simple_agent_microservices_shared", label: "Simple Agent Microservices (Shared)" });
+    required.push({ feature: "simple_agent_microservices_shared_ottoauth", label: "Shared OttoAuth MCP validation" });
   }
   if (selectedDeploymentFlavor === "ottoagent_free") {
     required.push({ feature: "ottoagent_free", label: "OttoAgent" });
@@ -284,8 +285,8 @@ async function cleanupDeploymentRuntime(input: {
       runtimeId: input.runtime_id,
       deployProvider: input.deploy_provider,
       readyUrl: input.ready_url,
+      hostName: input.host_name,
     });
-    return;
   }
   const vmId = parseDedicatedVmId(input.host_name);
   if (!vmId) return;
