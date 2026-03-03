@@ -110,6 +110,14 @@ function parseCsvEnv(name: string, required = true) {
   return parsed;
 }
 
+function readBoolEnv(name: string, fallback = false) {
+  const value = readTrimmedEnv(name).toLowerCase();
+  if (!value) return fallback;
+  if (["1", "true", "yes", "on"].includes(value)) return true;
+  if (["0", "false", "no", "off"].includes(value)) return false;
+  return fallback;
+}
+
 function buildAwsConfigWithTrimmedCreds(region: string): ECSClientConfig {
   const accessKeyId = readTrimmedEnv("AWS_ACCESS_KEY_ID");
   const secretAccessKey = readTrimmedEnv("AWS_SECRET_ACCESS_KEY");
@@ -191,6 +199,7 @@ async function ensureEcsAlbRouting(input: {
   serviceName: string;
   containerName: string;
   containerPort: number;
+  healthCheckPath?: string | null;
 }) {
   const alb = getEcsAlbConfig();
   if (!alb.enabled) return null;
@@ -199,6 +208,10 @@ async function ensureEcsAlbRouting(input: {
   const client = new ElasticLoadBalancingV2Client(buildAwsConfigWithTrimmedCreds(input.region));
   const targetGroupName = buildEcsAlbTargetGroupName(input.serviceName);
   const hostName = buildEcsAlbHostName(input.serviceName, alb.baseDomain);
+
+  const healthCheckPath =
+    input.healthCheckPath?.trim() ||
+    alb.healthCheckPath;
 
   let targetGroupArn: string | null = null;
   try {
@@ -221,7 +234,7 @@ async function ensureEcsAlbRouting(input: {
         HealthCheckProtocol: "HTTP",
         HealthCheckPort: "traffic-port",
         HealthCheckEnabled: true,
-        HealthCheckPath: alb.healthCheckPath,
+        HealthCheckPath: healthCheckPath,
         Matcher: { HttpCode: alb.healthCheckMatcher },
       }),
     );
@@ -1608,6 +1621,7 @@ async function launchViaEcs(input: LaunchInput) {
     : "ENABLED";
   const deploymentFlavor = normalizeDeploymentFlavor(input.deploymentFlavor);
   const isOpenClawRuntime = deploymentFlavor === "deploy_openclaw_free";
+  const isSimpleAgentMicroservicesEcs = deploymentFlavor === "simple_agent_microservices_ecs";
   const isSimpleAgentWithOttoAuthEcs = isOttoAuthEcsFlavor(deploymentFlavor);
   const image = getRuntimeImage(deploymentFlavor);
   const gatewayToken = getGatewayToken();
@@ -1625,7 +1639,9 @@ async function launchViaEcs(input: LaunchInput) {
   const platformVersion = readTrimmedEnv("ECS_PLATFORM_VERSION");
   const serviceName = `${servicePrefix}-${sanitizeNamePart(input.userId, 16)}-${sanitizeNamePart(input.deploymentId, 10)}`.slice(0, 63);
   const family = `${servicePrefix}-${sanitizeNamePart(input.userId, 18)}-${sanitizeNamePart(input.deploymentId, 12)}`.slice(0, 255);
-  const containerName = readTrimmedEnv("ECS_CONTAINER_NAME") || "openclaw";
+  const containerName = isSimpleAgentMicroservicesEcs
+    ? (readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_FRONTEND_CONTAINER_NAME") || "frontend-service")
+    : (readTrimmedEnv("ECS_CONTAINER_NAME") || "openclaw");
   const awslogsGroup = readTrimmedEnv("ECS_LOG_GROUP");
   const awslogsPrefix = readTrimmedEnv("ECS_LOG_STREAM_PREFIX") || "oneclick";
   const telemetryEnv = readTrimmedEnv("OPENCLAW_TELEMETRY");
@@ -1665,6 +1681,295 @@ async function launchViaEcs(input: LaunchInput) {
     efsTransitEncryption === "DISABLED" ? "DISABLED" : "ENABLED";
   const configVolumeName = "openclaw-data";
   const ecsClient = new ECSClient(buildAwsConfigWithTrimmedCreds(region));
+  const resolveLogConfiguration = (suffix: string) =>
+    awslogsGroup
+      ? {
+          logDriver: "awslogs" as const,
+          options: {
+            "awslogs-group": awslogsGroup,
+            "awslogs-region": region,
+            "awslogs-stream-prefix": suffix ? `${awslogsPrefix}-${suffix}` : awslogsPrefix,
+          },
+        }
+      : undefined;
+
+  if (isSimpleAgentMicroservicesEcs) {
+    const gatewayImage = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_GATEWAY_IMAGE");
+    const executionImage = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_EXECUTION_IMAGE");
+    const postImage = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_POST_IMAGE");
+    const missingImages = [
+      !image ? "SIMPLE_AGENT_MICROSERVICES_FRONTEND_IMAGE" : "",
+      !gatewayImage ? "SIMPLE_AGENT_MICROSERVICES_GATEWAY_IMAGE" : "",
+      !executionImage ? "SIMPLE_AGENT_MICROSERVICES_EXECUTION_IMAGE" : "",
+      !postImage ? "SIMPLE_AGENT_MICROSERVICES_POST_IMAGE" : "",
+    ].filter(Boolean);
+    if (missingImages.length > 0) {
+      throw new Error(`Missing microservices image env vars: ${missingImages.join(", ")}`);
+    }
+
+    const redisImage = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_REDIS_IMAGE") || "redis:7-alpine";
+    const postgresImage = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_POSTGRES_IMAGE") || "postgres:16-alpine";
+    const mcpImage = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_MCP_IMAGE");
+    const telegramMockEnabled = readBoolEnv("SIMPLE_AGENT_MICROSERVICES_TELEGRAM_MOCK_ENABLED", false);
+    const telegramMockImage = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_TELEGRAM_MOCK_IMAGE");
+    if (telegramMockEnabled && !telegramMockImage) {
+      throw new Error("SIMPLE_AGENT_MICROSERVICES_TELEGRAM_MOCK_ENABLED=true requires SIMPLE_AGENT_MICROSERVICES_TELEGRAM_MOCK_IMAGE.");
+    }
+
+    const postgresUser = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_POSTGRES_USER") || "simpleagent";
+    const postgresPassword = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_POSTGRES_PASSWORD") || "simpleagent";
+    const postgresDb = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_POSTGRES_DB") || "simpleagent";
+    const postDatabaseUrl = `postgresql://${encodeURIComponent(postgresUser)}:${encodeURIComponent(postgresPassword)}@127.0.0.1:5432/${encodeURIComponent(postgresDb)}`;
+
+    const microservicesTaskCpu = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_TASK_CPU") || cpu;
+    const microservicesTaskMemory = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_TASK_MEMORY") || memory;
+    const microservicesHealthPath = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_HEALTH_PATH") || "/health";
+
+    const simpleAgentModel = readTrimmedEnv("SIMPLE_AGENT_MODEL") || "gpt-4o-mini";
+    const defaultSystemPrompt =
+      readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_SYSTEM_PROMPT") ||
+      "You are a concise, helpful assistant.";
+    const telegramApiBase = telegramMockEnabled
+      ? "http://127.0.0.1:8005"
+      : (readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_TELEGRAM_API_BASE") || "https://api.telegram.org");
+    const mcpToolServiceUrl = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_MCP_TOOL_SERVICE_URL") || "http://127.0.0.1:8004";
+
+    const baseProviderEnv = [
+      input.openaiApiKey?.trim() ? { name: "OPENAI_API_KEY", value: input.openaiApiKey.trim() } : null,
+      input.anthropicApiKey?.trim() ? { name: "ANTHROPIC_API_KEY", value: input.anthropicApiKey.trim() } : null,
+      input.subsidyProxyToken?.trim() && input.subsidyProxyBaseUrl?.trim() && !input.openaiApiKey && !input.anthropicApiKey && !input.openrouterApiKey
+        ? { name: "OPENAI_API_KEY", value: input.subsidyProxyToken.trim() }
+        : null,
+      input.subsidyProxyToken?.trim() && input.subsidyProxyBaseUrl?.trim() && !input.openaiApiKey && !input.anthropicApiKey && !input.openrouterApiKey
+        ? { name: "OPENAI_BASE_URL", value: input.subsidyProxyBaseUrl.trim() }
+        : null,
+      input.subsidyProxyToken?.trim() && input.subsidyProxyBaseUrl?.trim() && !input.openaiApiKey && !input.anthropicApiKey && !input.openrouterApiKey
+        ? { name: "OPENAI_API_BASE", value: input.subsidyProxyBaseUrl.trim() }
+        : null,
+    ].filter((entry): entry is { name: string; value: string } => Boolean(entry));
+
+    const containerDefinitions = [
+      {
+        name: "redis",
+        image: redisImage,
+        essential: true,
+        portMappings: [{ containerPort: 6379, protocol: "tcp" as const }],
+        logConfiguration: resolveLogConfiguration("redis"),
+      },
+      {
+        name: "postgres",
+        image: postgresImage,
+        essential: true,
+        environment: [
+          { name: "POSTGRES_USER", value: postgresUser },
+          { name: "POSTGRES_PASSWORD", value: postgresPassword },
+          { name: "POSTGRES_DB", value: postgresDb },
+        ],
+        portMappings: [{ containerPort: 5432, protocol: "tcp" as const }],
+        logConfiguration: resolveLogConfiguration("postgres"),
+      },
+      {
+        name: "post-service",
+        image: postImage,
+        essential: true,
+        dependsOn: [{ containerName: "postgres", condition: "START" as const }],
+        environment: [
+          { name: "POST_DATABASE_URL", value: postDatabaseUrl },
+          { name: "LLM_MODEL", value: simpleAgentModel },
+          { name: "SYSTEM_PROMPT", value: defaultSystemPrompt },
+          ...baseProviderEnv,
+        ],
+        portMappings: [{ containerPort: 8003, protocol: "tcp" as const }],
+        logConfiguration: resolveLogConfiguration("post"),
+      },
+      ...(mcpImage
+        ? [
+            {
+              name: "mcp-tool-service",
+              image: mcpImage,
+              essential: false,
+              environment: [
+                { name: "MCP_DEFAULT_ENABLED", value: "1" },
+                { name: "MCP_AUTO_OFF_IDLE_S", value: readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_MCP_AUTO_OFF_IDLE_S") || "300" },
+                { name: "MCP_LOOP_INTERVAL_S", value: readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_MCP_LOOP_INTERVAL_S") || "1" },
+                { name: "OTTOAUTH_BASE_URL", value: readTrimmedEnv("OTTOAGENT_MCP_BASE_URL") || "https://ottoauth.vercel.app" },
+                { name: "AGENT_GATEWAY_URL", value: "http://127.0.0.1:8001/hooks/ottoauth" },
+                { name: "AGENT_GATEWAY_AUTH_TOKEN", value: readTrimmedEnv("OTTOAGENT_MCP_TOKEN") || gatewayToken },
+              ],
+              portMappings: [{ containerPort: 8004, protocol: "tcp" as const }],
+              logConfiguration: resolveLogConfiguration("mcp"),
+            },
+          ]
+        : []),
+      ...(telegramMockEnabled
+        ? [
+            {
+              name: "telegram-mock-service",
+              image: telegramMockImage,
+              essential: false,
+              portMappings: [{ containerPort: 8005, protocol: "tcp" as const }],
+              logConfiguration: resolveLogConfiguration("telegram-mock"),
+            },
+          ]
+        : []),
+      {
+        name: "gateway-service",
+        image: gatewayImage,
+        essential: true,
+        dependsOn: [
+          { containerName: "redis", condition: "START" as const },
+          { containerName: "post-service", condition: "START" as const },
+          ...(mcpImage ? [{ containerName: "mcp-tool-service", condition: "START" as const }] : []),
+          ...(telegramMockEnabled ? [{ containerName: "telegram-mock-service", condition: "START" as const }] : []),
+        ],
+        environment: [
+          { name: "REDIS_URL", value: "redis://127.0.0.1:6379/0" },
+          { name: "POST_SERVICE_URL", value: "http://127.0.0.1:8003" },
+          { name: "MCP_TOOL_SERVICE_URL", value: mcpToolServiceUrl },
+          { name: "TELEGRAM_ENABLED", value: "1" },
+          { name: "TELEGRAM_API_BASE", value: telegramApiBase },
+          { name: "AGENT_GATEWAY_AUTH_TOKEN", value: readTrimmedEnv("OTTOAGENT_MCP_TOKEN") || gatewayToken },
+          ...baseProviderEnv,
+        ],
+        portMappings: [{ containerPort: 8001, protocol: "tcp" as const }],
+        logConfiguration: resolveLogConfiguration("gateway"),
+      },
+      {
+        name: "execution-service",
+        image: executionImage,
+        essential: true,
+        dependsOn: [
+          { containerName: "redis", condition: "START" as const },
+          { containerName: "post-service", condition: "START" as const },
+          ...(mcpImage ? [{ containerName: "mcp-tool-service", condition: "START" as const }] : []),
+        ],
+        environment: [
+          { name: "REDIS_URL", value: "redis://127.0.0.1:6379/0" },
+          { name: "POST_SERVICE_URL", value: "http://127.0.0.1:8003" },
+          { name: "MCP_TOOL_SERVICE_URL", value: mcpToolServiceUrl },
+          { name: "LLM_MODEL", value: simpleAgentModel },
+          { name: "SYSTEM_PROMPT", value: defaultSystemPrompt },
+          ...baseProviderEnv,
+        ],
+        portMappings: [{ containerPort: 8002, protocol: "tcp" as const }],
+        logConfiguration: resolveLogConfiguration("execution"),
+      },
+      {
+        name: containerName,
+        image,
+        essential: true,
+        environment: [
+          { name: "GATEWAY_URL", value: "http://127.0.0.1:8001" },
+          { name: "PORT", value: String(containerPort) },
+        ],
+        dependsOn: [{ containerName: "gateway-service", condition: "START" as const }],
+        portMappings: [{ containerPort, protocol: "tcp" as const }],
+        logConfiguration: resolveLogConfiguration("frontend"),
+      },
+    ];
+
+    const albRouting = await ensureEcsAlbRouting({
+      region,
+      serviceName,
+      containerName,
+      containerPort,
+      healthCheckPath: microservicesHealthPath,
+    });
+
+    const register = await ecsClient.send(
+      new RegisterTaskDefinitionCommand({
+        family,
+        networkMode: "awsvpc",
+        requiresCompatibilities: ["FARGATE"],
+        cpu: microservicesTaskCpu,
+        memory: microservicesTaskMemory,
+        executionRoleArn,
+        taskRoleArn: taskRoleArn || undefined,
+        containerDefinitions,
+      }),
+    );
+
+    const taskDefinitionArn = register.taskDefinition?.taskDefinitionArn;
+    if (!taskDefinitionArn) {
+      throw new Error("ECS did not return a task definition ARN.");
+    }
+
+    try {
+      await ecsClient.send(
+        new CreateServiceCommand({
+          cluster,
+          serviceName,
+          taskDefinition: taskDefinitionArn,
+          desiredCount: 1,
+          launchType: launchType as "FARGATE" | "EC2" | "EXTERNAL",
+          platformVersion: platformVersion || undefined,
+          networkConfiguration: {
+            awsvpcConfiguration: {
+              subnets,
+              securityGroups,
+              assignPublicIp,
+            },
+          },
+          loadBalancers: albRouting
+            ? [
+                {
+                  targetGroupArn: albRouting.targetGroupArn,
+                  containerName,
+                  containerPort,
+                },
+              ]
+            : undefined,
+          healthCheckGracePeriodSeconds: albRouting ? 300 : undefined,
+        }),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const lower = message.toLowerCase();
+      const shouldUpdateExisting =
+        lower.includes("already exists") || lower.includes("not idempotent");
+      if (!shouldUpdateExisting) {
+        throw error;
+      }
+      await ecsClient.send(
+        new UpdateServiceCommand({
+          cluster,
+          service: serviceName,
+          taskDefinition: taskDefinitionArn,
+          desiredCount: 1,
+          loadBalancers: albRouting
+            ? [
+                {
+                  targetGroupArn: albRouting.targetGroupArn,
+                  containerName,
+                  containerPort,
+                },
+              ]
+            : undefined,
+          healthCheckGracePeriodSeconds: albRouting ? 300 : undefined,
+        }),
+      );
+    }
+
+    const readyUrlBase = albRouting
+      ? `https://${albRouting.hostName}/`
+      : buildEcsReadyUrl({
+          deploymentId: input.deploymentId,
+          userId: input.userId,
+          serviceName,
+        });
+
+    return {
+      runtimeId: runtimeIdFromEcs(cluster, serviceName),
+      deployProvider: "ecs",
+      image,
+      port: containerPort,
+      hostPort: null,
+      startCommand,
+      hostName: albRouting?.hostName ?? `ecs:${cluster}`,
+      readyUrl: readyUrlBase,
+    };
+  }
+
   const albRouting = await ensureEcsAlbRouting({
     region,
     serviceName,
@@ -1878,16 +2183,7 @@ async function launchViaEcs(input: LaunchInput) {
           protocol: "tcp" as const,
         },
       ],
-      logConfiguration: awslogsGroup
-        ? {
-            logDriver: "awslogs" as const,
-            options: {
-              "awslogs-group": awslogsGroup,
-              "awslogs-region": region,
-              "awslogs-stream-prefix": awslogsPrefix,
-            },
-          }
-        : undefined,
+      logConfiguration: resolveLogConfiguration(""),
     },
     ...(isSimpleAgentWithOttoAuthEcs
       ? [
@@ -1898,21 +2194,12 @@ async function launchViaEcs(input: LaunchInput) {
             command: ottoAgentMcpCommand.length > 0 ? ottoAgentMcpCommand : undefined,
             environment: ottoAgentMcpEnvironment,
             portMappings: [
-              {
-                containerPort: ottoAgentMcpContainerPort,
-                protocol: "tcp" as const,
-              },
-            ],
-            logConfiguration: awslogsGroup
-              ? {
-                  logDriver: "awslogs" as const,
-                  options: {
-                    "awslogs-group": awslogsGroup,
-                    "awslogs-region": region,
-                    "awslogs-stream-prefix": `${awslogsPrefix}-ottoauth-mcp`,
-                  },
-                }
-              : undefined,
+                {
+                  containerPort: ottoAgentMcpContainerPort,
+                  protocol: "tcp" as const,
+                },
+              ],
+            logConfiguration: resolveLogConfiguration("ottoauth-mcp"),
           },
         ]
       : []),

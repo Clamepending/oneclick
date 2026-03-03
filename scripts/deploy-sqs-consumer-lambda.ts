@@ -50,6 +50,7 @@ function parseCsv(value: string) {
 
 const REQUIRED_WORKER_FEATURES = [
   "deployment_strategy_v2",
+  "simple_agent_microservices_ecs",
   "ottoagent_free",
   "simple_agent_ottoauth_ecs",
   "simple_agent_ottoauth_ecs_canary",

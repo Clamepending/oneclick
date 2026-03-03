@@ -163,10 +163,42 @@ function runtimePortForFlavor(flavor: DeploymentFlavor) {
   if (flavor === "deploy_openclaw_free") {
     return Number(process.env.OPENCLAW_CONTAINER_PORT ?? "18789");
   }
+  if (flavor === "simple_agent_microservices_ecs") {
+    return Number(
+      process.env.SIMPLE_AGENT_MICROSERVICES_FRONTEND_PORT ??
+        process.env.OPENCLAW_CONTAINER_PORT ??
+        "18789",
+    );
+  }
   if (flavor === "ottoagent_free") {
     return Number(process.env.OTTOAGENT_CONTAINER_PORT ?? process.env.SIMPLE_AGENT_CONTAINER_PORT ?? "18789");
   }
   return Number(process.env.SIMPLE_AGENT_CONTAINER_PORT ?? "18789");
+}
+
+function resolveSmokeBaseUrl(input: {
+  readyUrl: string;
+  deploymentId: string;
+  deploymentFlavor: DeploymentFlavor;
+  fallbackIp: string;
+  fallbackPort: number;
+}) {
+  const fallback = `http://${input.fallbackIp}:${input.fallbackPort}`;
+  if (input.deploymentFlavor !== "simple_agent_microservices_ecs") {
+    return fallback;
+  }
+  try {
+    const parsed = new URL(input.readyUrl);
+    if (parsed.pathname === `/runtime/${input.deploymentId}`) {
+      return fallback;
+    }
+    parsed.pathname = "/";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return fallback;
+  }
 }
 
 async function runRuntimeHttpSmokeForFlavor(baseUrl: string, deploymentFlavor: DeploymentFlavor) {
@@ -302,7 +334,14 @@ async function main() {
       if (!publicIp) {
         throw new Error("Smoke test could not resolve ECS task public IP after service reached running state.");
       }
-      await runRuntimeHttpSmokeForFlavor(`http://${publicIp}:${runtimePort}`, deploymentFlavor);
+      const smokeBaseUrl = resolveSmokeBaseUrl({
+        readyUrl: first.readyUrl,
+        deploymentId,
+        deploymentFlavor,
+        fallbackIp: publicIp,
+        fallbackPort: runtimePort,
+      });
+      await runRuntimeHttpSmokeForFlavor(smokeBaseUrl, deploymentFlavor);
       await runOptionalTelegramSmoke();
     }
 

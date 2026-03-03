@@ -16,6 +16,7 @@ import { ensureSchema, pool } from "@/lib/db";
 import { isOttoAuthEcsFlavor, normalizeDeploymentFlavor, type DeploymentFlavor } from "@/lib/plans";
 import { createDedicatedSshHost, destroyDedicatedVm } from "@/lib/provisioner/dedicatedVm";
 import type { Host } from "@/lib/provisioner/hostScheduler";
+import { getRuntimePort } from "@/lib/provisioner/openclawBundle";
 import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runtimeProvider";
 import { probeRuntimeHttp } from "@/lib/runtimeHealth";
 import { buildVideoMemoryUrl } from "@/lib/runtime/videoMemoryUrl";
@@ -29,7 +30,7 @@ const queueName = "deployment-jobs";
 
 type DeploymentStrategy = {
   provider: "mock" | "ssh" | "ecs";
-  strategy: "legacy_default" | "ecs_ottoauth" | "ecs_ottoauth_canary";
+  strategy: "legacy_default" | "ecs_ottoauth" | "ecs_ottoauth_canary" | "ecs_microservices";
   ecsServicePrefixOverride: string | null;
 };
 
@@ -102,6 +103,13 @@ function resolveDeploymentStrategy(
   defaultProvider: "mock" | "ssh" | "ecs",
   deploymentFlavor: DeploymentFlavor,
 ): DeploymentStrategy {
+  if (deploymentFlavor === "simple_agent_microservices_ecs") {
+    return {
+      provider: "ecs",
+      strategy: "ecs_microservices",
+      ecsServicePrefixOverride: null,
+    };
+  }
   if (isOttoAuthEcsFlavor(deploymentFlavor)) {
     if (deploymentFlavor === "simple_agent_ottoauth_ecs_canary") {
       const defaultServicePrefix = readTrimmedEnv("ECS_SERVICE_PREFIX") || "oneclick-agent";
@@ -438,6 +446,7 @@ async function waitForRuntimeReady(input: {
   readyUrl: string | null;
   deployProvider: string | null;
   runtimeId: string;
+  deploymentFlavor: DeploymentFlavor;
 }) {
   const defaultStartupTimeoutMs = Number(readTrimmedEnv("OPENCLAW_STARTUP_TIMEOUT_MS") || "600000");
   const pollIntervalMs = 3000;
@@ -452,7 +461,7 @@ async function waitForRuntimeReady(input: {
     }
     const ecsClient = new ECSClient(buildAwsConfigWithTrimmedCreds(region));
     const ec2Client = new EC2Client(buildAwsConfigWithTrimmedCreds(region));
-    const port = Number(readTrimmedEnv("OPENCLAW_CONTAINER_PORT") || "18789");
+    const port = getRuntimePort(input.deploymentFlavor);
     const deadline = Date.now() + ecsStartupTimeoutMs;
     let lastServiceStatus = "unknown";
     let lastEventMessage = "";
@@ -534,6 +543,201 @@ async function waitForVideoMemoryReady(input: { videoMemoryUrl: string }) {
   }
 
   throw new Error(`VideoMemory sidecar failed health check at ${input.videoMemoryUrl} within ${startupTimeoutMs}ms`);
+}
+
+function normalizeMicroservicesUserId(value: string) {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._@-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return (normalized || "user").slice(0, 80);
+}
+
+function normalizeMicroservicesBotId(value: string) {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return (normalized || "bot").slice(0, 64);
+}
+
+function resolveRuntimeBaseUrl(readyUrl: string) {
+  const parsed = new URL(readyUrl);
+  parsed.pathname = "/";
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString();
+}
+
+async function readResponseBody(response: Response) {
+  const text = await response.text().catch(() => "");
+  if (!text) return null;
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return { raw: text.slice(0, 400) };
+  }
+}
+
+async function requestRuntimeJson(input: {
+  baseUrl: string;
+  path: string;
+  method?: "GET" | "POST";
+  body?: Record<string, unknown>;
+}) {
+  const url = new URL(input.path, input.baseUrl).toString();
+  const response = await fetch(url, {
+    method: input.method ?? "GET",
+    headers: input.body ? { "content-type": "application/json" } : undefined,
+    body: input.body ? JSON.stringify(input.body) : undefined,
+    signal: AbortSignal.timeout(15_000),
+  });
+  const parsedBody = await readResponseBody(response);
+  if (!response.ok) {
+    const details = typeof parsedBody === "object" && parsedBody !== null
+      ? (parsedBody as { detail?: string; error?: string; raw?: string })
+      : {};
+    throw new Error(
+      `${input.method ?? "GET"} ${input.path} failed (${response.status}): ${details.detail || details.error || details.raw || "request failed"}`,
+    );
+  }
+  return parsedBody ?? {};
+}
+
+async function bootstrapSimpleAgentMicroservicesRuntime(input: {
+  deploymentId: string;
+  userId: string;
+  botName: string | null;
+  readyUrl: string | null;
+  runtimeId: string;
+  telegramBotToken?: string | null;
+  openaiApiKey?: string | null;
+  anthropicApiKey?: string | null;
+}) {
+  const runtimeBaseUrl = await (async () => {
+    const rawReadyUrl = input.readyUrl?.trim() || "";
+    const appHost = (() => {
+      const appBase = process.env.APP_BASE_URL?.trim();
+      if (!appBase) return "";
+      try {
+        return new URL(appBase).host.toLowerCase();
+      } catch {
+        return "";
+      }
+    })();
+    const shouldResolveViaTaskIp = (() => {
+      if (!rawReadyUrl) return true;
+      try {
+        const parsed = new URL(rawReadyUrl);
+        if (parsed.pathname.startsWith("/runtime/")) return true;
+        if (appHost && parsed.host.toLowerCase() === appHost) return true;
+        return false;
+      } catch {
+        return true;
+      }
+    })();
+    if (!shouldResolveViaTaskIp) {
+      return resolveRuntimeBaseUrl(rawReadyUrl);
+    }
+
+    const parsedRuntime = parseEcsRuntimeId(input.runtimeId);
+    if (!parsedRuntime) {
+      throw new Error("Microservices bootstrap requires an ECS runtime id.");
+    }
+    const region = readTrimmedEnv("AWS_REGION");
+    if (!region) {
+      throw new Error("AWS_REGION is required to resolve runtime task IP for bootstrap.");
+    }
+    const ecsClient = new ECSClient(buildAwsConfigWithTrimmedCreds(region));
+    const ec2Client = new EC2Client(buildAwsConfigWithTrimmedCreds(region));
+    const publicIp = await resolveEcsPublicIp(ecsClient, ec2Client, parsedRuntime);
+    if (!publicIp) {
+      throw new Error("Could not resolve ECS task public IP for microservices bootstrap.");
+    }
+    const port = getRuntimePort("simple_agent_microservices_ecs");
+    return `http://${publicIp}:${port}/`;
+  })();
+  const runtimeUserId = normalizeMicroservicesUserId(input.userId);
+  const botBaseName = input.botName?.trim() || `bot-${input.deploymentId.slice(0, 8)}`;
+  const runtimeBotId = normalizeMicroservicesBotId(botBaseName);
+
+  await requestRuntimeJson({
+    baseUrl: runtimeBaseUrl,
+    path: "/api/users",
+    method: "POST",
+    body: {
+      user_id: runtimeUserId,
+      display_name: runtimeUserId,
+    },
+  });
+
+  const createBotBody = await requestRuntimeJson({
+    baseUrl: runtimeBaseUrl,
+    path: `/api/users/${encodeURIComponent(runtimeUserId)}/bots`,
+    method: "POST",
+    body: {
+      bot_id: runtimeBotId,
+      name: input.botName?.trim() || runtimeBotId,
+    },
+  });
+  let botSecret = String((createBotBody as { bot_secret?: unknown }).bot_secret ?? "").trim();
+  const createdBotId = normalizeMicroservicesBotId(
+    String(
+      ((createBotBody as { bot?: { bot_id?: unknown } }).bot ?? {}).bot_id ?? runtimeBotId,
+    ),
+  );
+  if (!createdBotId) {
+    throw new Error("Runtime bootstrap did not return a valid bot_id.");
+  }
+
+  if (!botSecret) {
+    const resetBody = await requestRuntimeJson({
+      baseUrl: runtimeBaseUrl,
+      path: `/api/bots/${encodeURIComponent(createdBotId)}/reset-secret`,
+      method: "POST",
+      body: {},
+    });
+    botSecret = String((resetBody as { bot_secret?: unknown }).bot_secret ?? "").trim();
+  }
+  if (!botSecret) {
+    throw new Error("Runtime bootstrap did not return a bot secret.");
+  }
+
+  const configPayload: Record<string, string> = {};
+  if (input.telegramBotToken?.trim()) {
+    configPayload.telegram_bot_token = input.telegramBotToken.trim();
+  }
+  if (input.openaiApiKey?.trim()) {
+    configPayload.openai_api_key = input.openaiApiKey.trim();
+  }
+  if (input.anthropicApiKey?.trim()) {
+    configPayload.anthropic_api_key = input.anthropicApiKey.trim();
+  }
+  if (Object.keys(configPayload).length > 0) {
+    await requestRuntimeJson({
+      baseUrl: runtimeBaseUrl,
+      path: `/api/bots/${encodeURIComponent(createdBotId)}/config`,
+      method: "POST",
+      body: configPayload,
+    });
+  }
+
+  const autoConnectUrl = new URL(runtimeBaseUrl);
+  autoConnectUrl.searchParams.set("user_id", runtimeUserId);
+  autoConnectUrl.searchParams.set("bot_id", createdBotId);
+  autoConnectUrl.searchParams.set("bot_secret", botSecret);
+  autoConnectUrl.searchParams.set("autoconnect", "1");
+
+  return {
+    runtimeUserId,
+    runtimeBotId: createdBotId,
+    runtimeBotSecret: botSecret,
+    autoConnectUrl: autoConnectUrl.toString(),
+  };
 }
 
 export async function processDeploymentJob(job: DeploymentJob) {
@@ -780,6 +984,9 @@ export async function processDeploymentJob(job: DeploymentJob) {
      SET ready_url = $1,
          runtime_id = $2,
          deploy_provider = $3,
+         runtime_user_id = NULL,
+         runtime_bot_id = NULL,
+         runtime_bot_secret = NULL,
          video_memory_ready_at = NULL,
          updated_at = NOW()
      WHERE id = $4`,
@@ -791,7 +998,46 @@ export async function processDeploymentJob(job: DeploymentJob) {
     readyUrl: runtime.readyUrl,
     deployProvider: runtime.deployProvider,
     runtimeId: runtime.runtimeId,
+    deploymentFlavor,
   });
+  if (deploymentFlavor === "simple_agent_microservices_ecs") {
+    await appendEvent(job.deploymentId, "starting", "Bootstrapping runtime user/bot for one-click auto-connect");
+    const bootstrap = await bootstrapSimpleAgentMicroservicesRuntime({
+      deploymentId: job.deploymentId,
+      userId: job.userId,
+      botName: runtimeSlugSource,
+      readyUrl: runtime.readyUrl,
+      runtimeId: runtime.runtimeId,
+      telegramBotToken,
+      openaiApiKey: selectedOpenAiKey,
+      anthropicApiKey: selectedAnthropicKey,
+    });
+    await pool.query(
+      `UPDATE deployments
+       SET runtime_user_id = $1,
+           runtime_bot_id = $2,
+           runtime_bot_secret = $3,
+           ready_url = $4,
+           updated_at = NOW()
+       WHERE id = $5`,
+      [
+        bootstrap.runtimeUserId,
+        bootstrap.runtimeBotId,
+        bootstrap.runtimeBotSecret,
+        bootstrap.autoConnectUrl,
+        job.deploymentId,
+      ],
+    );
+    runtime = {
+      ...runtime,
+      readyUrl: bootstrap.autoConnectUrl,
+    };
+    await appendEvent(
+      job.deploymentId,
+      "starting",
+      `Runtime bootstrap complete (user=${bootstrap.runtimeUserId} bot=${bootstrap.runtimeBotId})`,
+    );
+  }
   if (deploymentFlavor === "ottoagent_free") {
     await appendEvent(job.deploymentId, "starting", "Validating OttoAgent MCP runtime wiring");
     await assertFlavorRuntimeConformance({

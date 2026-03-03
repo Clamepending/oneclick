@@ -59,10 +59,18 @@ Deployment flavors in onboarding:
 
 - `simple_agent_free` (Simple Agent)
 - `simple_agent_videomemory_free` (Simple Agent + VideoMemory MCP sidecar)
+- `simple_agent_microservices_ecs` (Simple Agent Microservices stack on ECS: frontend/gateway/execution/post + Redis/Postgres sidecars)
 - `simple_agent_ottoauth_ecs` (Simple Agent + OttoAuth MCP sidecar on ECS)
 - `simple_agent_ottoauth_ecs_canary` (Testing flavor for canary ECS deploy strategy; uses `ECS_CANARY_SERVICE_PREFIX` when set)
 - `ottoagent_free` (OttoAgent + OttoAgent MCP sidecar)
 - `deploy_openclaw_free` (OpenClaw runtime)
+
+Simple Agent Microservices flavor env knobs:
+
+- required images: `SIMPLE_AGENT_MICROSERVICES_FRONTEND_IMAGE`, `SIMPLE_AGENT_MICROSERVICES_GATEWAY_IMAGE`, `SIMPLE_AGENT_MICROSERVICES_EXECUTION_IMAGE`, `SIMPLE_AGENT_MICROSERVICES_POST_IMAGE`
+- optional images/config: `SIMPLE_AGENT_MICROSERVICES_REDIS_IMAGE`, `SIMPLE_AGENT_MICROSERVICES_POSTGRES_IMAGE`, `SIMPLE_AGENT_MICROSERVICES_MCP_IMAGE`
+- optional runtime sizing: `SIMPLE_AGENT_MICROSERVICES_TASK_CPU`, `SIMPLE_AGENT_MICROSERVICES_TASK_MEMORY`
+- optional runtime behavior: `SIMPLE_AGENT_MICROSERVICES_FRONTEND_PORT` (default `18789`), `SIMPLE_AGENT_MICROSERVICES_HEALTH_PATH`, `SIMPLE_AGENT_MICROSERVICES_TELEGRAM_API_BASE`
 
 OttoAgent flavor env knobs:
 
@@ -132,7 +140,7 @@ Deploying app code does not automatically update the SQS Lambda consumer bundle.
 npm run aws:deploy-worker
 ```
 
-This updates `oneclick-sqs-deploy-consumer` code and stamps `DEPLOY_WORKER_FEATURES` so app can block unsupported deployment flavors (for example `ottoagent_free` and `simple_agent_ottoauth_ecs_canary`) instead of silently launching partial runtimes.
+This updates `oneclick-sqs-deploy-consumer` code and stamps `DEPLOY_WORKER_FEATURES` so app can block unsupported deployment flavors (for example `simple_agent_microservices_ecs`, `ottoagent_free`, and `simple_agent_ottoauth_ecs_canary`) instead of silently launching partial runtimes.
 
 ### ECS runtime smoke test (recommended)
 

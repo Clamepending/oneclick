@@ -86,6 +86,22 @@ export function shouldBuildSimpleAgentImage() {
   return readBool("SIMPLE_AGENT_BUILD_ON_HOST", true);
 }
 
+export function getSimpleAgentMicroservicesFrontendImage() {
+  return readEnv("SIMPLE_AGENT_MICROSERVICES_FRONTEND_IMAGE");
+}
+
+export function getSimpleAgentMicroservicesFrontendPort() {
+  return Number(
+    readEnv("SIMPLE_AGENT_MICROSERVICES_FRONTEND_PORT") ||
+      readEnv("OPENCLAW_CONTAINER_PORT") ||
+      "18789",
+  );
+}
+
+export function getSimpleAgentMicroservicesFrontendStartCommand() {
+  return readEnv("SIMPLE_AGENT_MICROSERVICES_FRONTEND_START_COMMAND") || "";
+}
+
 export function getOttoAgentImage() {
   return readEnv("OTTOAGENT_IMAGE") || getSimpleAgentImage();
 }
@@ -155,17 +171,20 @@ export function shouldBuildVideoMemoryImage() {
 export function getRuntimeImage(flavor: DeploymentFlavor | null | undefined) {
   const normalized = normalizeDeploymentFlavor(flavor);
   if (normalized === "ottoagent_free") return getOttoAgentImage();
+  if (normalized === "simple_agent_microservices_ecs") return getSimpleAgentMicroservicesFrontendImage();
   return normalized === "deploy_openclaw_free" ? getOpenClawImage() : getSimpleAgentImage();
 }
 
 export function getRuntimePort(flavor: DeploymentFlavor | null | undefined) {
   const normalized = normalizeDeploymentFlavor(flavor);
   if (normalized === "ottoagent_free") return getOttoAgentPort();
+  if (normalized === "simple_agent_microservices_ecs") return getSimpleAgentMicroservicesFrontendPort();
   return normalized === "deploy_openclaw_free" ? getOpenClawPort() : getSimpleAgentPort();
 }
 
 export function getRuntimeStartCommand(flavor: DeploymentFlavor | null | undefined) {
   const normalized = normalizeDeploymentFlavor(flavor);
   if (normalized === "ottoagent_free") return getOttoAgentStartCommand();
+  if (normalized === "simple_agent_microservices_ecs") return getSimpleAgentMicroservicesFrontendStartCommand();
   return normalized === "deploy_openclaw_free" ? getOpenClawStartCommand() : getSimpleAgentStartCommand();
 }

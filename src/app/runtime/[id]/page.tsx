@@ -3,7 +3,9 @@ import { DescribeNetworkInterfacesCommand, EC2Client } from "@aws-sdk/client-ec2
 import net from "node:net";
 import { redirect } from "next/navigation";
 import { ensureSchema, pool } from "@/lib/db";
+import { getRuntimePort } from "@/lib/provisioner/openclawBundle";
 import { probeRuntimeHttp } from "@/lib/runtimeHealth";
+import { normalizeDeploymentFlavor } from "@/lib/plans";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +40,7 @@ async function probeTcpPort(host: string, port: number) {
   });
 }
 
-async function resolveEcsPublicUrl(input: { runtimeId: string; deploymentId: string }) {
+async function resolveEcsPublicUrl(input: { runtimeId: string; deploymentId: string; runtimePort: number }) {
   const parsed = parseEcsRuntimeId(input.runtimeId);
   if (!parsed) return null;
   const region = readTrimmedEnv("AWS_REGION");
@@ -97,7 +99,7 @@ async function resolveEcsPublicUrl(input: { runtimeId: string; deploymentId: str
     }),
   );
 
-  const port = Number(readTrimmedEnv("OPENCLAW_CONTAINER_PORT") || "18789");
+  const port = input.runtimePort;
   const publicIps = Array.from(
     new Set(
       (interfaces.NetworkInterfaces ?? [])
@@ -189,8 +191,9 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
     runtime_id: string | null;
     ready_url: string | null;
     error: string | null;
+    deployment_flavor: string | null;
   }>(
-    `SELECT status, deploy_provider, runtime_id, ready_url, error
+    `SELECT status, deploy_provider, runtime_id, ready_url, error, deployment_flavor
      FROM deployments
      WHERE id = $1
      LIMIT 1`,
@@ -226,25 +229,30 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
     }
     if (parsedReadyUrl && parsedReadyUrl.pathname !== `/runtime/${id}`) {
       const provider = (deployment.deploy_provider ?? "").trim();
-      if (provider !== "ecs") {
-        const reachable = await isRuntimeControlUiReachable(parsedReadyUrl.toString());
-        if (!reachable) {
-          return renderRuntimeUnavailable(
-            id,
-            parsedReadyUrl.toString(),
-            "The runtime accepted deployment but is not serving the Control UI over HTTP yet.",
-          );
-        }
+      const reachable = await isRuntimeControlUiReachable(parsedReadyUrl.toString());
+      if (reachable) {
         redirect(parsedReadyUrl.toString());
+      }
+      if (provider !== "ecs") {
+        return renderRuntimeUnavailable(
+          id,
+          parsedReadyUrl.toString(),
+          "The runtime accepted deployment but is not serving the Control UI over HTTP yet.",
+        );
       }
     }
   }
 
   const provider = (deployment.deploy_provider ?? "").trim();
   if (provider === "ecs" && deployment.runtime_id) {
+    const runtimePort = getRuntimePort(normalizeDeploymentFlavor(deployment.deployment_flavor));
     let resolved: string | null = null;
     try {
-      resolved = await resolveEcsPublicUrl({ runtimeId: deployment.runtime_id, deploymentId: id });
+      resolved = await resolveEcsPublicUrl({
+        runtimeId: deployment.runtime_id,
+        deploymentId: id,
+        runtimePort,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unexpected runtime resolution error.";
       return renderPlaceholder(id, message);

@@ -2,6 +2,7 @@ export type PlanTier = "free" | "paid";
 export type DeploymentFlavor =
   | "simple_agent_free"
   | "simple_agent_videomemory_free"
+  | "simple_agent_microservices_ecs"
   | "simple_agent_ottoauth_ecs"
   | "simple_agent_ottoauth_ecs_canary"
   | "deploy_openclaw_free"
@@ -18,6 +19,13 @@ export function normalizeDeploymentFlavor(value: string | null | undefined): Dep
   const normalized = value?.trim().toLowerCase() || "";
   if (normalized === "simple_agent_free") return "simple_agent_free";
   if (normalized === "simple_agent_videomemory_free") return "simple_agent_videomemory_free";
+  if (
+    normalized === "simple_agent_microservices_ecs" ||
+    normalized === "simple_agent_microservices" ||
+    normalized === "simple_agent_microservices_free"
+  ) {
+    return "simple_agent_microservices_ecs";
+  }
   if (normalized === "simple_agent_ottoauth_ecs" || normalized === "simple_agent_ottoauth_ecs_free") {
     return "simple_agent_ottoauth_ecs";
   }
@@ -42,6 +50,7 @@ export function deploymentModeDisplayName(plan: PlanTier, flavor: DeploymentFlav
   void plan;
   if (flavor === "deploy_openclaw_free") return "Deploy OpenClaw (Free)";
   if (flavor === "simple_agent_videomemory_free") return "Simple Agent + VideoMemory (Free)";
+  if (flavor === "simple_agent_microservices_ecs") return "Simple Agent Microservices (ECS)";
   if (flavor === "simple_agent_ottoauth_ecs") return "Simple Agent + OttoAuth (ECS)";
   if (flavor === "simple_agent_ottoauth_ecs_canary") return "Simple Agent + OttoAuth (ECS Canary)";
   if (flavor === "ottoagent_free") return "OttoAgent (Free)";

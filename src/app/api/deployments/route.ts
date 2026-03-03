@@ -128,6 +128,9 @@ function getRequiredWorkerFeatures(
   selectedDeploymentFlavor: DeploymentFlavor,
 ): WorkerFeatureRequirement[] {
   const required: WorkerFeatureRequirement[] = [BASE_WORKER_FEATURE];
+  if (selectedDeploymentFlavor === "simple_agent_microservices_ecs") {
+    required.push({ feature: "simple_agent_microservices_ecs", label: "Simple Agent Microservices (ECS)" });
+  }
   if (selectedDeploymentFlavor === "ottoagent_free") {
     required.push({ feature: "ottoagent_free", label: "OttoAgent" });
   }
@@ -192,6 +195,13 @@ async function ensureQueueWorkerSupportsFlavor(input: {
         ok: false as const,
         error:
           `Simple Agent + VideoMemory currently requires DEPLOY_PROVIDER=ssh on queue worker ${functionName}, but it is ${configuredProviderRaw || "unset"}. Choose an ECS flavor or update the worker provider intentionally.`,
+      };
+    }
+    if (input.selectedDeploymentFlavor === "simple_agent_microservices_ecs" && configuredProvider !== "ecs") {
+      return {
+        ok: false as const,
+        error:
+          `Simple Agent Microservices requires DEPLOY_PROVIDER=ecs on queue worker ${functionName}, but it is ${configuredProviderRaw || "unset"}.`,
       };
     }
     if (input.selectedDeploymentFlavor === "simple_agent_videomemory_free") {
@@ -699,6 +709,8 @@ export async function POST(request: Request) {
       deploymentId,
       selectedDeploymentFlavor === "deploy_openclaw_free"
         ? "Selected deployment type: Deploy OpenClaw (Free)."
+        : selectedDeploymentFlavor === "simple_agent_microservices_ecs"
+          ? "Selected deployment type: Simple Agent Microservices (ECS)."
         : selectedDeploymentFlavor === "simple_agent_ottoauth_ecs"
           ? "Selected deployment type: Simple Agent + OttoAuth (ECS)."
         : selectedDeploymentFlavor === "simple_agent_ottoauth_ecs_canary"

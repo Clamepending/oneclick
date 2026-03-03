@@ -19,6 +19,9 @@ export type Deployment = {
   anthropicApiKey: string | null;
   openrouterApiKey: string | null;
   telegramBotToken: string | null;
+  runtimeUserId: string | null;
+  runtimeBotId: string | null;
+  runtimeBotSecret: string | null;
   readyUrl: string | null;
   error: string | null;
   createdAt: string;

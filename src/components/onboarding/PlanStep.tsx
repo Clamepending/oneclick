@@ -4,6 +4,7 @@ type Props = {
   deploymentFlavor:
     | "simple_agent_free"
     | "simple_agent_videomemory_free"
+    | "simple_agent_microservices_ecs"
     | "simple_agent_ottoauth_ecs"
     | "simple_agent_ottoauth_ecs_canary"
     | "deploy_openclaw_free"
@@ -12,6 +13,7 @@ type Props = {
     value:
       | "simple_agent_free"
       | "simple_agent_videomemory_free"
+      | "simple_agent_microservices_ecs"
       | "simple_agent_ottoauth_ecs"
       | "simple_agent_ottoauth_ecs_canary"
       | "deploy_openclaw_free"
@@ -61,6 +63,24 @@ export function PlanStep({ deploymentFlavor, onDeploymentFlavorChange, onDeploy,
           <strong>Simple Agent + VideoMemory (Free)</strong>
           <p className="muted" style={{ marginBottom: 0 }}>
             Deploys `simpleagent` and `videomemory` together on one VM (legacy SSH runtime, not ECS).
+          </p>
+        </button>
+        <button
+          type="button"
+          onClick={() => onDeploymentFlavorChange("simple_agent_microservices_ecs")}
+          style={{
+            textAlign: "left",
+            border: deploymentFlavor === "simple_agent_microservices_ecs" ? "1px solid var(--border-strong)" : "1px solid var(--border)",
+            borderRadius: 10,
+            padding: 16,
+            background: deploymentFlavor === "simple_agent_microservices_ecs" ? "var(--accent-surface)" : "var(--surface-strong)",
+            color: "inherit",
+            cursor: "pointer",
+          }}
+        >
+          <strong>Simple Agent Microservices (ECS)</strong>
+          <p className="muted" style={{ marginBottom: 0 }}>
+            Deploys frontend + gateway + execution + post-service on ECS with Redis/Postgres sidecars.
           </p>
         </button>
         <button
