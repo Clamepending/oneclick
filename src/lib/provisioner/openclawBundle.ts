@@ -171,20 +171,26 @@ export function shouldBuildVideoMemoryImage() {
 export function getRuntimeImage(flavor: DeploymentFlavor | null | undefined) {
   const normalized = normalizeDeploymentFlavor(flavor);
   if (normalized === "ottoagent_free") return getOttoAgentImage();
-  if (normalized === "simple_agent_microservices_ecs") return getSimpleAgentMicroservicesFrontendImage();
+  if (normalized === "simple_agent_microservices_ecs" || normalized === "simple_agent_microservices_shared") {
+    return getSimpleAgentMicroservicesFrontendImage();
+  }
   return normalized === "deploy_openclaw_free" ? getOpenClawImage() : getSimpleAgentImage();
 }
 
 export function getRuntimePort(flavor: DeploymentFlavor | null | undefined) {
   const normalized = normalizeDeploymentFlavor(flavor);
   if (normalized === "ottoagent_free") return getOttoAgentPort();
-  if (normalized === "simple_agent_microservices_ecs") return getSimpleAgentMicroservicesFrontendPort();
+  if (normalized === "simple_agent_microservices_ecs" || normalized === "simple_agent_microservices_shared") {
+    return getSimpleAgentMicroservicesFrontendPort();
+  }
   return normalized === "deploy_openclaw_free" ? getOpenClawPort() : getSimpleAgentPort();
 }
 
 export function getRuntimeStartCommand(flavor: DeploymentFlavor | null | undefined) {
   const normalized = normalizeDeploymentFlavor(flavor);
   if (normalized === "ottoagent_free") return getOttoAgentStartCommand();
-  if (normalized === "simple_agent_microservices_ecs") return getSimpleAgentMicroservicesFrontendStartCommand();
+  if (normalized === "simple_agent_microservices_ecs" || normalized === "simple_agent_microservices_shared") {
+    return getSimpleAgentMicroservicesFrontendStartCommand();
+  }
   return normalized === "deploy_openclaw_free" ? getOpenClawStartCommand() : getSimpleAgentStartCommand();
 }

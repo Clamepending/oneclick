@@ -16,6 +16,7 @@ const stepPayload = z.object({
     "simple_agent_free",
     "simple_agent_videomemory_free",
     "simple_agent_microservices_ecs",
+    "simple_agent_microservices_shared",
     "simple_agent_ottoauth_ecs",
     "simple_agent_ottoauth_ecs_canary",
     "deploy_openclaw_free",

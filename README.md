@@ -59,6 +59,7 @@ Deployment flavors in onboarding:
 
 - `simple_agent_free` (Simple Agent)
 - `simple_agent_videomemory_free` (Simple Agent + VideoMemory MCP sidecar)
+- `simple_agent_microservices_shared` (Simple Agent Microservices on one shared warm runtime; fast DB/bootstrap deploy path)
 - `simple_agent_microservices_ecs` (Simple Agent Microservices stack on ECS: frontend/gateway/execution/post + Redis/Postgres sidecars)
 - `simple_agent_ottoauth_ecs` (Simple Agent + OttoAuth MCP sidecar on ECS)
 - `simple_agent_ottoauth_ecs_canary` (Testing flavor for canary ECS deploy strategy; uses `ECS_CANARY_SERVICE_PREFIX` when set)
@@ -71,6 +72,7 @@ Simple Agent Microservices flavor env knobs:
 - optional images/config: `SIMPLE_AGENT_MICROSERVICES_REDIS_IMAGE`, `SIMPLE_AGENT_MICROSERVICES_POSTGRES_IMAGE`, `SIMPLE_AGENT_MICROSERVICES_MCP_IMAGE`
 - optional runtime sizing: `SIMPLE_AGENT_MICROSERVICES_TASK_CPU`, `SIMPLE_AGENT_MICROSERVICES_TASK_MEMORY`
 - optional runtime behavior: `SIMPLE_AGENT_MICROSERVICES_FRONTEND_PORT` (default `18789`), `SIMPLE_AGENT_MICROSERVICES_HEALTH_PATH`, `SIMPLE_AGENT_MICROSERVICES_TELEGRAM_API_BASE`
+- shared runtime flavor: set `SIMPLE_AGENT_MICROSERVICES_SHARED_RUNTIME_ID` (recommended, `ecs:<cluster>|<service>`) or `SIMPLE_AGENT_MICROSERVICES_SHARED_BASE_URL`
 
 OttoAgent flavor env knobs:
 

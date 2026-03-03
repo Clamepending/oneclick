@@ -131,6 +131,9 @@ function getRequiredWorkerFeatures(
   if (selectedDeploymentFlavor === "simple_agent_microservices_ecs") {
     required.push({ feature: "simple_agent_microservices_ecs", label: "Simple Agent Microservices (ECS)" });
   }
+  if (selectedDeploymentFlavor === "simple_agent_microservices_shared") {
+    required.push({ feature: "simple_agent_microservices_shared", label: "Simple Agent Microservices (Shared)" });
+  }
   if (selectedDeploymentFlavor === "ottoagent_free") {
     required.push({ feature: "ottoagent_free", label: "OttoAgent" });
   }
@@ -203,6 +206,17 @@ async function ensureQueueWorkerSupportsFlavor(input: {
         error:
           `Simple Agent Microservices requires DEPLOY_PROVIDER=ecs on queue worker ${functionName}, but it is ${configuredProviderRaw || "unset"}.`,
       };
+    }
+    if (input.selectedDeploymentFlavor === "simple_agent_microservices_shared") {
+      const sharedRuntimeId = (config.Environment?.Variables?.SIMPLE_AGENT_MICROSERVICES_SHARED_RUNTIME_ID ?? "").trim();
+      const sharedBaseUrl = (config.Environment?.Variables?.SIMPLE_AGENT_MICROSERVICES_SHARED_BASE_URL ?? "").trim();
+      if (!sharedRuntimeId && !sharedBaseUrl) {
+        return {
+          ok: false as const,
+          error:
+            `Simple Agent Microservices (Shared) requires SIMPLE_AGENT_MICROSERVICES_SHARED_RUNTIME_ID or SIMPLE_AGENT_MICROSERVICES_SHARED_BASE_URL on queue worker ${functionName}.`,
+        };
+      }
     }
     if (input.selectedDeploymentFlavor === "simple_agent_videomemory_free") {
       const hasDoToken = Boolean((config.Environment?.Variables?.DO_API_TOKEN ?? "").trim());
@@ -709,6 +723,8 @@ export async function POST(request: Request) {
       deploymentId,
       selectedDeploymentFlavor === "deploy_openclaw_free"
         ? "Selected deployment type: Deploy OpenClaw (Free)."
+        : selectedDeploymentFlavor === "simple_agent_microservices_shared"
+          ? "Selected deployment type: Simple Agent Microservices (Shared)."
         : selectedDeploymentFlavor === "simple_agent_microservices_ecs"
           ? "Selected deployment type: Simple Agent Microservices (ECS)."
         : selectedDeploymentFlavor === "simple_agent_ottoauth_ecs"

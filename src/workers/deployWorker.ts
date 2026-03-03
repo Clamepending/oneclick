@@ -29,8 +29,8 @@ type DeploymentJob = {
 const queueName = "deployment-jobs";
 
 type DeploymentStrategy = {
-  provider: "mock" | "ssh" | "ecs";
-  strategy: "legacy_default" | "ecs_ottoauth" | "ecs_ottoauth_canary" | "ecs_microservices";
+  provider: "mock" | "ssh" | "ecs" | "shared";
+  strategy: "legacy_default" | "ecs_ottoauth" | "ecs_ottoauth_canary" | "ecs_microservices" | "shared_microservices";
   ecsServicePrefixOverride: string | null;
 };
 
@@ -103,6 +103,13 @@ function resolveDeploymentStrategy(
   defaultProvider: "mock" | "ssh" | "ecs",
   deploymentFlavor: DeploymentFlavor,
 ): DeploymentStrategy {
+  if (deploymentFlavor === "simple_agent_microservices_shared") {
+    return {
+      provider: "shared",
+      strategy: "shared_microservices",
+      ecsServicePrefixOverride: null,
+    };
+  }
   if (deploymentFlavor === "simple_agent_microservices_ecs") {
     return {
       provider: "ecs",
@@ -573,6 +580,42 @@ function resolveRuntimeBaseUrl(readyUrl: string) {
   return parsed.toString();
 }
 
+async function resolveSharedMicroservicesRuntimeBaseUrl() {
+  const runtimeId = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_SHARED_RUNTIME_ID");
+  if (runtimeId) {
+    const parsedRuntime = parseEcsRuntimeId(runtimeId);
+    if (!parsedRuntime) {
+      throw new Error("SIMPLE_AGENT_MICROSERVICES_SHARED_RUNTIME_ID must use ecs:<cluster>|<service> format.");
+    }
+    const region = readTrimmedEnv("AWS_REGION");
+    if (!region) {
+      throw new Error("AWS_REGION is required to resolve SIMPLE_AGENT_MICROSERVICES_SHARED_RUNTIME_ID.");
+    }
+    const ecsClient = new ECSClient(buildAwsConfigWithTrimmedCreds(region));
+    const ec2Client = new EC2Client(buildAwsConfigWithTrimmedCreds(region));
+    const publicIp = await resolveEcsPublicIp(ecsClient, ec2Client, parsedRuntime);
+    if (publicIp) {
+      const port = getRuntimePort("simple_agent_microservices_shared");
+      return `http://${publicIp}:${port}/`;
+    }
+    throw new Error(
+      `Could not resolve public IP for SIMPLE_AGENT_MICROSERVICES_SHARED_RUNTIME_ID (${parsedRuntime.serviceName}).`,
+    );
+  }
+
+  const rawBaseUrl = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_SHARED_BASE_URL");
+  if (!rawBaseUrl) {
+    throw new Error(
+      "Shared microservices deployments require SIMPLE_AGENT_MICROSERVICES_SHARED_RUNTIME_ID or SIMPLE_AGENT_MICROSERVICES_SHARED_BASE_URL.",
+    );
+  }
+  try {
+    return resolveRuntimeBaseUrl(rawBaseUrl);
+  } catch {
+    throw new Error("SIMPLE_AGENT_MICROSERVICES_SHARED_BASE_URL must be a valid absolute URL.");
+  }
+}
+
 async function readResponseBody(response: Response) {
   const text = await response.text().catch(() => "");
   if (!text) return null;
@@ -954,21 +997,42 @@ export async function processDeploymentJob(job: DeploymentJob) {
     [subsidyProxyToken, job.deploymentId],
   );
 
-  runtime = await launchUserContainer({
-    deploymentId: job.deploymentId,
-    userId: job.userId,
-    runtimeSlugSource,
-    host,
-    telegramBotToken: selectedChannel === "telegram" || Boolean(deploymentTelegramBotToken) ? telegramBotToken : null,
-    openaiApiKey: selectedOpenAiKey,
-    anthropicApiKey: selectedAnthropicKey,
-    openrouterApiKey: selectedOpenRouterKey,
-    subsidyProxyToken,
-    subsidyProxyBaseUrl,
-    deploymentFlavor,
-    providerOverride: provider,
-    ecsServicePrefixOverride: deploymentStrategy.ecsServicePrefixOverride,
-  });
+  if (provider === "shared") {
+    const sharedBaseUrl = await resolveSharedMicroservicesRuntimeBaseUrl();
+    const sharedUrl = new URL(sharedBaseUrl);
+    await appendEvent(
+      job.deploymentId,
+      "starting",
+      `Using shared microservices runtime endpoint ${sharedUrl.protocol}//${sharedUrl.host}/`,
+    );
+    const sharedRuntimeId = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_SHARED_RUNTIME_ID");
+    runtime = {
+      runtimeId: `shared:${sharedRuntimeId || "microservices"}`,
+      deployProvider: "shared",
+      image: readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_FRONTEND_IMAGE") || "shared-runtime",
+      port: getRuntimePort("simple_agent_microservices_shared"),
+      hostPort: null,
+      startCommand: "",
+      hostName: "shared",
+      readyUrl: sharedBaseUrl,
+    };
+  } else {
+    runtime = await launchUserContainer({
+      deploymentId: job.deploymentId,
+      userId: job.userId,
+      runtimeSlugSource,
+      host,
+      telegramBotToken: selectedChannel === "telegram" || Boolean(deploymentTelegramBotToken) ? telegramBotToken : null,
+      openaiApiKey: selectedOpenAiKey,
+      anthropicApiKey: selectedAnthropicKey,
+      openrouterApiKey: selectedOpenRouterKey,
+      subsidyProxyToken,
+      subsidyProxyBaseUrl,
+      deploymentFlavor,
+      providerOverride: provider,
+      ecsServicePrefixOverride: deploymentStrategy.ecsServicePrefixOverride,
+    });
+  }
   await pool.query(
     `UPDATE deployments
      SET ready_url = $1,
@@ -990,7 +1054,10 @@ export async function processDeploymentJob(job: DeploymentJob) {
     runtimeId: runtime.runtimeId,
     deploymentFlavor,
   });
-  if (deploymentFlavor === "simple_agent_microservices_ecs") {
+  if (
+    deploymentFlavor === "simple_agent_microservices_ecs" ||
+    deploymentFlavor === "simple_agent_microservices_shared"
+  ) {
     await appendEvent(job.deploymentId, "starting", "Bootstrapping runtime user/bot for one-click auto-connect");
     const bootstrap = await bootstrapSimpleAgentMicroservicesRuntime({
       deploymentId: job.deploymentId,

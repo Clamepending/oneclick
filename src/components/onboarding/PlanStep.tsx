@@ -5,6 +5,7 @@ type Props = {
     | "simple_agent_free"
     | "simple_agent_videomemory_free"
     | "simple_agent_microservices_ecs"
+    | "simple_agent_microservices_shared"
     | "simple_agent_ottoauth_ecs"
     | "simple_agent_ottoauth_ecs_canary"
     | "deploy_openclaw_free"
@@ -14,6 +15,7 @@ type Props = {
       | "simple_agent_free"
       | "simple_agent_videomemory_free"
       | "simple_agent_microservices_ecs"
+      | "simple_agent_microservices_shared"
       | "simple_agent_ottoauth_ecs"
       | "simple_agent_ottoauth_ecs_canary"
       | "deploy_openclaw_free"
@@ -63,6 +65,24 @@ export function PlanStep({ deploymentFlavor, onDeploymentFlavorChange, onDeploy,
           <strong>Simple Agent + VideoMemory (Free)</strong>
           <p className="muted" style={{ marginBottom: 0 }}>
             Deploys `simpleagent` and `videomemory` together on one VM (legacy SSH runtime, not ECS).
+          </p>
+        </button>
+        <button
+          type="button"
+          onClick={() => onDeploymentFlavorChange("simple_agent_microservices_shared")}
+          style={{
+            textAlign: "left",
+            border: deploymentFlavor === "simple_agent_microservices_shared" ? "1px solid var(--border-strong)" : "1px solid var(--border)",
+            borderRadius: 10,
+            padding: 16,
+            background: deploymentFlavor === "simple_agent_microservices_shared" ? "var(--accent-surface)" : "var(--surface-strong)",
+            color: "inherit",
+            cursor: "pointer",
+          }}
+        >
+          <strong>Simple Agent Microservices (Shared)</strong>
+          <p className="muted" style={{ marginBottom: 0 }}>
+            Fast one-click mode: uses a pre-warmed shared microservices runtime (DB/bootstrap only, no per-bot ECS startup).
           </p>
         </button>
         <button
