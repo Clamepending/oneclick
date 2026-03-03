@@ -268,7 +268,9 @@ export function BotDashboard({ deployments }: Props) {
                 ) : null}
                 {(deployment.status === "queued" || deployment.status === "starting") ? (
                   <p className="muted" style={{ margin: 0 }}>
-                    Deployments usually take ~10 minutes on DigitalOcean VM (image pull + startup).
+                    {deployment.deployProvider === "ecs"
+                      ? "ECS deployments usually take ~1-3 minutes (first launch can take longer while images are pulled)."
+                      : "Deployments usually take ~10 minutes on DigitalOcean VM (image pull + startup)."}
                   </p>
                 ) : null}
                 {deployment.status === "ready" ? (

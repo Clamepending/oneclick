@@ -620,46 +620,36 @@ async function bootstrapSimpleAgentMicroservicesRuntime(input: {
 }) {
   const runtimeBaseUrl = await (async () => {
     const rawReadyUrl = input.readyUrl?.trim() || "";
-    const appHost = (() => {
-      const appBase = process.env.APP_BASE_URL?.trim();
-      if (!appBase) return "";
+    const readyUrlFallbackBase = (() => {
+      if (!rawReadyUrl) return "";
       try {
-        return new URL(appBase).host.toLowerCase();
+        const parsed = new URL(rawReadyUrl);
+        if (parsed.pathname.startsWith("/runtime/")) return "";
+        return resolveRuntimeBaseUrl(rawReadyUrl);
       } catch {
         return "";
       }
     })();
-    const shouldResolveViaTaskIp = (() => {
-      if (!rawReadyUrl) return true;
-      try {
-        const parsed = new URL(rawReadyUrl);
-        if (parsed.pathname.startsWith("/runtime/")) return true;
-        if (appHost && parsed.host.toLowerCase() === appHost) return true;
-        return false;
-      } catch {
-        return true;
-      }
-    })();
-    if (!shouldResolveViaTaskIp) {
-      return resolveRuntimeBaseUrl(rawReadyUrl);
-    }
 
     const parsedRuntime = parseEcsRuntimeId(input.runtimeId);
     if (!parsedRuntime) {
+      if (readyUrlFallbackBase) return readyUrlFallbackBase;
       throw new Error("Microservices bootstrap requires an ECS runtime id.");
     }
     const region = readTrimmedEnv("AWS_REGION");
     if (!region) {
+      if (readyUrlFallbackBase) return readyUrlFallbackBase;
       throw new Error("AWS_REGION is required to resolve runtime task IP for bootstrap.");
     }
     const ecsClient = new ECSClient(buildAwsConfigWithTrimmedCreds(region));
     const ec2Client = new EC2Client(buildAwsConfigWithTrimmedCreds(region));
     const publicIp = await resolveEcsPublicIp(ecsClient, ec2Client, parsedRuntime);
-    if (!publicIp) {
-      throw new Error("Could not resolve ECS task public IP for microservices bootstrap.");
+    if (publicIp) {
+      const port = getRuntimePort("simple_agent_microservices_ecs");
+      return `http://${publicIp}:${port}/`;
     }
-    const port = getRuntimePort("simple_agent_microservices_ecs");
-    return `http://${publicIp}:${port}/`;
+    if (readyUrlFallbackBase) return readyUrlFallbackBase;
+    throw new Error("Could not resolve ECS task public IP for microservices bootstrap.");
   })();
   const runtimeUserId = normalizeMicroservicesUserId(input.userId);
   const botBaseName = input.botName?.trim() || `bot-${input.deploymentId.slice(0, 8)}`;
