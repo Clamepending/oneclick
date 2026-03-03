@@ -7,6 +7,7 @@ type ReadyDeployment = {
   user_id: string;
   runtime_id: string | null;
   deploy_provider: string | null;
+  host_name: string | null;
   created_at: string;
 };
 
@@ -55,7 +56,7 @@ async function main() {
   await ensureSchema();
 
   const candidates = await pool.query<ReadyDeployment>(
-    `SELECT id, user_id, runtime_id, deploy_provider, created_at
+    `SELECT id, user_id, runtime_id, deploy_provider, host_name, created_at
      FROM deployments
      WHERE status = 'ready'
        AND created_at < NOW() - ($1::double precision * INTERVAL '1 minute')
@@ -87,6 +88,7 @@ async function main() {
         await destroyUserRuntime({
           runtimeId: row.runtime_id,
           deployProvider: row.deploy_provider,
+          hostName: row.host_name,
         });
       }
     } catch (error) {

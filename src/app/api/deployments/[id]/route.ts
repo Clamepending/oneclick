@@ -49,8 +49,8 @@ async function cleanupDeploymentRuntime(input: {
       runtimeId: input.runtime_id,
       deployProvider: input.deploy_provider,
       readyUrl: input.ready_url,
+      hostName: input.host_name,
     });
-    return;
   }
   const vmId = parseDedicatedVmId(input.host_name);
   if (!vmId) return;
