@@ -43,10 +43,9 @@ Optional for background queue mode:
 
 Runtime deployment mode:
 
-- `DEPLOY_PROVIDER=mock` (default placeholder runtime URL)
-- `DEPLOY_PROVIDER=ssh` (real SSH host deployment using Docker)
-- `DEPLOY_PROVIDER=ecs` (AWS ECS Fargate, one always-on task per deployment)
-- `DEPLOY_PROVIDER_LIGHTSAIL=ssh` maps `deploymentFlavor=lightsail` to SSH-host deployments (defaults to `ssh`)
+- `DEPLOY_PROVIDER=lambda` (default, fully serverless runtime for non-VideoMemory deployments)
+- `DEPLOY_PROVIDER=ssh` (legacy SSH host deployment; used by VideoMemory flavor)
+- `DEPLOY_PROVIDER=ecs` (legacy mode)
 - `DEPLOY_SSH_PRIVATE_KEY` can contain a PEM private key with `\\n` newlines.
 - `DEPLOY_SSH_KNOWN_HOSTS` is optional but recommended for strict host verification.
 - `OPENCLAW_TELEGRAM_BOT_TOKEN` is required when users select Telegram during onboarding; this token is injected at container launch.
@@ -57,14 +56,9 @@ Runtime deployment mode:
 
 Deployment flavors in onboarding:
 
-- `simple_agent_free` (Simple Agent)
+- `simple_agent_free` (Simple Agent serverless runtime)
 - `simple_agent_videomemory_free` (Simple Agent + VideoMemory MCP sidecar)
-- `simple_agent_microservices_shared` (Simple Agent Microservices on one shared warm runtime; fast DB/bootstrap deploy path)
-- `simple_agent_microservices_ecs` (Simple Agent Microservices stack on ECS: frontend/gateway/execution/post + Redis/Postgres sidecars)
-- `simple_agent_ottoauth_ecs` (Simple Agent + OttoAuth MCP sidecar on ECS)
-- `simple_agent_ottoauth_ecs_canary` (Testing flavor for canary ECS deploy strategy; uses `ECS_CANARY_SERVICE_PREFIX` when set)
-- `ottoagent_free` (OttoAgent + OttoAgent MCP sidecar)
-- `deploy_openclaw_free` (OpenClaw runtime)
+`simple_agent_videomemory_free` remains on the legacy SSH/DO runtime and is intentionally unchanged.
 
 Simple Agent Microservices flavor env knobs:
 

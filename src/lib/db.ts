@@ -112,8 +112,23 @@ export async function ensureSchema() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS runtime_chat_messages (
+      id BIGSERIAL PRIMARY KEY,
+      deployment_id TEXT NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS deployment_events_deployment_id_idx
     ON deployment_events (deployment_id, created_at);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS runtime_chat_messages_deployment_id_idx
+    ON runtime_chat_messages (deployment_id, id);
   `);
 
   await pool.query(`

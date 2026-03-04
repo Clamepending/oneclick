@@ -52,14 +52,19 @@ export function planDisplayName(plan: PlanTier) {
 
 export function deploymentModeDisplayName(plan: PlanTier, flavor: DeploymentFlavor) {
   void plan;
-  if (flavor === "deploy_openclaw_free") return "Deploy OpenClaw (Free)";
   if (flavor === "simple_agent_videomemory_free") return "Simple Agent + VideoMemory (Free)";
-  if (flavor === "simple_agent_microservices_ecs") return "Simple Agent Microservices (ECS)";
-  if (flavor === "simple_agent_microservices_shared") return "Simple Agent Microservices (Shared)";
-  if (flavor === "simple_agent_ottoauth_ecs") return "Simple Agent + OttoAuth (ECS)";
-  if (flavor === "simple_agent_ottoauth_ecs_canary") return "Simple Agent + OttoAuth (ECS Canary)";
-  if (flavor === "ottoagent_free") return "OttoAgent (Free)";
-  return "Simple Agent (Free)";
+  if (
+    flavor === "simple_agent_free" ||
+    flavor === "simple_agent_microservices_ecs" ||
+    flavor === "simple_agent_microservices_shared" ||
+    flavor === "simple_agent_ottoauth_ecs" ||
+    flavor === "simple_agent_ottoauth_ecs_canary" ||
+    flavor === "deploy_openclaw_free" ||
+    flavor === "ottoagent_free"
+  ) {
+    return "Simple Agent (Serverless)";
+  }
+  return "Simple Agent (Serverless)";
 }
 
 export function isOttoAuthEcsFlavor(flavor: DeploymentFlavor | null | undefined) {

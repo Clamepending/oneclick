@@ -128,22 +128,6 @@ function getRequiredWorkerFeatures(
   selectedDeploymentFlavor: DeploymentFlavor,
 ): WorkerFeatureRequirement[] {
   const required: WorkerFeatureRequirement[] = [BASE_WORKER_FEATURE];
-  if (selectedDeploymentFlavor === "simple_agent_microservices_ecs") {
-    required.push({ feature: "simple_agent_microservices_ecs", label: "Simple Agent Microservices (ECS)" });
-  }
-  if (selectedDeploymentFlavor === "simple_agent_microservices_shared") {
-    required.push({ feature: "simple_agent_microservices_shared", label: "Simple Agent Microservices (Shared)" });
-    required.push({ feature: "simple_agent_microservices_shared_ottoauth", label: "Shared OttoAuth MCP validation" });
-  }
-  if (selectedDeploymentFlavor === "ottoagent_free") {
-    required.push({ feature: "ottoagent_free", label: "OttoAgent" });
-  }
-  if (selectedDeploymentFlavor === "simple_agent_ottoauth_ecs") {
-    required.push({ feature: "simple_agent_ottoauth_ecs", label: "Simple Agent + OttoAuth (ECS)" });
-  }
-  if (selectedDeploymentFlavor === "simple_agent_ottoauth_ecs_canary") {
-    required.push({ feature: "simple_agent_ottoauth_ecs_canary", label: "ECS canary" });
-  }
   if (selectedDeploymentFlavor === "simple_agent_videomemory_free") {
     required.push({ feature: "simple_agent_videomemory_free", label: "Simple Agent + VideoMemory" });
   }
@@ -188,37 +172,6 @@ async function ensureQueueWorkerSupportsFlavor(input: {
       };
     }
 
-    const configuredProviderRaw = (config.Environment?.Variables?.DEPLOY_PROVIDER ?? "").trim().toLowerCase();
-    const configuredProvider =
-      configuredProviderRaw === "mock" || configuredProviderRaw === "ssh" || configuredProviderRaw === "ecs"
-        ? configuredProviderRaw
-        : "ecs";
-
-    if (input.selectedDeploymentFlavor === "simple_agent_videomemory_free" && configuredProvider !== "ssh") {
-      return {
-        ok: false as const,
-        error:
-          `Simple Agent + VideoMemory currently requires DEPLOY_PROVIDER=ssh on queue worker ${functionName}, but it is ${configuredProviderRaw || "unset"}. Choose an ECS flavor or update the worker provider intentionally.`,
-      };
-    }
-    if (input.selectedDeploymentFlavor === "simple_agent_microservices_ecs" && configuredProvider !== "ecs") {
-      return {
-        ok: false as const,
-        error:
-          `Simple Agent Microservices requires DEPLOY_PROVIDER=ecs on queue worker ${functionName}, but it is ${configuredProviderRaw || "unset"}.`,
-      };
-    }
-    if (input.selectedDeploymentFlavor === "simple_agent_microservices_shared") {
-      const sharedRuntimeId = (config.Environment?.Variables?.SIMPLE_AGENT_MICROSERVICES_SHARED_RUNTIME_ID ?? "").trim();
-      const sharedBaseUrl = (config.Environment?.Variables?.SIMPLE_AGENT_MICROSERVICES_SHARED_BASE_URL ?? "").trim();
-      if (!sharedRuntimeId && !sharedBaseUrl) {
-        return {
-          ok: false as const,
-          error:
-            `Simple Agent Microservices (Shared) requires SIMPLE_AGENT_MICROSERVICES_SHARED_RUNTIME_ID or SIMPLE_AGENT_MICROSERVICES_SHARED_BASE_URL on queue worker ${functionName}.`,
-        };
-      }
-    }
     if (input.selectedDeploymentFlavor === "simple_agent_videomemory_free") {
       const hasDoToken = Boolean((config.Environment?.Variables?.DO_API_TOKEN ?? "").trim());
       const hasSshKey = Boolean((config.Environment?.Variables?.DEPLOY_SSH_PRIVATE_KEY ?? "").trim());
@@ -723,20 +676,10 @@ export async function POST(request: Request) {
     [
       deploymentId,
       selectedDeploymentFlavor === "deploy_openclaw_free"
-        ? "Selected deployment type: Deploy OpenClaw (Free)."
-        : selectedDeploymentFlavor === "simple_agent_microservices_shared"
-          ? "Selected deployment type: Simple Agent Microservices (Shared)."
-        : selectedDeploymentFlavor === "simple_agent_microservices_ecs"
-          ? "Selected deployment type: Simple Agent Microservices (ECS)."
-        : selectedDeploymentFlavor === "simple_agent_ottoauth_ecs"
-          ? "Selected deployment type: Simple Agent + OttoAuth (ECS)."
-        : selectedDeploymentFlavor === "simple_agent_ottoauth_ecs_canary"
-          ? "Selected deployment type: Simple Agent + OttoAuth (ECS Canary)."
-        : selectedDeploymentFlavor === "ottoagent_free"
-          ? "Selected deployment type: OttoAgent (Free)."
+        ? "Selected deployment type: Simple Agent (Serverless)."
         : selectedDeploymentFlavor === "simple_agent_videomemory_free"
           ? "Selected deployment type: Simple Agent + VideoMemory (Free)."
-          : "Selected deployment type: Simple Agent (Free).",
+          : "Selected deployment type: Simple Agent (Serverless).",
     ],
   );
   if (sourceDeploymentRow) {

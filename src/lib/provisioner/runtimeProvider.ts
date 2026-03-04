@@ -63,7 +63,7 @@ type LaunchInput = {
   subsidyProxyToken?: string | null;
   planTier?: PlanTier | null;
   deploymentFlavor?: DeploymentFlavor | null;
-  providerOverride?: "mock" | "ssh" | "ecs" | null;
+  providerOverride?: "mock" | "ssh" | "ecs" | "lambda" | null;
   ecsServicePrefixOverride?: string | null;
   host?: Host;
 };
@@ -594,6 +594,10 @@ function runtimeIdFromEcs(cluster: string, serviceName: string) {
   return `ecs:${cluster}|${serviceName}`;
 }
 
+function runtimeIdFromLambda(deploymentId: string) {
+  return `lambda:${deploymentId}`;
+}
+
 function getGatewayToken() {
   return randomUUID().replace(/-/g, "");
 }
@@ -633,13 +637,49 @@ function parseDedicatedVmIdFromHostName(hostName: string | null | undefined) {
 
 function resolveRuntimeDestroyProvider(deployProvider: string | null | undefined, runtimeId: string) {
   const normalized = (deployProvider ?? "").trim().toLowerCase();
-  if (normalized === "ssh" || normalized === "ecs" || normalized === "shared" || normalized === "mock") {
+  if (normalized === "ssh" || normalized === "ecs" || normalized === "shared" || normalized === "mock" || normalized === "lambda") {
     return normalized;
   }
   if (runtimeId.startsWith("ssh:")) return "ssh";
   if (runtimeId.startsWith("ecs:")) return "ecs";
   if (runtimeId.startsWith("shared:")) return "shared";
+  if (runtimeId.startsWith("lambda:")) return "lambda";
   return normalized;
+}
+
+function resolveAppBaseUrl() {
+  const candidates = [
+    readTrimmedEnv("APP_BASE_URL"),
+    readTrimmedEnv("AUTH_URL"),
+    readTrimmedEnv("VERCEL_PROJECT_PRODUCTION_URL"),
+    readTrimmedEnv("VERCEL_URL"),
+  ].filter(Boolean);
+  const raw = candidates[0] || "http://localhost:3000";
+  const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    const parsed = new URL(withProtocol);
+    parsed.pathname = "/";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return "http://localhost:3000";
+  }
+}
+
+async function launchViaLambda(input: LaunchInput) {
+  const deploymentFlavor = normalizeDeploymentFlavor(input.deploymentFlavor);
+  const baseUrl = resolveAppBaseUrl();
+  return {
+    runtimeId: runtimeIdFromLambda(input.deploymentId),
+    deployProvider: "lambda" as const,
+    image: "serverless-runtime",
+    port: getRuntimePort(deploymentFlavor),
+    hostPort: null,
+    startCommand: "",
+    hostName: "lambda",
+    readyUrl: `${baseUrl}/runtime/${input.deploymentId}`,
+  };
 }
 
 function isIgnorableEcsDeleteError(error: unknown) {
@@ -2323,12 +2363,18 @@ export async function launchUserContainer(input: LaunchInput) {
   if (input.providerOverride === "ecs") {
     return launchViaEcs(input);
   }
+  if (input.providerOverride === "lambda") {
+    return launchViaLambda(input);
+  }
   if (input.providerOverride === "ssh" || input.providerOverride === "mock") {
     return launchViaSsh(input);
   }
   const configuredProvider = readTrimmedEnv("DEPLOY_PROVIDER").toLowerCase();
   if (configuredProvider === "ecs") {
     return launchViaEcs(input);
+  }
+  if (configuredProvider === "lambda") {
+    return launchViaLambda(input);
   }
   return launchViaSsh(input);
 }
@@ -2369,7 +2415,7 @@ export async function destroyUserRuntime(input: DestroyInput) {
 
     throw new Error("Invalid ssh runtime id format.");
   }
-  if (provider === "shared") {
+  if (provider === "shared" || provider === "lambda") {
     // Shared runtimes are intentionally reused and not deleted per deployment.
     return;
   }

@@ -13,7 +13,7 @@ import {
   type ECSClientConfig,
 } from "@aws-sdk/client-ecs";
 import { ensureSchema, pool } from "@/lib/db";
-import { isOttoAuthEcsFlavor, normalizeDeploymentFlavor, type DeploymentFlavor } from "@/lib/plans";
+import { normalizeDeploymentFlavor, type DeploymentFlavor } from "@/lib/plans";
 import { createDedicatedSshHost, destroyDedicatedVm } from "@/lib/provisioner/dedicatedVm";
 import type { Host } from "@/lib/provisioner/hostScheduler";
 import { getRuntimePort } from "@/lib/provisioner/openclawBundle";
@@ -29,8 +29,15 @@ type DeploymentJob = {
 const queueName = "deployment-jobs";
 
 type DeploymentStrategy = {
-  provider: "mock" | "ssh" | "ecs" | "shared";
-  strategy: "legacy_default" | "ecs_ottoauth" | "ecs_ottoauth_canary" | "ecs_microservices" | "shared_microservices";
+  provider: "mock" | "ssh" | "ecs" | "shared" | "lambda";
+  strategy:
+    | "legacy_default"
+    | "ecs_ottoauth"
+    | "ecs_ottoauth_canary"
+    | "ecs_microservices"
+    | "shared_microservices"
+    | "serverless_lambda"
+    | "videomemory_ssh";
   ecsServicePrefixOverride: string | null;
 };
 
@@ -99,54 +106,20 @@ function readTrimmedEnv(name: string) {
   return raw.trim().replace(/^"(.*)"$/, "$1").replace(/\\n/g, "").trim();
 }
 
-function resolveDeploymentStrategy(
-  defaultProvider: "mock" | "ssh" | "ecs",
-  deploymentFlavor: DeploymentFlavor,
-): DeploymentStrategy {
-  if (deploymentFlavor === "simple_agent_microservices_shared") {
+function resolveDeploymentStrategy(deploymentFlavor: DeploymentFlavor): DeploymentStrategy {
+  // Keep legacy VideoMemory path on dedicated SSH/DO VMs. All other flavors run on serverless runtime.
+  if (deploymentFlavor === "simple_agent_videomemory_free") {
     return {
-      provider: "shared",
-      strategy: "shared_microservices",
-      ecsServicePrefixOverride: null,
-    };
-  }
-  if (deploymentFlavor === "simple_agent_microservices_ecs") {
-    return {
-      provider: "ecs",
-      strategy: "ecs_microservices",
-      ecsServicePrefixOverride: null,
-    };
-  }
-  if (isOttoAuthEcsFlavor(deploymentFlavor)) {
-    if (deploymentFlavor === "simple_agent_ottoauth_ecs_canary") {
-      const defaultServicePrefix = readTrimmedEnv("ECS_SERVICE_PREFIX") || "oneclick-agent";
-      const canaryServicePrefix = readTrimmedEnv("ECS_CANARY_SERVICE_PREFIX") || `${defaultServicePrefix}-canary`;
-      return {
-        provider: "ecs",
-        strategy: "ecs_ottoauth_canary",
-        ecsServicePrefixOverride: canaryServicePrefix,
-      };
-    }
-    return {
-      provider: "ecs",
-      strategy: "ecs_ottoauth",
+      provider: "ssh",
+      strategy: "videomemory_ssh",
       ecsServicePrefixOverride: null,
     };
   }
   return {
-    provider: defaultProvider,
-    strategy: "legacy_default",
+    provider: "lambda",
+    strategy: "serverless_lambda",
     ecsServicePrefixOverride: null,
   };
-}
-
-function resolveDefaultProvider(): "mock" | "ssh" | "ecs" {
-  const configured = readTrimmedEnv("DEPLOY_PROVIDER").toLowerCase();
-  if (configured === "mock" || configured === "ssh" || configured === "ecs") {
-    return configured;
-  }
-  // Production-safe fallback: prefer ECS when DEPLOY_PROVIDER is missing/invalid.
-  return "ecs";
 }
 
 function buildAwsConfigWithTrimmedCreds(region: string): ECSClientConfig {
@@ -1259,8 +1232,6 @@ export async function processDeploymentJob(job: DeploymentJob) {
     return;
   }
   await appendEvent(job.deploymentId, "starting", "Scheduling runtime host");
-  const defaultProvider = resolveDefaultProvider();
-
   const providerSelectionRow = await pool.query<{
     plan_tier: string | null;
     deployment_flavor: string | null;
@@ -1272,13 +1243,8 @@ export async function processDeploymentJob(job: DeploymentJob) {
     [job.deploymentId],
   );
   const selectedDeploymentFlavor = normalizeDeploymentFlavor(providerSelectionRow.rows[0]?.deployment_flavor);
-  const deploymentStrategy = resolveDeploymentStrategy(defaultProvider, selectedDeploymentFlavor);
+  const deploymentStrategy = resolveDeploymentStrategy(selectedDeploymentFlavor);
   const provider = deploymentStrategy.provider;
-  if (provider === "ecs" && selectedDeploymentFlavor === "simple_agent_videomemory_free") {
-    throw new Error(
-      "simple_agent_videomemory_free is not supported on ECS yet. Choose Simple Agent, OttoAgent, or Deploy OpenClaw.",
-    );
-  }
   const providerRequiresHost = provider === "ssh" || provider === "mock";
 
   const currentHostRow = await pool.query<{ host_name: string | null; status: string }>(
@@ -1498,16 +1464,23 @@ export async function processDeploymentJob(job: DeploymentJob) {
     [runtime.readyUrl, runtime.runtimeId, runtime.deployProvider, job.deploymentId],
   );
   await appendEvent(job.deploymentId, "starting", "Runtime launched; persisted runtime metadata");
-  await appendEvent(job.deploymentId, "starting", "Waiting for runtime health check");
-  await waitForRuntimeReady({
-    readyUrl: runtime.readyUrl,
-    deployProvider: runtime.deployProvider,
-    runtimeId: runtime.runtimeId,
-    deploymentFlavor,
-  });
+  if (runtime.deployProvider !== "lambda") {
+    await appendEvent(job.deploymentId, "starting", "Waiting for runtime health check");
+    await waitForRuntimeReady({
+      readyUrl: runtime.readyUrl,
+      deployProvider: runtime.deployProvider,
+      runtimeId: runtime.runtimeId,
+      deploymentFlavor,
+    });
+  } else {
+    await appendEvent(job.deploymentId, "starting", "Serverless runtime configured");
+  }
   if (
-    deploymentFlavor === "simple_agent_microservices_ecs" ||
-    deploymentFlavor === "simple_agent_microservices_shared"
+    runtime.deployProvider !== "lambda" &&
+    (
+      deploymentFlavor === "simple_agent_microservices_ecs" ||
+      deploymentFlavor === "simple_agent_microservices_shared"
+    )
   ) {
     await appendEvent(job.deploymentId, "starting", "Bootstrapping runtime user/bot for one-click auto-connect");
     const bootstrap = await bootstrapSimpleAgentMicroservicesRuntime({
@@ -1580,7 +1553,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
       );
     }
   }
-  if (deploymentFlavor === "ottoagent_free") {
+  if (runtime.deployProvider !== "lambda" && deploymentFlavor === "ottoagent_free") {
     await appendEvent(job.deploymentId, "starting", "Validating OttoAgent MCP runtime wiring");
     await assertFlavorRuntimeConformance({
       deploymentFlavor,

@@ -6,6 +6,7 @@ import { ensureSchema, pool } from "@/lib/db";
 import { getRuntimePort } from "@/lib/provisioner/openclawBundle";
 import { probeRuntimeHttp } from "@/lib/runtimeHealth";
 import { normalizeDeploymentFlavor } from "@/lib/plans";
+import { ServerlessRuntimeClient } from "@/components/runtime/ServerlessRuntimeClient";
 
 export const dynamic = "force-dynamic";
 
@@ -186,6 +187,7 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
   await ensureSchema();
 
   const result = await pool.query<{
+    bot_name: string | null;
     status: string;
     deploy_provider: string | null;
     runtime_id: string | null;
@@ -193,7 +195,7 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
     error: string | null;
     deployment_flavor: string | null;
   }>(
-    `SELECT status, deploy_provider, runtime_id, ready_url, error, deployment_flavor
+    `SELECT bot_name, status, deploy_provider, runtime_id, ready_url, error, deployment_flavor
      FROM deployments
      WHERE id = $1
      LIMIT 1`,
@@ -203,6 +205,17 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
   const deployment = result.rows[0];
   if (!deployment) {
     return renderPlaceholder(id, "Deployment not found.");
+  }
+
+  const provider = (deployment.deploy_provider ?? "").trim();
+  if (provider === "lambda") {
+    if (deployment.status === "ready") {
+      return <ServerlessRuntimeClient deploymentId={id} botName={deployment.bot_name} />;
+    }
+    if (deployment.status === "failed" || deployment.status === "stopped") {
+      return renderPlaceholder(id, deployment.error || "This deployment is no longer active.");
+    }
+    return renderPlaceholder(id, "Serverless runtime is still preparing. Try again in a moment.");
   }
 
   const readyUrl = deployment.ready_url?.trim();
@@ -243,7 +256,6 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
     }
   }
 
-  const provider = (deployment.deploy_provider ?? "").trim();
   if (provider === "ecs" && deployment.runtime_id) {
     const runtimePort = getRuntimePort(normalizeDeploymentFlavor(deployment.deployment_flavor));
     let resolved: string | null = null;
