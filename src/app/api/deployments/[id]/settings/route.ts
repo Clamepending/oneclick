@@ -21,6 +21,7 @@ const payloadSchema = z
     openrouterApiKey: z.string().trim().min(1).max(300).optional(),
     telegramBotToken: z.string().trim().min(1).max(300).optional(),
     modelProvider: z.enum(["auto", "openai", "openrouter", "anthropic"]).optional(),
+    defaultModel: z.string().trim().min(1).max(160).optional(),
     redeploy: z.boolean().optional(),
   })
   .refine(
@@ -31,6 +32,7 @@ const payloadSchema = z
           value.openrouterApiKey ||
           value.telegramBotToken ||
           value.modelProvider ||
+          value.defaultModel ||
           value.redeploy,
       ),
     { message: "At least one setting is required" },
@@ -618,6 +620,7 @@ export async function PATCH(
     status: string;
     bot_name: string | null;
     model_provider: string | null;
+    default_model: string | null;
     openai_api_key: string | null;
     anthropic_api_key: string | null;
     openrouter_api_key: string | null;
@@ -628,7 +631,7 @@ export async function PATCH(
     plan_tier: string | null;
     deployment_flavor: string | null;
   }>(
-    `SELECT id, status, bot_name, model_provider, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token,
+    `SELECT id, status, bot_name, model_provider, default_model, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token,
             deploy_provider, runtime_id, ready_url, plan_tier, deployment_flavor
      FROM deployments
      WHERE id = $1 AND user_id = $2
@@ -646,13 +649,16 @@ export async function PATCH(
     openrouterApiKey,
     telegramBotToken,
     modelProvider,
+    defaultModel,
     redeploy,
   } = parsed.data;
   const normalizedModelProvider = modelProvider?.trim().toLowerCase() || null;
+  const normalizedDefaultModel = defaultModel?.trim() || null;
 
   const updated = await pool.query<{
     bot_name: string | null;
     model_provider: string | null;
+    default_model: string | null;
     openai_api_key: string | null;
     anthropic_api_key: string | null;
     openrouter_api_key: string | null;
@@ -668,15 +674,20 @@ export async function PATCH(
            WHEN $5::text = 'auto' THEN NULL
            ELSE $5
          END,
+         default_model = CASE
+           WHEN $6::text IS NULL THEN default_model
+           ELSE $6::text
+         END,
          updated_at = NOW()
-     WHERE id = $6 AND user_id = $7
-     RETURNING bot_name, model_provider, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token`,
+     WHERE id = $7 AND user_id = $8
+     RETURNING bot_name, model_provider, default_model, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token`,
     [
       openaiApiKey ?? null,
       anthropicApiKey ?? null,
       openrouterApiKey ?? null,
       telegramBotToken ?? null,
       normalizedModelProvider,
+      normalizedDefaultModel,
       id,
       session.user.email,
     ],
@@ -702,6 +713,7 @@ export async function PATCH(
       liveApply,
       settings: {
         modelProvider: source.model_provider?.trim() || "auto",
+        defaultModel: source.default_model?.trim() || "",
         hasOpenaiApiKey: Boolean(source.openai_api_key?.trim()),
         hasAnthropicApiKey: Boolean(source.anthropic_api_key?.trim()),
         hasOpenrouterApiKey: Boolean(source.openrouter_api_key?.trim()),
@@ -736,15 +748,16 @@ export async function PATCH(
   const nextDeploymentId = newDeploymentId();
   await pool.query(
     `INSERT INTO deployments (
-       id, user_id, bot_name, status, model_provider, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token,
+       id, user_id, bot_name, status, model_provider, default_model, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token,
        plan_tier, deployment_flavor, trial_started_at, trial_expires_at, monthly_price_cents
      )
-     VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, $9, $10, NULL, NULL, NULL)`,
+     VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, $9, $10, $11, NULL, NULL, NULL)`,
     [
       nextDeploymentId,
       session.user.email,
       source.bot_name,
       source.model_provider,
+      source.default_model,
       source.openai_api_key,
       source.anthropic_api_key,
       source.openrouter_api_key,
@@ -752,6 +765,18 @@ export async function PATCH(
       current.plan_tier?.trim() || "free",
       current.deployment_flavor?.trim() || "simple_agent_free",
     ],
+  );
+
+  await pool.query(
+    `INSERT INTO runtime_memory_docs (deployment_id, doc_key, content, created_at, updated_at)
+     SELECT $1, doc_key, content, NOW(), NOW()
+     FROM runtime_memory_docs
+     WHERE deployment_id = $2
+     ON CONFLICT (deployment_id, doc_key)
+     DO UPDATE
+       SET content = EXCLUDED.content,
+           updated_at = NOW()`,
+    [nextDeploymentId, id],
   );
 
   await pool.query(

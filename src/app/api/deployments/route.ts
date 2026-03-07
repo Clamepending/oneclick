@@ -583,8 +583,9 @@ export async function POST(request: Request) {
           bot_name: string | null;
           deployment_flavor: string | null;
           model_provider: string | null;
+          default_model: string | null;
         }>(
-          `SELECT id, bot_name, deployment_flavor, model_provider
+          `SELECT id, bot_name, deployment_flavor, model_provider, default_model
            FROM deployments
            WHERE id = $1 AND user_id = $2
            LIMIT 1`,
@@ -609,6 +610,7 @@ export async function POST(request: Request) {
       ? normalizeDeploymentFlavor(sourceDeploymentRow.deployment_flavor)
       : null;
     const sourceModelProvider = sourceDeploymentRow?.model_provider?.trim() || null;
+    const sourceDefaultModel = sourceDeploymentRow?.default_model?.trim() || null;
     const onboardingModelProviderValue = onboarding.rows[0]?.model_provider?.trim() || null;
     const selectedModelProvider = sourceModelProvider ?? onboardingModelProviderValue;
     const onboardingDeploymentFlavor = onboarding.rows[0]?.deployment_flavor?.trim()
@@ -650,15 +652,16 @@ export async function POST(request: Request) {
 
     await pool.query(
     `INSERT INTO deployments (
-       id, user_id, bot_name, status, model_provider, openai_api_key, anthropic_api_key, telegram_bot_token,
+       id, user_id, bot_name, status, model_provider, default_model, openai_api_key, anthropic_api_key, telegram_bot_token,
        plan_tier, deployment_flavor, trial_started_at, trial_expires_at, monthly_price_cents
      )
-     VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+     VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
     [
       deploymentId,
       session.user.email,
       botName,
       selectedModelProvider,
+      sourceDefaultModel,
       openaiApiKey,
       anthropicApiKey,
       telegramBotToken,
@@ -669,6 +672,20 @@ export async function POST(request: Request) {
       null,
     ],
   );
+
+    if (sourceDeploymentRow) {
+      await pool.query(
+        `INSERT INTO runtime_memory_docs (deployment_id, doc_key, content, created_at, updated_at)
+         SELECT $1, doc_key, content, NOW(), NOW()
+         FROM runtime_memory_docs
+         WHERE deployment_id = $2
+         ON CONFLICT (deployment_id, doc_key)
+         DO UPDATE
+           SET content = EXCLUDED.content,
+               updated_at = NOW()`,
+        [deploymentId, sourceDeploymentRow.id],
+      );
+    }
 
     await pool.query(
     `INSERT INTO deployment_events (deployment_id, status, message)

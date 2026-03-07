@@ -10,6 +10,21 @@ type ChatMessage = {
   createdAt: string;
 };
 
+type RuntimeSession = {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+  lastMessageAt: string | null;
+};
+
+type MemoryDoc = {
+  docKey: string;
+  content: string;
+  updatedAt: string | null;
+};
+
 type DeploymentEvent = {
   status: string;
   message: string;
@@ -18,6 +33,7 @@ type DeploymentEvent = {
 
 type DeploymentSettingsState = {
   modelProvider: string;
+  defaultModel: string;
   hasOpenaiApiKey: boolean;
   hasAnthropicApiKey: boolean;
   hasOpenrouterApiKey: boolean;
@@ -44,15 +60,49 @@ type Props = {
 };
 
 type RuntimeMessagesResponse =
-  | { ok?: boolean; error?: string; messages?: ChatMessage[] }
+  | { ok?: boolean; error?: string; sessionId?: string; messages?: ChatMessage[] }
   | null;
 
 type RuntimeChatResponse =
   | {
       ok?: boolean;
       error?: string;
+      sessionId?: string;
       userMessage?: ChatMessage;
       assistantMessage?: ChatMessage;
+    }
+  | null;
+
+type RuntimeSessionsResponse =
+  | {
+      ok?: boolean;
+      error?: string;
+      activeSessionId?: string;
+      sessions?: RuntimeSession[];
+    }
+  | null;
+
+type RuntimeCreateSessionResponse =
+  | {
+      ok?: boolean;
+      error?: string;
+      session?: RuntimeSession;
+    }
+  | null;
+
+type RuntimeMemoryResponse =
+  | {
+      ok?: boolean;
+      error?: string;
+      docs?: MemoryDoc[];
+    }
+  | null;
+
+type RuntimeMemoryPatchResponse =
+  | {
+      ok?: boolean;
+      error?: string;
+      doc?: MemoryDoc;
     }
   | null;
 
@@ -69,6 +119,7 @@ type DeploymentResponse =
       health?: { ok?: boolean; status?: number } | null;
       settings?: {
         modelProvider?: string;
+        defaultModel?: string;
         hasOpenaiApiKey?: boolean;
         hasAnthropicApiKey?: boolean;
         hasOpenrouterApiKey?: boolean;
@@ -98,6 +149,7 @@ type SettingsPatchResponse =
       };
       settings?: {
         modelProvider?: string;
+        defaultModel?: string;
         hasOpenaiApiKey?: boolean;
         hasAnthropicApiKey?: boolean;
         hasOpenrouterApiKey?: boolean;
@@ -128,6 +180,10 @@ function normalizeModelProvider(value: string | null | undefined) {
   return "auto";
 }
 
+function normalizeDefaultModel(value: string | null | undefined) {
+  return (value ?? "").trim();
+}
+
 async function readJson<T>(response: Response) {
   return (await response.json().catch(() => null)) as T;
 }
@@ -143,7 +199,7 @@ function statusPillMeta(status: string | null | undefined) {
 
 export function ServerlessRuntimeClient({ deploymentId, botName, initialState }: Props) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<"chat" | "settings" | "debug">("chat");
+  const [activeTab, setActiveTab] = useState<"chat" | "memory" | "settings" | "debug">("chat");
 
   const [deployment, setDeployment] = useState<DeploymentState | null>(
     initialState
@@ -152,6 +208,7 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
           health: initialState.health ?? null,
           settings: {
             modelProvider: normalizeModelProvider(initialState.settings.modelProvider),
+            defaultModel: normalizeDefaultModel(initialState.settings.defaultModel),
             hasOpenaiApiKey: Boolean(initialState.settings.hasOpenaiApiKey),
             hasAnthropicApiKey: Boolean(initialState.settings.hasAnthropicApiKey),
             hasOpenrouterApiKey: Boolean(initialState.settings.hasOpenrouterApiKey),
@@ -163,12 +220,26 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
   const [deploymentLoading, setDeploymentLoading] = useState(!initialState);
   const [deploymentError, setDeploymentError] = useState("");
 
+  const [sessions, setSessions] = useState<RuntimeSession[]>([]);
+  const [sessionsLoading, setSessionsLoading] = useState(true);
+  const [sessionsError, setSessionsError] = useState("");
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [creatingSession, setCreatingSession] = useState(false);
+
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(true);
   const [chatError, setChatError] = useState("");
   const [sending, setSending] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [draft, setDraft] = useState("");
+
+  const [memoryDocs, setMemoryDocs] = useState<MemoryDoc[]>([]);
+  const [memoryLoading, setMemoryLoading] = useState(true);
+  const [memoryError, setMemoryError] = useState("");
+  const [memoryMessage, setMemoryMessage] = useState("");
+  const [memorySaving, setMemorySaving] = useState(false);
+  const [selectedDocKey, setSelectedDocKey] = useState<string | null>(null);
+  const [docDrafts, setDocDrafts] = useState<Record<string, string>>({});
 
   const [events, setEvents] = useState<DeploymentEvent[]>([]);
   const [eventsLoading, setEventsLoading] = useState(true);
@@ -179,6 +250,7 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
   const [openrouterApiKey, setOpenrouterApiKey] = useState("");
   const [telegramBotToken, setTelegramBotToken] = useState("");
   const [modelProvider, setModelProvider] = useState("auto");
+  const [defaultModel, setDefaultModel] = useState("");
   const [settingsHydrated, setSettingsHydrated] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsRedeploying, setSettingsRedeploying] = useState(false);
@@ -188,9 +260,15 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
   const title = useMemo(() => (botName?.trim() ? botName.trim() : "Serverless Bot"), [botName]);
   const statusMeta = statusPillMeta(deployment?.status);
 
+  const selectedDoc = useMemo(
+    () => (selectedDocKey ? memoryDocs.find((doc) => doc.docKey === selectedDocKey) ?? null : null),
+    [memoryDocs, selectedDocKey],
+  );
+
   useEffect(() => {
     if (!deployment || settingsHydrated) return;
     setModelProvider(normalizeModelProvider(deployment.settings.modelProvider));
+    setDefaultModel(normalizeDefaultModel(deployment.settings.defaultModel));
     setSettingsHydrated(true);
   }, [deployment, settingsHydrated]);
 
@@ -218,6 +296,7 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
             : null,
         settings: {
           modelProvider: normalizeModelProvider(body.settings?.modelProvider),
+          defaultModel: normalizeDefaultModel(body.settings?.defaultModel),
           hasOpenaiApiKey: Boolean(body.settings?.hasOpenaiApiKey),
           hasAnthropicApiKey: Boolean(body.settings?.hasAnthropicApiKey),
           hasOpenrouterApiKey: Boolean(body.settings?.hasOpenrouterApiKey),
@@ -231,20 +310,74 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
     }
   }
 
-  async function loadMessages() {
+  async function loadSessions() {
+    setSessionsLoading(true);
+    setSessionsError("");
+    try {
+      const response = await fetch(`/api/runtime/${deploymentId}/sessions`, { cache: "no-store" });
+      const body = await readJson<RuntimeSessionsResponse>(response);
+      if (!response.ok || !body?.ok || !Array.isArray(body.sessions)) {
+        throw new Error(body?.error || "Failed to load sessions.");
+      }
+      setSessions(body.sessions);
+      setActiveSessionId((current) => {
+        if (current && body.sessions?.some((item) => item.id === current)) return current;
+        return body.activeSessionId?.trim() || body.sessions?.[0]?.id || null;
+      });
+    } catch (error) {
+      setSessionsError(error instanceof Error ? error.message : "Failed to load sessions.");
+    } finally {
+      setSessionsLoading(false);
+    }
+  }
+
+  async function loadMessages(sessionId: string) {
     setMessagesLoading(true);
     setChatError("");
     try {
-      const response = await fetch(`/api/runtime/${deploymentId}/messages`, { cache: "no-store" });
+      const response = await fetch(`/api/runtime/${deploymentId}/messages?sessionId=${encodeURIComponent(sessionId)}`, {
+        cache: "no-store",
+      });
       const body = await readJson<RuntimeMessagesResponse>(response);
       if (!response.ok || !body?.ok || !Array.isArray(body.messages)) {
         throw new Error(body?.error || "Failed to load chat history.");
+      }
+      if (body.sessionId && body.sessionId !== sessionId) {
+        setActiveSessionId(body.sessionId);
       }
       setMessages(body.messages);
     } catch (error) {
       setChatError(error instanceof Error ? error.message : "Failed to load chat history.");
     } finally {
       setMessagesLoading(false);
+    }
+  }
+
+  async function loadMemoryDocs() {
+    setMemoryLoading(true);
+    setMemoryError("");
+    try {
+      const response = await fetch(`/api/runtime/${deploymentId}/memory`, { cache: "no-store" });
+      const body = await readJson<RuntimeMemoryResponse>(response);
+      if (!response.ok || !body?.ok || !Array.isArray(body.docs)) {
+        throw new Error(body?.error || "Failed to load memory docs.");
+      }
+      setMemoryDocs(body.docs);
+      setDocDrafts((current) => {
+        const next = { ...current };
+        for (const doc of body.docs ?? []) {
+          next[doc.docKey] = doc.content;
+        }
+        return next;
+      });
+      setSelectedDocKey((current) => {
+        if (current && body.docs?.some((doc) => doc.docKey === current)) return current;
+        return body.docs?.[0]?.docKey ?? null;
+      });
+    } catch (error) {
+      setMemoryError(error instanceof Error ? error.message : "Failed to load memory docs.");
+    } finally {
+      setMemoryLoading(false);
     }
   }
 
@@ -274,17 +407,26 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
   }
 
   async function refreshRuntimeData() {
-    await Promise.all([loadDeployment(), loadMessages(), loadEvents()]);
+    await Promise.all([loadDeployment(), loadSessions(), loadMemoryDocs(), loadEvents()]);
   }
 
   useEffect(() => {
     void refreshRuntimeData();
   }, [deploymentId]);
 
+  useEffect(() => {
+    if (!activeSessionId) {
+      setMessages([]);
+      setMessagesLoading(false);
+      return;
+    }
+    void loadMessages(activeSessionId);
+  }, [deploymentId, activeSessionId]);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const nextMessage = draft.trim();
-    if (!nextMessage || sending) return;
+    if (!nextMessage || sending || !activeSessionId) return;
 
     setSending(true);
     setChatError("");
@@ -292,13 +434,28 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
       const response = await fetch(`/api/runtime/${deploymentId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: nextMessage }),
+        body: JSON.stringify({ message: nextMessage, sessionId: activeSessionId }),
       });
       const body = await readJson<RuntimeChatResponse>(response);
       if (!response.ok || !body?.ok || !body.userMessage || !body.assistantMessage) {
         throw new Error(body?.error || "Failed to send message.");
       }
+      if (body.sessionId && body.sessionId !== activeSessionId) {
+        setActiveSessionId(body.sessionId);
+      }
       setMessages((current) => [...current, body.userMessage as ChatMessage, body.assistantMessage as ChatMessage]);
+      setSessions((current) =>
+        current.map((session) =>
+          session.id === (body.sessionId ?? activeSessionId)
+            ? {
+                ...session,
+                updatedAt: new Date().toISOString(),
+                lastMessageAt: new Date().toISOString(),
+                messageCount: session.messageCount + 2,
+              }
+            : session,
+        ),
+      );
       setDraft("");
       await loadDeployment();
     } catch (error) {
@@ -308,24 +465,103 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
     }
   }
 
-  async function handleNewChatSession() {
-    if (clearing) return;
-    const confirmed = window.confirm("Start a new chat session? This clears the current runtime chat history.");
+  async function handleCreateSession() {
+    if (creatingSession || sending || clearing) return;
+
+    const promptValue = window.prompt("Session name (optional)", "");
+    if (promptValue === null) return;
+    const providedName = promptValue;
+
+    setCreatingSession(true);
+    setChatError("");
+    try {
+      const response = await fetch(`/api/runtime/${deploymentId}/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(providedName.trim() ? { name: providedName.trim() } : {}),
+      });
+      const body = await readJson<RuntimeCreateSessionResponse>(response);
+      if (!response.ok || !body?.ok || !body.session) {
+        throw new Error(body?.error || "Failed to create session.");
+      }
+      setSessions((current) => [body.session as RuntimeSession, ...current]);
+      setActiveSessionId(body.session.id);
+      setMessages([]);
+      setDraft("");
+    } catch (error) {
+      setChatError(error instanceof Error ? error.message : "Failed to create session.");
+    } finally {
+      setCreatingSession(false);
+    }
+  }
+
+  async function handleClearCurrentSession() {
+    if (clearing || sending || !activeSessionId) return;
+    const confirmed = window.confirm("Clear all messages in the current session?");
     if (!confirmed) return;
 
     setClearing(true);
     setChatError("");
     try {
-      const response = await fetch(`/api/runtime/${deploymentId}/messages`, { method: "DELETE" });
+      const response = await fetch(
+        `/api/runtime/${deploymentId}/messages?sessionId=${encodeURIComponent(activeSessionId)}`,
+        { method: "DELETE" },
+      );
       const body = (await readJson<{ ok?: boolean; error?: string }>(response)) ?? null;
       if (!response.ok || !body?.ok) {
-        throw new Error(body?.error || "Failed to clear chat session.");
+        throw new Error(body?.error || "Failed to clear session messages.");
       }
       setMessages([]);
+      setSessions((current) =>
+        current.map((session) =>
+          session.id === activeSessionId
+            ? {
+                ...session,
+                messageCount: 0,
+                lastMessageAt: null,
+                updatedAt: new Date().toISOString(),
+              }
+            : session,
+        ),
+      );
     } catch (error) {
-      setChatError(error instanceof Error ? error.message : "Failed to clear chat session.");
+      setChatError(error instanceof Error ? error.message : "Failed to clear session messages.");
     } finally {
       setClearing(false);
+    }
+  }
+
+  async function handleSaveMemoryDoc() {
+    if (memorySaving || !selectedDocKey) return;
+
+    setMemorySaving(true);
+    setMemoryError("");
+    setMemoryMessage("");
+    try {
+      const response = await fetch(`/api/runtime/${deploymentId}/memory`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          docKey: selectedDocKey,
+          content: docDrafts[selectedDocKey] ?? "",
+        }),
+      });
+      const body = await readJson<RuntimeMemoryPatchResponse>(response);
+      if (!response.ok || !body?.ok || !body.doc) {
+        throw new Error(body?.error || "Failed to save memory doc.");
+      }
+      setMemoryDocs((current) =>
+        current.map((doc) =>
+          doc.docKey === selectedDocKey
+            ? { ...doc, content: body.doc?.content ?? doc.content, updatedAt: body.doc?.updatedAt ?? doc.updatedAt }
+            : doc,
+        ),
+      );
+      setMemoryMessage(`Saved ${selectedDocKey}.`);
+    } catch (error) {
+      setMemoryError(error instanceof Error ? error.message : "Failed to save memory doc.");
+    } finally {
+      setMemorySaving(false);
     }
   }
 
@@ -344,6 +580,13 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
       if (normalizeModelProvider(modelProvider) !== currentModelProvider) {
         payload.modelProvider = normalizeModelProvider(modelProvider);
       }
+
+      const currentDefaultModel = normalizeDefaultModel(deployment?.settings.defaultModel);
+      const nextDefaultModel = normalizeDefaultModel(defaultModel);
+      if (nextDefaultModel && nextDefaultModel !== currentDefaultModel) {
+        payload.defaultModel = nextDefaultModel;
+      }
+
       if (openaiApiKey.trim()) payload.openaiApiKey = openaiApiKey.trim();
       if (anthropicApiKey.trim()) payload.anthropicApiKey = anthropicApiKey.trim();
       if (openrouterApiKey.trim()) payload.openrouterApiKey = openrouterApiKey.trim();
@@ -367,6 +610,10 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
       setAnthropicApiKey("");
       setOpenrouterApiKey("");
       setTelegramBotToken("");
+
+      if (saveBody?.settings?.defaultModel && saveBody.settings.defaultModel !== defaultModel) {
+        setDefaultModel(saveBody.settings.defaultModel);
+      }
 
       if (redeployAfterSave) {
         const redeployResponse = await fetch("/api/deployments", {
@@ -406,7 +653,7 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
   }
 
   return (
-    <main className="container" style={{ maxWidth: 1080 }}>
+    <main className="container" style={{ maxWidth: 1180 }}>
       <div className="card" style={{ gap: 14 }}>
         <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ display: "grid", gap: 4 }}>
@@ -448,6 +695,13 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
           </button>
           <button
             type="button"
+            className={`button ${activeTab === "memory" ? "" : "secondary"}`}
+            onClick={() => setActiveTab("memory")}
+          >
+            Memory
+          </button>
+          <button
+            type="button"
             className={`button ${activeTab === "settings" ? "" : "secondary"}`}
             onClick={() => setActiveTab("settings")}
           >
@@ -464,6 +718,81 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
 
         {activeTab === "chat" ? (
           <section style={{ display: "grid", gap: 10 }}>
+            <div
+              style={{
+                border: "1px solid var(--border)",
+                borderRadius: 10,
+                background: "var(--surface-strong)",
+                padding: 12,
+                display: "grid",
+                gap: 8,
+              }}
+            >
+              <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                <p className="muted" style={{ margin: 0 }}>
+                  Sessions
+                </p>
+                <div className="row">
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={() => void loadSessions()}
+                    disabled={sessionsLoading || creatingSession}
+                  >
+                    Refresh sessions
+                  </button>
+                  <button
+                    className="button"
+                    type="button"
+                    onClick={() => void handleCreateSession()}
+                    disabled={creatingSession || sending || clearing}
+                  >
+                    {creatingSession ? "Creating..." : "New session"}
+                  </button>
+                </div>
+              </div>
+
+              {sessionsLoading ? (
+                <p className="muted" style={{ margin: 0 }}>
+                  Loading sessions...
+                </p>
+              ) : sessions.length === 0 ? (
+                <p className="muted" style={{ margin: 0 }}>
+                  No sessions yet.
+                </p>
+              ) : (
+                <div style={{ display: "grid", gap: 6, maxHeight: 200, overflowY: "auto" }}>
+                  {sessions.map((session) => {
+                    const active = session.id === activeSessionId;
+                    return (
+                      <button
+                        key={session.id}
+                        type="button"
+                        className={`button ${active ? "" : "secondary"}`}
+                        onClick={() => setActiveSessionId(session.id)}
+                        style={{
+                          justifyContent: "space-between",
+                          minHeight: 0,
+                          padding: "10px 12px",
+                        }}
+                      >
+                        <span style={{ textAlign: "left" }}>{session.name}</span>
+                        <span style={{ fontSize: 12, opacity: 0.85 }}>
+                          {session.messageCount} msg
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {sessionsError ? (
+                <p role="alert" style={{ color: "#ff8e8e", margin: 0 }}>
+                  {sessionsError}
+                </p>
+              ) : null}
+            </div>
+
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
               <p className="muted" style={{ margin: 0 }}>
                 Model reply target: a few seconds
@@ -471,10 +800,10 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
               <button
                 className="button secondary"
                 type="button"
-                onClick={() => void handleNewChatSession()}
-                disabled={clearing || sending}
+                onClick={() => void handleClearCurrentSession()}
+                disabled={clearing || sending || !activeSessionId}
               >
-                {clearing ? "Clearing..." : "New chat session"}
+                {clearing ? "Clearing..." : "Clear current session"}
               </button>
             </div>
 
@@ -483,7 +812,7 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
                 border: "1px solid var(--border)",
                 borderRadius: 10,
                 background: "var(--surface-strong)",
-                maxHeight: "56vh",
+                maxHeight: "52vh",
                 overflowY: "auto",
                 padding: 12,
                 display: "grid",
@@ -494,9 +823,13 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
                 <p className="muted" style={{ margin: 0 }}>
                   Loading messages...
                 </p>
+              ) : !activeSessionId ? (
+                <p className="muted" style={{ margin: 0 }}>
+                  Select or create a session to start chatting.
+                </p>
               ) : messages.length === 0 ? (
                 <p className="muted" style={{ margin: 0 }}>
-                  No messages yet. Send one to start.
+                  No messages yet in this session.
                 </p>
               ) : (
                 messages.map((message) => (
@@ -524,10 +857,10 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
                 onChange={(event) => setDraft(event.target.value)}
                 placeholder="Type your message..."
                 rows={4}
-                disabled={sending || clearing}
+                disabled={sending || clearing || !activeSessionId}
               />
               <div className="row" style={{ justifyContent: "flex-end" }}>
-                <button className="button" type="submit" disabled={sending || clearing || !draft.trim()}>
+                <button className="button" type="submit" disabled={sending || clearing || !draft.trim() || !activeSessionId}>
                   {sending ? "Sending..." : "Send"}
                 </button>
               </div>
@@ -541,11 +874,99 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
           </section>
         ) : null}
 
+        {activeTab === "memory" ? (
+          <section style={{ display: "grid", gap: 10 }}>
+            <p className="muted" style={{ margin: 0 }}>
+              Edit runtime memory docs used by the chat system prompt.
+            </p>
+
+            <div className="row" style={{ alignItems: "flex-end" }}>
+              <label className="muted" style={{ display: "grid", gap: 6, minWidth: 220 }}>
+                Memory file
+                <select
+                  className="input"
+                  value={selectedDocKey ?? ""}
+                  onChange={(event) => setSelectedDocKey(event.target.value || null)}
+                  disabled={memoryLoading || memorySaving || memoryDocs.length === 0}
+                >
+                  {(memoryDocs ?? []).map((doc) => (
+                    <option key={doc.docKey} value={doc.docKey}>
+                      {doc.docKey}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() => void loadMemoryDocs()}
+                disabled={memoryLoading || memorySaving}
+              >
+                Refresh docs
+              </button>
+            </div>
+
+            {memoryLoading ? (
+              <p className="muted" style={{ margin: 0 }}>
+                Loading memory docs...
+              </p>
+            ) : selectedDocKey ? (
+              <>
+                <textarea
+                  className="input"
+                  rows={18}
+                  value={docDrafts[selectedDocKey] ?? ""}
+                  onChange={(event) =>
+                    setDocDrafts((current) => ({
+                      ...current,
+                      [selectedDocKey]: event.target.value,
+                    }))
+                  }
+                  placeholder="Write instructions or persona content for this memory doc..."
+                  style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
+                  disabled={memorySaving}
+                />
+                <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                  <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+                    Last updated:{" "}
+                    <code>{selectedDoc?.updatedAt ? new Date(selectedDoc.updatedAt).toLocaleString() : "never"}</code>
+                  </p>
+                  <button className="button" type="button" onClick={() => void handleSaveMemoryDoc()} disabled={memorySaving}>
+                    {memorySaving ? "Saving..." : "Save memory file"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p className="muted" style={{ margin: 0 }}>
+                No memory files available.
+              </p>
+            )}
+
+            {memoryMessage ? <p className="muted" style={{ margin: 0 }}>{memoryMessage}</p> : null}
+            {memoryError ? (
+              <p role="alert" style={{ color: "#ff8e8e", margin: 0 }}>
+                {memoryError}
+              </p>
+            ) : null}
+          </section>
+        ) : null}
+
         {activeTab === "settings" ? (
           <section style={{ display: "grid", gap: 10 }}>
             <p className="muted" style={{ margin: 0 }}>
-              Update model and channel credentials. Values stay hidden; leave blank to keep existing secrets.
+              Update default model, provider preference, and runtime credentials. Leave secrets blank to keep existing values.
             </p>
+
+            <label className="muted" style={{ display: "grid", gap: 6 }}>
+              Default model
+              <input
+                className="input"
+                value={defaultModel}
+                onChange={(event) => setDefaultModel(event.target.value)}
+                placeholder="gpt-4o-mini or claude-3-5-haiku-latest"
+                disabled={settingsSaving || settingsRedeploying}
+              />
+            </label>
 
             <label className="muted" style={{ display: "grid", gap: 6 }}>
               Preferred model provider
@@ -673,6 +1094,9 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
                 Health: <code>{deployment?.health ? `${deployment.health.ok ? "ok" : "not_ok"} (${deployment.health.status})` : "unknown"}</code>
               </p>
               <p className="muted" style={{ margin: 0 }}>
+                Active sessions: <code>{sessions.length}</code>
+              </p>
+              <p className="muted" style={{ margin: 0 }}>
                 Updated: <code>{deployment?.updatedAt ? new Date(deployment.updatedAt).toLocaleString() : "unknown"}</code>
               </p>
               {deployment?.error ? (
@@ -740,7 +1164,7 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
           </section>
         ) : null}
 
-        {(deploymentLoading && activeTab !== "chat") ? (
+        {deploymentLoading && activeTab !== "chat" ? (
           <p className="muted" style={{ margin: 0 }}>
             Refreshing deployment details...
           </p>

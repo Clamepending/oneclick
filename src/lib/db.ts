@@ -46,6 +46,7 @@ export async function ensureSchema() {
       runtime_id TEXT,
       deploy_provider TEXT,
       model_provider TEXT,
+      default_model TEXT,
       subsidy_proxy_token TEXT,
       openai_api_key TEXT,
       anthropic_api_key TEXT,
@@ -64,6 +65,7 @@ export async function ensureSchema() {
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS runtime_id TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS deploy_provider TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS model_provider TEXT;`);
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS default_model TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS bot_name TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS subsidy_proxy_token TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS openai_api_key TEXT;`);
@@ -114,14 +116,27 @@ export async function ensureSchema() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS runtime_chat_sessions (
+      id TEXT PRIMARY KEY,
+      deployment_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS runtime_chat_messages (
       id BIGSERIAL PRIMARY KEY,
       deployment_id TEXT NOT NULL,
+      session_id TEXT,
       role TEXT NOT NULL,
       content TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+
+  await pool.query(`ALTER TABLE runtime_chat_messages ADD COLUMN IF NOT EXISTS session_id TEXT;`);
 
   await pool.query(`
     CREATE INDEX IF NOT EXISTS deployment_events_deployment_id_idx
@@ -131,6 +146,50 @@ export async function ensureSchema() {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS runtime_chat_messages_deployment_id_idx
     ON runtime_chat_messages (deployment_id, id);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS runtime_chat_sessions_deployment_id_idx
+    ON runtime_chat_sessions (deployment_id, updated_at DESC, created_at DESC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS runtime_chat_messages_deployment_session_id_idx
+    ON runtime_chat_messages (deployment_id, session_id, id);
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS runtime_memory_docs (
+      deployment_id TEXT NOT NULL,
+      doc_key TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (deployment_id, doc_key)
+    );
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS runtime_memory_docs_deployment_id_idx
+    ON runtime_memory_docs (deployment_id, updated_at DESC);
+  `);
+
+  await pool.query(`
+    WITH legacy_deployments AS (
+      SELECT DISTINCT deployment_id
+      FROM runtime_chat_messages
+      WHERE session_id IS NULL
+    ),
+    created AS (
+      INSERT INTO runtime_chat_sessions (id, deployment_id, name, created_at, updated_at)
+      SELECT CONCAT('legacy_', deployment_id), deployment_id, 'Session 1', NOW(), NOW()
+      FROM legacy_deployments
+      ON CONFLICT (id) DO NOTHING
+      RETURNING id
+    )
+    UPDATE runtime_chat_messages
+    SET session_id = CONCAT('legacy_', deployment_id)
+    WHERE session_id IS NULL;
   `);
 
   await pool.query(`

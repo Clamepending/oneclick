@@ -195,6 +195,7 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
     error: string | null;
     deployment_flavor: string | null;
     model_provider: string | null;
+    default_model: string | null;
     openai_api_key: string | null;
     anthropic_api_key: string | null;
     openrouter_api_key: string | null;
@@ -203,7 +204,7 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
     updated_at: string;
   }>(
     `SELECT bot_name, status, deploy_provider, runtime_id, ready_url, error, deployment_flavor,
-            model_provider, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token,
+            model_provider, default_model, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token,
             created_at, updated_at
      FROM deployments
      WHERE id = $1
@@ -234,6 +235,7 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
             updatedAt: deployment.updated_at,
             settings: {
               modelProvider: deployment.model_provider?.trim() || "auto",
+              defaultModel: deployment.default_model?.trim() || "",
               hasOpenaiApiKey: Boolean(deployment.openai_api_key?.trim()),
               hasAnthropicApiKey: Boolean(deployment.anthropic_api_key?.trim()),
               hasOpenrouterApiKey: Boolean(deployment.openrouter_api_key?.trim()),

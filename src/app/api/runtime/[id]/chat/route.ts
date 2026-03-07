@@ -2,9 +2,11 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
+import { ensureRuntimeSession, touchRuntimeSession } from "../shared";
 
 const payloadSchema = z.object({
   message: z.string().trim().min(1).max(8000),
+  sessionId: z.string().trim().min(1).max(120).optional(),
 });
 
 type DeploymentRow = {
@@ -12,6 +14,7 @@ type DeploymentRow = {
   status: string;
   deploy_provider: string | null;
   model_provider: string | null;
+  default_model: string | null;
   openai_api_key: string | null;
   anthropic_api_key: string | null;
   openrouter_api_key: string | null;
@@ -29,22 +32,47 @@ type InsertedMessageRow = {
   created_at: string;
 };
 
+type MemoryDocRow = {
+  doc_key: string;
+  content: string;
+};
+
 function readTrimmedEnv(name: string) {
   const raw = process.env[name];
   if (!raw) return "";
   return raw.trim().replace(/^"(.*)"$/, "$1").replace(/\\n/g, "").trim();
 }
 
-function resolveSystemPrompt() {
-  return readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_SYSTEM_PROMPT") || "You are a concise, helpful assistant.";
+function clipForPrompt(value: string, maxChars: number) {
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, maxChars)}\n...[truncated]`;
 }
 
-function resolveOpenAiModel() {
-  return readTrimmedEnv("SIMPLE_AGENT_MODEL") || "gpt-4o-mini";
+function resolveSystemPrompt(memoryDocs: MemoryDocRow[]) {
+  const basePrompt = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_SYSTEM_PROMPT") || "You are a concise, helpful assistant.";
+  if (!memoryDocs.length) return basePrompt;
+
+  const docsBlock = memoryDocs
+    .map((doc) => {
+      const key = doc.doc_key.trim();
+      const content = clipForPrompt(doc.content.trim(), 12_000);
+      return `### ${key}\n${content}`;
+    })
+    .join("\n\n");
+
+  return `${basePrompt}
+
+Follow these runtime memory docs exactly when they apply:
+
+${docsBlock}`;
 }
 
-function resolveAnthropicModel() {
-  return readTrimmedEnv("ANTHROPIC_MODEL") || "claude-3-5-haiku-latest";
+function resolveOpenAiModel(defaultModel: string | null | undefined) {
+  return defaultModel?.trim() || readTrimmedEnv("SIMPLE_AGENT_MODEL") || "gpt-4o-mini";
+}
+
+function resolveAnthropicModel(defaultModel: string | null | undefined) {
+  return defaultModel?.trim() || readTrimmedEnv("ANTHROPIC_MODEL") || "claude-3-5-haiku-latest";
 }
 
 function normalizeBaseUrl(raw: string, fallback: string) {
@@ -198,6 +226,7 @@ export async function POST(
             status,
             deploy_provider,
             model_provider,
+            default_model,
             openai_api_key,
             anthropic_api_key,
             openrouter_api_key,
@@ -219,11 +248,20 @@ export async function POST(
     return NextResponse.json({ ok: false, error: "Deployment is not ready yet." }, { status: 409 });
   }
 
+  const sessionResolution = await ensureRuntimeSession({
+    deploymentId: id,
+    preferredSessionId: parsedBody.data.sessionId,
+  });
+  if (!sessionResolution.found || !sessionResolution.session) {
+    return NextResponse.json({ ok: false, error: "Session not found" }, { status: 404 });
+  }
+  const sessionId = sessionResolution.session.id;
+
   const userInsert = await pool.query<InsertedMessageRow>(
-    `INSERT INTO runtime_chat_messages (deployment_id, role, content)
-     VALUES ($1, 'user', $2)
+    `INSERT INTO runtime_chat_messages (deployment_id, session_id, role, content)
+     VALUES ($1, $2, 'user', $3)
      RETURNING id, content, created_at`,
-    [id, parsedBody.data.message.trim()],
+    [id, sessionId, parsedBody.data.message.trim()],
   );
   const userMessage = userInsert.rows[0];
 
@@ -231,21 +269,32 @@ export async function POST(
     `SELECT role, content
      FROM runtime_chat_messages
      WHERE deployment_id = $1
+       AND session_id = $2
        AND role IN ('user', 'assistant')
      ORDER BY id DESC
      LIMIT 24`,
-    [id],
+    [id, sessionId],
   );
   const contextMessages: StoredMessage[] = history.rows
     .reverse()
     .map((item) => ({ role: item.role as "user" | "assistant", content: item.content }));
 
-  const systemPrompt = resolveSystemPrompt();
+  const memoryDocs = await pool.query<MemoryDocRow>(
+    `SELECT doc_key, content
+     FROM runtime_memory_docs
+     WHERE deployment_id = $1
+       AND LENGTH(TRIM(content)) > 0
+     ORDER BY doc_key ASC
+     LIMIT 12`,
+    [id],
+  );
+  const systemPrompt = resolveSystemPrompt(memoryDocs.rows);
   const openaiApiKey = row.openai_api_key?.trim() || "";
   const openrouterApiKey = row.openrouter_api_key?.trim() || "";
   const anthropicApiKey = row.anthropic_api_key?.trim() || "";
   const subsidyToken = row.subsidy_proxy_token?.trim() || "";
   const preferredModelProvider = (row.model_provider ?? "").trim().toLowerCase();
+  const defaultModel = row.default_model?.trim() || null;
 
   let assistantText = "";
   try {
@@ -256,7 +305,7 @@ export async function POST(
       assistantText = await callOpenAiCompatible({
         baseUrl: normalizeBaseUrl(readTrimmedEnv("OPENROUTER_BASE_URL"), "https://openrouter.ai/api/v1"),
         token: openrouterApiKey,
-        model: resolveOpenAiModel(),
+        model: resolveOpenAiModel(defaultModel),
         systemPrompt,
         messages: contextMessages,
         extraHeaders: {
@@ -270,12 +319,12 @@ export async function POST(
       }
       const origin = new URL(request.url).origin;
       const baseUrl = subsidyToken
-        ? `${origin}/api/subsidy/openai/${id}/v1`
+        ? `${origin}/api/subsidy/openai/${id}`
         : normalizeBaseUrl(readTrimmedEnv("OPENAI_BASE_URL") || readTrimmedEnv("OPENAI_API_BASE"), "https://api.openai.com/v1");
       assistantText = await callOpenAiCompatible({
         baseUrl,
         token: subsidyToken || openaiApiKey,
-        model: resolveOpenAiModel(),
+        model: resolveOpenAiModel(defaultModel),
         systemPrompt,
         messages: contextMessages,
       });
@@ -285,7 +334,7 @@ export async function POST(
       }
       assistantText = await callAnthropic({
         token: anthropicApiKey,
-        model: resolveAnthropicModel(),
+        model: resolveAnthropicModel(defaultModel),
         systemPrompt,
         messages: contextMessages,
       });
@@ -293,7 +342,7 @@ export async function POST(
       assistantText = await callOpenAiCompatible({
         baseUrl: normalizeBaseUrl(readTrimmedEnv("OPENROUTER_BASE_URL"), "https://openrouter.ai/api/v1"),
         token: openrouterApiKey,
-        model: resolveOpenAiModel(),
+        model: resolveOpenAiModel(defaultModel),
         systemPrompt,
         messages: contextMessages,
         extraHeaders: {
@@ -309,14 +358,14 @@ export async function POST(
       assistantText = await callOpenAiCompatible({
         baseUrl,
         token: subsidyToken || openaiApiKey,
-        model: resolveOpenAiModel(),
+        model: resolveOpenAiModel(defaultModel),
         systemPrompt,
         messages: contextMessages,
       });
     } else if (anthropicApiKey) {
       assistantText = await callAnthropic({
         token: anthropicApiKey,
-        model: resolveAnthropicModel(),
+        model: resolveAnthropicModel(defaultModel),
         systemPrompt,
         messages: contextMessages,
       });
@@ -329,15 +378,17 @@ export async function POST(
   }
 
   const assistantInsert = await pool.query<InsertedMessageRow>(
-    `INSERT INTO runtime_chat_messages (deployment_id, role, content)
-     VALUES ($1, 'assistant', $2)
+    `INSERT INTO runtime_chat_messages (deployment_id, session_id, role, content)
+     VALUES ($1, $2, 'assistant', $3)
      RETURNING id, content, created_at`,
-    [id, assistantText],
+    [id, sessionId, assistantText],
   );
   const assistantMessage = assistantInsert.rows[0];
+  await touchRuntimeSession({ deploymentId: id, sessionId });
 
   return NextResponse.json({
     ok: true,
+    sessionId,
     userMessage: {
       id: userMessage.id,
       role: "user",

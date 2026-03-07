@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
+import { ensureRuntimeSession, requireOwnedServerlessDeployment, touchRuntimeSession } from "../shared";
 
 type MessageRow = {
   id: number;
@@ -10,7 +11,7 @@ type MessageRow = {
 };
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
   const session = await auth();
@@ -22,33 +23,34 @@ export async function GET(
   const { id } = await context.params;
   await ensureSchema();
 
-  const deployment = await pool.query<{ id: string; deploy_provider: string | null }>(
-    `SELECT id, deploy_provider
-     FROM deployments
-     WHERE id = $1
-       AND user_id = $2
-     LIMIT 1`,
-    [id, userId],
-  );
-  const row = deployment.rows[0];
-  if (!row) {
-    return NextResponse.json({ ok: false, error: "Deployment not found" }, { status: 404 });
+  const access = await requireOwnedServerlessDeployment({ deploymentId: id, userId });
+  if (!access.ok) {
+    return NextResponse.json({ ok: false, error: access.error }, { status: access.status });
   }
-  if ((row.deploy_provider ?? "").trim().toLowerCase() !== "lambda") {
-    return NextResponse.json({ ok: false, error: "Runtime is not serverless." }, { status: 400 });
+
+  const requestedSessionId = new URL(request.url).searchParams.get("sessionId");
+  const resolved = await ensureRuntimeSession({
+    deploymentId: id,
+    preferredSessionId: requestedSessionId,
+  });
+  if (!resolved.found || !resolved.session) {
+    return NextResponse.json({ ok: false, error: "Session not found" }, { status: 404 });
   }
+  const sessionId = resolved.session.id;
 
   const messages = await pool.query<MessageRow>(
     `SELECT id, role, content, created_at
      FROM runtime_chat_messages
      WHERE deployment_id = $1
+       AND session_id = $2
      ORDER BY id ASC
      LIMIT 300`,
-    [id],
+    [id, sessionId],
   );
 
   return NextResponse.json({
     ok: true,
+    sessionId,
     messages: messages.rows
       .filter((item) => item.role === "user" || item.role === "assistant")
       .map((item) => ({
@@ -61,7 +63,7 @@ export async function GET(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
   const session = await auth();
@@ -73,31 +75,33 @@ export async function DELETE(
   const { id } = await context.params;
   await ensureSchema();
 
-  const deployment = await pool.query<{ id: string; deploy_provider: string | null }>(
-    `SELECT id, deploy_provider
-     FROM deployments
-     WHERE id = $1
-       AND user_id = $2
-     LIMIT 1`,
-    [id, userId],
-  );
-  const row = deployment.rows[0];
-  if (!row) {
-    return NextResponse.json({ ok: false, error: "Deployment not found" }, { status: 404 });
+  const access = await requireOwnedServerlessDeployment({ deploymentId: id, userId });
+  if (!access.ok) {
+    return NextResponse.json({ ok: false, error: access.error }, { status: access.status });
   }
-  if ((row.deploy_provider ?? "").trim().toLowerCase() !== "lambda") {
-    return NextResponse.json({ ok: false, error: "Runtime is not serverless." }, { status: 400 });
+
+  const requestedSessionId = new URL(request.url).searchParams.get("sessionId");
+  const resolved = await ensureRuntimeSession({
+    deploymentId: id,
+    preferredSessionId: requestedSessionId,
+  });
+  if (!resolved.found || !resolved.session) {
+    return NextResponse.json({ ok: false, error: "Session not found" }, { status: 404 });
   }
+  const sessionId = resolved.session.id;
 
   const deleted = await pool.query<{ id: number }>(
     `DELETE FROM runtime_chat_messages
      WHERE deployment_id = $1
+       AND session_id = $2
      RETURNING id`,
-    [id],
+    [id, sessionId],
   );
+  await touchRuntimeSession({ deploymentId: id, sessionId });
 
   return NextResponse.json({
     ok: true,
+    sessionId,
     deletedCount: deleted.rowCount ?? 0,
   });
 }

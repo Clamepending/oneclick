@@ -78,6 +78,7 @@ export async function GET(
     runtime_id: string | null;
     deploy_provider: string | null;
     model_provider: string | null;
+    default_model: string | null;
     openai_api_key: string | null;
     anthropic_api_key: string | null;
     openrouter_api_key: string | null;
@@ -94,7 +95,7 @@ export async function GET(
     created_at: string;
     updated_at: string;
   }>(
-    `SELECT id, bot_name, status, host_name, runtime_id, deploy_provider, model_provider,
+    `SELECT id, bot_name, status, host_name, runtime_id, deploy_provider, model_provider, default_model,
             openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token,
             plan_tier, deployment_flavor, trial_started_at, trial_expires_at, deactivated_at, deactivation_reason, monthly_price_cents,
             ready_url, error, created_at, updated_at
@@ -166,6 +167,7 @@ export async function GET(
     monthlyPriceCents: item.monthly_price_cents,
     settings: {
       modelProvider: item.model_provider?.trim() || "auto",
+      defaultModel: item.default_model?.trim() || "",
       hasOpenaiApiKey: Boolean(item.openai_api_key?.trim()),
       hasAnthropicApiKey: Boolean(item.anthropic_api_key?.trim()),
       hasOpenrouterApiKey: Boolean(item.openrouter_api_key?.trim()),
@@ -262,6 +264,9 @@ export async function DELETE(
     }
 
     await pool.query(`DELETE FROM deployment_events WHERE deployment_id = $1`, [id]);
+    await pool.query(`DELETE FROM runtime_chat_messages WHERE deployment_id = $1`, [id]);
+    await pool.query(`DELETE FROM runtime_chat_sessions WHERE deployment_id = $1`, [id]);
+    await pool.query(`DELETE FROM runtime_memory_docs WHERE deployment_id = $1`, [id]);
     await pool.query(`DELETE FROM deployments WHERE id = $1 AND user_id = $2`, [id, session.user.email]);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to delete deployment";
