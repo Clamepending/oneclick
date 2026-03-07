@@ -304,7 +304,7 @@ export async function POST(
     } else if (openaiApiKey || subsidyToken) {
       const origin = new URL(request.url).origin;
       const baseUrl = subsidyToken
-        ? `${origin}/api/subsidy/openai/${id}/v1`
+        ? `${origin}/api/subsidy/openai/${id}`
         : normalizeBaseUrl(readTrimmedEnv("OPENAI_BASE_URL") || readTrimmedEnv("OPENAI_API_BASE"), "https://api.openai.com/v1");
       assistantText = await callOpenAiCompatible({
         baseUrl,
