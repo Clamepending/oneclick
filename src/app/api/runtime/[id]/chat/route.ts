@@ -11,6 +11,7 @@ type DeploymentRow = {
   id: string;
   status: string;
   deploy_provider: string | null;
+  model_provider: string | null;
   openai_api_key: string | null;
   anthropic_api_key: string | null;
   openrouter_api_key: string | null;
@@ -196,6 +197,7 @@ export async function POST(
     `SELECT id,
             status,
             deploy_provider,
+            model_provider,
             openai_api_key,
             anthropic_api_key,
             openrouter_api_key,
@@ -243,10 +245,51 @@ export async function POST(
   const openrouterApiKey = row.openrouter_api_key?.trim() || "";
   const anthropicApiKey = row.anthropic_api_key?.trim() || "";
   const subsidyToken = row.subsidy_proxy_token?.trim() || "";
+  const preferredModelProvider = (row.model_provider ?? "").trim().toLowerCase();
 
   let assistantText = "";
   try {
-    if (openrouterApiKey) {
+    if (preferredModelProvider === "openrouter") {
+      if (!openrouterApiKey) {
+        throw new Error("Model provider is set to OpenRouter, but no OpenRouter API key is configured.");
+      }
+      assistantText = await callOpenAiCompatible({
+        baseUrl: normalizeBaseUrl(readTrimmedEnv("OPENROUTER_BASE_URL"), "https://openrouter.ai/api/v1"),
+        token: openrouterApiKey,
+        model: resolveOpenAiModel(),
+        systemPrompt,
+        messages: contextMessages,
+        extraHeaders: {
+          "HTTP-Referer": normalizeOriginUrl(readTrimmedEnv("APP_BASE_URL"), "http://localhost:3000"),
+          "X-Title": "OneClick Serverless Runtime",
+        },
+      });
+    } else if (preferredModelProvider === "openai") {
+      if (!openaiApiKey && !subsidyToken) {
+        throw new Error("Model provider is set to OpenAI, but no OpenAI key or subsidy token is available.");
+      }
+      const origin = new URL(request.url).origin;
+      const baseUrl = subsidyToken
+        ? `${origin}/api/subsidy/openai/${id}/v1`
+        : normalizeBaseUrl(readTrimmedEnv("OPENAI_BASE_URL") || readTrimmedEnv("OPENAI_API_BASE"), "https://api.openai.com/v1");
+      assistantText = await callOpenAiCompatible({
+        baseUrl,
+        token: subsidyToken || openaiApiKey,
+        model: resolveOpenAiModel(),
+        systemPrompt,
+        messages: contextMessages,
+      });
+    } else if (preferredModelProvider === "anthropic") {
+      if (!anthropicApiKey) {
+        throw new Error("Model provider is set to Anthropic, but no Anthropic API key is configured.");
+      }
+      assistantText = await callAnthropic({
+        token: anthropicApiKey,
+        model: resolveAnthropicModel(),
+        systemPrompt,
+        messages: contextMessages,
+      });
+    } else if (openrouterApiKey) {
       assistantText = await callOpenAiCompatible({
         baseUrl: normalizeBaseUrl(readTrimmedEnv("OPENROUTER_BASE_URL"), "https://openrouter.ai/api/v1"),
         token: openrouterApiKey,

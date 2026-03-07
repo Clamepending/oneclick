@@ -20,6 +20,7 @@ const payloadSchema = z
     anthropicApiKey: z.string().trim().min(1).max(300).optional(),
     openrouterApiKey: z.string().trim().min(1).max(300).optional(),
     telegramBotToken: z.string().trim().min(1).max(300).optional(),
+    modelProvider: z.enum(["auto", "openai", "openrouter", "anthropic"]).optional(),
     redeploy: z.boolean().optional(),
   })
   .refine(
@@ -29,6 +30,7 @@ const payloadSchema = z
           value.anthropicApiKey ||
           value.openrouterApiKey ||
           value.telegramBotToken ||
+          value.modelProvider ||
           value.redeploy,
       ),
     { message: "At least one setting is required" },
@@ -603,14 +605,194 @@ export async function PATCH(
   if (!session?.user?.email) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
-  await request.text().catch(() => "");
-  await context.params;
-  return NextResponse.json(
-    {
-      ok: false,
-      error:
-        "Runtime key editing is disabled. Model API keys and Telegram bot token must be set during setup. Start a new deployment to use different keys.",
-    },
-    { status: 410 },
+
+  const { id } = await context.params;
+  const parsed = payloadSchema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) {
+    return NextResponse.json({ ok: false, error: "Invalid settings payload" }, { status: 400 });
+  }
+
+  await ensureSchema();
+  const owned = await pool.query<{
+    id: string;
+    status: string;
+    bot_name: string | null;
+    model_provider: string | null;
+    openai_api_key: string | null;
+    anthropic_api_key: string | null;
+    openrouter_api_key: string | null;
+    telegram_bot_token: string | null;
+    deploy_provider: string | null;
+    runtime_id: string | null;
+    ready_url: string | null;
+    plan_tier: string | null;
+    deployment_flavor: string | null;
+  }>(
+    `SELECT id, status, bot_name, model_provider, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token,
+            deploy_provider, runtime_id, ready_url, plan_tier, deployment_flavor
+     FROM deployments
+     WHERE id = $1 AND user_id = $2
+     LIMIT 1`,
+    [id, session.user.email],
   );
+  const current = owned.rows[0];
+  if (!current) {
+    return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
+  }
+
+  const {
+    openaiApiKey,
+    anthropicApiKey,
+    openrouterApiKey,
+    telegramBotToken,
+    modelProvider,
+    redeploy,
+  } = parsed.data;
+  const normalizedModelProvider = modelProvider?.trim().toLowerCase() || null;
+
+  const updated = await pool.query<{
+    bot_name: string | null;
+    model_provider: string | null;
+    openai_api_key: string | null;
+    anthropic_api_key: string | null;
+    openrouter_api_key: string | null;
+    telegram_bot_token: string | null;
+  }>(
+    `UPDATE deployments
+     SET openai_api_key = COALESCE($1, openai_api_key),
+         anthropic_api_key = COALESCE($2, anthropic_api_key),
+         openrouter_api_key = COALESCE($3, openrouter_api_key),
+         telegram_bot_token = COALESCE($4, telegram_bot_token),
+         model_provider = CASE
+           WHEN $5::text IS NULL THEN model_provider
+           WHEN $5::text = 'auto' THEN NULL
+           ELSE $5
+         END,
+         updated_at = NOW()
+     WHERE id = $6 AND user_id = $7
+     RETURNING bot_name, model_provider, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token`,
+    [
+      openaiApiKey ?? null,
+      anthropicApiKey ?? null,
+      openrouterApiKey ?? null,
+      telegramBotToken ?? null,
+      normalizedModelProvider,
+      id,
+      session.user.email,
+    ],
+  );
+
+  const source = updated.rows[0] ?? current;
+  let liveApply:
+    | { attempted: boolean; applied: boolean; reason?: string }
+    | undefined;
+  if (telegramBotToken?.trim()) {
+    liveApply = await tryHotApplyTelegramToken({
+      deploymentId: id,
+      deployProvider: current.deploy_provider,
+      runtimeId: current.runtime_id,
+      readyUrl: current.ready_url,
+      telegramBotToken: telegramBotToken.trim(),
+    });
+  }
+
+  if (!redeploy) {
+    return NextResponse.json({
+      ok: true,
+      liveApply,
+      settings: {
+        modelProvider: source.model_provider?.trim() || "auto",
+        hasOpenaiApiKey: Boolean(source.openai_api_key?.trim()),
+        hasAnthropicApiKey: Boolean(source.anthropic_api_key?.trim()),
+        hasOpenrouterApiKey: Boolean(source.openrouter_api_key?.trim()),
+        hasTelegramBotToken: Boolean(source.telegram_bot_token?.trim()),
+      },
+    });
+  }
+
+  if (current.status === "queued" || current.status === "starting") {
+    return NextResponse.json(
+      { ok: false, error: "Cannot redeploy while this deployment is still in progress." },
+      { status: 409 },
+    );
+  }
+
+  const active = await pool.query<{ count: string }>(
+    `SELECT COUNT(*)::text as count
+     FROM deployments
+     WHERE user_id = $1
+       AND id <> $2
+       AND status IN ('queued', 'starting')`,
+    [session.user.email, id],
+  );
+  const maxActive = Number(process.env.DEPLOY_MAX_ACTIVE_PER_USER ?? "1");
+  if (Number(active.rows[0]?.count ?? "0") >= maxActive) {
+    return NextResponse.json(
+      { ok: false, error: "You already have an active deployment in progress." },
+      { status: 409 },
+    );
+  }
+
+  const nextDeploymentId = newDeploymentId();
+  await pool.query(
+    `INSERT INTO deployments (
+       id, user_id, bot_name, status, model_provider, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token,
+       plan_tier, deployment_flavor, trial_started_at, trial_expires_at, monthly_price_cents
+     )
+     VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, $9, $10, NULL, NULL, NULL)`,
+    [
+      nextDeploymentId,
+      session.user.email,
+      source.bot_name,
+      source.model_provider,
+      source.openai_api_key,
+      source.anthropic_api_key,
+      source.openrouter_api_key,
+      source.telegram_bot_token,
+      current.plan_tier?.trim() || "free",
+      current.deployment_flavor?.trim() || "simple_agent_free",
+    ],
+  );
+
+  await pool.query(
+    `INSERT INTO deployment_events (deployment_id, status, message)
+     VALUES ($1, 'queued', 'Deployment accepted and queued (redeploy from settings)')`,
+    [nextDeploymentId],
+  );
+
+  const queueInfo = getQueueModeInfo();
+  await pool.query(
+    `INSERT INTO deployment_events (deployment_id, status, message)
+     VALUES ($1, 'queued', $2)`,
+    [
+      nextDeploymentId,
+      `Queue routing: runtime=vercel queueProvider=sqs queueUsable=${queueInfo.usable ? "yes" : "no"} endpoint=${summarizeQueueEndpoint(queueInfo.endpoint)} reason=${queueInfo.reason}`,
+    ],
+  );
+
+  if (!queueInfo.usable) {
+    const message = queueUnavailableMessage(queueInfo);
+    await markDeploymentFailed(nextDeploymentId, new Error(message));
+    return NextResponse.json({ ok: false, error: message }, { status: 503 });
+  }
+
+  try {
+    await pool.query(
+      `INSERT INTO deployment_events (deployment_id, status, message)
+       VALUES ($1, 'queued', 'Queue available; enqueueing deployment job for AWS consumer')`,
+      [nextDeploymentId],
+    );
+    await enqueueDeploymentJob({ deploymentId: nextDeploymentId, userId: session.user.email });
+    await pool.query(
+      `INSERT INTO deployment_events (deployment_id, status, message)
+       VALUES ($1, 'queued', 'Deployment job enqueued successfully; waiting for AWS consumer pickup')`,
+      [nextDeploymentId],
+    );
+  } catch (error) {
+    await markDeploymentFailed(nextDeploymentId, error);
+    const message = error instanceof Error ? error.message : "Failed to enqueue deployment";
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true, redeployed: true, deploymentId: nextDeploymentId, liveApply });
 }

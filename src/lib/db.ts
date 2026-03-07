@@ -45,6 +45,7 @@ export async function ensureSchema() {
       host_name TEXT,
       runtime_id TEXT,
       deploy_provider TEXT,
+      model_provider TEXT,
       subsidy_proxy_token TEXT,
       openai_api_key TEXT,
       anthropic_api_key TEXT,
@@ -62,6 +63,7 @@ export async function ensureSchema() {
 
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS runtime_id TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS deploy_provider TEXT;`);
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS model_provider TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS bot_name TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS subsidy_proxy_token TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS openai_api_key TEXT;`);

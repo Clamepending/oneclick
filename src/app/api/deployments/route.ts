@@ -582,8 +582,9 @@ export async function POST(request: Request) {
           id: string;
           bot_name: string | null;
           deployment_flavor: string | null;
+          model_provider: string | null;
         }>(
-          `SELECT id, bot_name, deployment_flavor
+          `SELECT id, bot_name, deployment_flavor, model_provider
            FROM deployments
            WHERE id = $1 AND user_id = $2
            LIMIT 1`,
@@ -607,6 +608,9 @@ export async function POST(request: Request) {
     const sourceDeploymentFlavor = sourceDeploymentRow?.deployment_flavor?.trim()
       ? normalizeDeploymentFlavor(sourceDeploymentRow.deployment_flavor)
       : null;
+    const sourceModelProvider = sourceDeploymentRow?.model_provider?.trim() || null;
+    const onboardingModelProviderValue = onboarding.rows[0]?.model_provider?.trim() || null;
+    const selectedModelProvider = sourceModelProvider ?? onboardingModelProviderValue;
     const onboardingDeploymentFlavor = onboarding.rows[0]?.deployment_flavor?.trim()
       ? normalizeDeploymentFlavor(onboarding.rows[0].deployment_flavor)
       : null;
@@ -646,14 +650,15 @@ export async function POST(request: Request) {
 
     await pool.query(
     `INSERT INTO deployments (
-       id, user_id, bot_name, status, openai_api_key, anthropic_api_key, telegram_bot_token,
+       id, user_id, bot_name, status, model_provider, openai_api_key, anthropic_api_key, telegram_bot_token,
        plan_tier, deployment_flavor, trial_started_at, trial_expires_at, monthly_price_cents
      )
-     VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, $9, $10, $11)`,
+     VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
     [
       deploymentId,
       session.user.email,
       botName,
+      selectedModelProvider,
       openaiApiKey,
       anthropicApiKey,
       telegramBotToken,

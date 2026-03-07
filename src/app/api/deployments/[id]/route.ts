@@ -77,6 +77,7 @@ export async function GET(
     host_name: string | null;
     runtime_id: string | null;
     deploy_provider: string | null;
+    model_provider: string | null;
     openai_api_key: string | null;
     anthropic_api_key: string | null;
     openrouter_api_key: string | null;
@@ -93,7 +94,7 @@ export async function GET(
     created_at: string;
     updated_at: string;
   }>(
-    `SELECT id, bot_name, status, host_name, runtime_id, deploy_provider,
+    `SELECT id, bot_name, status, host_name, runtime_id, deploy_provider, model_provider,
             openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token,
             plan_tier, deployment_flavor, trial_started_at, trial_expires_at, deactivated_at, deactivation_reason, monthly_price_cents,
             ready_url, error, created_at, updated_at
@@ -164,6 +165,7 @@ export async function GET(
     deactivationReason: item.deactivation_reason,
     monthlyPriceCents: item.monthly_price_cents,
     settings: {
+      modelProvider: item.model_provider?.trim() || "auto",
       hasOpenaiApiKey: Boolean(item.openai_api_key?.trim()),
       hasAnthropicApiKey: Boolean(item.anthropic_api_key?.trim()),
       hasOpenrouterApiKey: Boolean(item.openrouter_api_key?.trim()),

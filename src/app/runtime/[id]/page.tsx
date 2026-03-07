@@ -194,8 +194,17 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
     ready_url: string | null;
     error: string | null;
     deployment_flavor: string | null;
+    model_provider: string | null;
+    openai_api_key: string | null;
+    anthropic_api_key: string | null;
+    openrouter_api_key: string | null;
+    telegram_bot_token: string | null;
+    created_at: string;
+    updated_at: string;
   }>(
-    `SELECT bot_name, status, deploy_provider, runtime_id, ready_url, error, deployment_flavor
+    `SELECT bot_name, status, deploy_provider, runtime_id, ready_url, error, deployment_flavor,
+            model_provider, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token,
+            created_at, updated_at
      FROM deployments
      WHERE id = $1
      LIMIT 1`,
@@ -210,7 +219,29 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
   const provider = (deployment.deploy_provider ?? "").trim();
   if (provider === "lambda") {
     if (deployment.status === "ready") {
-      return <ServerlessRuntimeClient deploymentId={id} botName={deployment.bot_name} />;
+      return (
+        <ServerlessRuntimeClient
+          deploymentId={id}
+          botName={deployment.bot_name}
+          initialState={{
+            status: deployment.status,
+            deployProvider: deployment.deploy_provider,
+            runtimeId: deployment.runtime_id,
+            readyUrl: deployment.ready_url,
+            deploymentFlavor: deployment.deployment_flavor,
+            error: deployment.error,
+            createdAt: deployment.created_at,
+            updatedAt: deployment.updated_at,
+            settings: {
+              modelProvider: deployment.model_provider?.trim() || "auto",
+              hasOpenaiApiKey: Boolean(deployment.openai_api_key?.trim()),
+              hasAnthropicApiKey: Boolean(deployment.anthropic_api_key?.trim()),
+              hasOpenrouterApiKey: Boolean(deployment.openrouter_api_key?.trim()),
+              hasTelegramBotToken: Boolean(deployment.telegram_bot_token?.trim()),
+            },
+          }}
+        />
+      );
     }
     if (deployment.status === "failed" || deployment.status === "stopped") {
       return renderPlaceholder(id, deployment.error || "This deployment is no longer active.");
