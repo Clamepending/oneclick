@@ -24,6 +24,12 @@ function readTrimmedEnv(name: string) {
   return raw.trim().replace(/^"(.*)"$/, "$1").replace(/\\n/g, "").trim();
 }
 
+function readSecretEnv(name: string) {
+  const raw = process.env[name];
+  if (!raw) return "";
+  return raw.trim().replace(/^"([\s\S]*)"$/, "$1");
+}
+
 function buildAwsConfigWithTrimmedCreds(region: string): LambdaClientConfig {
   const accessKeyId = readTrimmedEnv("AWS_ACCESS_KEY_ID");
   const secretAccessKey = readTrimmedEnv("AWS_SECRET_ACCESS_KEY");
@@ -58,6 +64,21 @@ const REQUIRED_WORKER_FEATURES = [
   "simple_agent_ottoauth_ecs_canary",
   "simple_agent_videomemory_free",
 ];
+
+const LAMBDA_ENV_CHAR_LIMIT = 4096;
+const LAMBDA_ENV_TRIM_CANDIDATES = [
+  // App-runtime-only values that are safe to omit from the SQS consumer runtime.
+  "ANTHROPIC_SUBSIDY_API_KEY",
+  // These are optional with matching defaults in runtime code.
+  "OPENCLAW_START_COMMAND",
+  "OPENCLAW_CONFIG_MOUNT_BASE",
+  "OPENCLAW_WORKSPACE_SUFFIX",
+  "OTTOAGENT_MCP_REFRESH_MS",
+];
+
+function lambdaEnvSize(value: Record<string, string>) {
+  return JSON.stringify(value).length;
+}
 
 async function waitForFunctionUpdateComplete(lambda: LambdaClient, functionName: string) {
   const maxAttempts = 60;
@@ -124,12 +145,41 @@ async function main() {
   const currentEnv = { ...(current.Environment?.Variables ?? {}) };
   const currentFeatures = parseCsv(currentEnv.DEPLOY_WORKER_FEATURES ?? "").map((item) => item.toLowerCase());
   const mergedFeatures = Array.from(new Set([...currentFeatures, ...REQUIRED_WORKER_FEATURES])).join(",");
+  const doApiToken = readSecretEnv("DO_API_TOKEN");
+  const deploySshPrivateKey = readSecretEnv("DEPLOY_SSH_PRIVATE_KEY");
 
-  const nextEnv = {
+  const nextEnvBase = {
     ...currentEnv,
     DEPLOY_WORKER_FEATURES: mergedFeatures,
     DEPLOY_WORKER_BUILD_SHA: buildSha,
+    ...(doApiToken ? { DO_API_TOKEN: doApiToken } : {}),
+    ...(deploySshPrivateKey ? { DEPLOY_SSH_PRIVATE_KEY: deploySshPrivateKey } : {}),
   };
+
+  const nextEnv: Record<string, string> = { ...nextEnvBase };
+  const droppedEnvKeys: string[] = [];
+  for (const key of LAMBDA_ENV_TRIM_CANDIDATES) {
+    if (lambdaEnvSize(nextEnv) < LAMBDA_ENV_CHAR_LIMIT) break;
+    if (Object.hasOwn(nextEnv, key)) {
+      delete nextEnv[key];
+      droppedEnvKeys.push(key);
+    }
+  }
+
+  const missingCriticalRuntimeVars = ["DO_API_TOKEN", "DEPLOY_SSH_PRIVATE_KEY"].filter(
+    (name) => !String(nextEnv[name as keyof typeof nextEnv] ?? "").trim(),
+  );
+  if (missingCriticalRuntimeVars.length > 0) {
+    throw new Error(
+      `Refusing Lambda update because required runtime env vars are missing: ${missingCriticalRuntimeVars.join(", ")}`,
+    );
+  }
+  const measuredSize = lambdaEnvSize(nextEnv);
+  if (measuredSize >= LAMBDA_ENV_CHAR_LIMIT) {
+    throw new Error(
+      `Refusing Lambda update because env payload exceeds ${LAMBDA_ENV_CHAR_LIMIT} chars (${measuredSize}).`,
+    );
+  }
 
   await lambda.send(
     new UpdateFunctionConfigurationCommand({
@@ -147,6 +197,8 @@ async function main() {
         region,
         deployedFeatures: mergedFeatures,
         buildSha,
+        lambdaEnvChars: measuredSize,
+        droppedEnvKeys,
       },
       null,
       2,
