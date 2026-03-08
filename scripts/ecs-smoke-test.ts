@@ -125,6 +125,14 @@ async function fetchText(url: string) {
   return { res, text };
 }
 
+async function fetchWithTimeout(url: string, init?: RequestInit) {
+  const requestTimeoutMs = Number(process.env.ECS_SMOKE_HTTP_REQUEST_TIMEOUT_MS ?? "8000");
+  return fetch(url, {
+    ...init,
+    signal: AbortSignal.timeout(requestTimeoutMs),
+  });
+}
+
 function mustMatch(text: string, pattern: RegExp, label: string) {
   const match = text.match(pattern);
   if (!match) {
@@ -138,12 +146,14 @@ async function runOptionalTelegramSmoke() {
   if (!token) return;
   console.log("Telegram smoke: validating bot token + deleteWebhook...");
 
-  const getMe = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+  const getMe = await fetchWithTimeout(`https://api.telegram.org/bot${token}/getMe`);
   if (!getMe.ok) {
     throw new Error(`Telegram getMe failed (${getMe.status})`);
   }
 
-  const deleteWebhook = await fetch(`https://api.telegram.org/bot${token}/deleteWebhook`, { method: "POST" });
+  const deleteWebhook = await fetchWithTimeout(`https://api.telegram.org/bot${token}/deleteWebhook`, {
+    method: "POST",
+  });
   if (!deleteWebhook.ok) {
     throw new Error(`Telegram deleteWebhook failed (${deleteWebhook.status})`);
   }
@@ -210,7 +220,9 @@ async function runRuntimeHttpSmokeForFlavor(baseUrl: string, deploymentFlavor: D
 
   let shell: Awaited<ReturnType<typeof fetchText>> | null = null;
   let lastError: unknown = null;
+  let attempt = 0;
   while (Date.now() < deadline) {
+    attempt += 1;
     try {
       const nextShell = await fetchText(`${baseUrl}/`);
       const acceptableStatus = expectOpenClawUi ? nextShell.res.ok : nextShell.res.status < 500;
@@ -218,9 +230,12 @@ async function runRuntimeHttpSmokeForFlavor(baseUrl: string, deploymentFlavor: D
         throw new Error(`Runtime shell request failed (${nextShell.res.status})`);
       }
       shell = nextShell;
+      console.log(`Runtime shell reachable on attempt ${attempt} with status ${nextShell.res.status}.`);
       break;
     } catch (error) {
       lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      console.log(`Runtime shell attempt ${attempt} failed: ${message}`);
       await sleep(retryIntervalMs);
     }
   }
@@ -244,6 +259,7 @@ async function runRuntimeHttpSmokeForFlavor(baseUrl: string, deploymentFlavor: D
     "control-ui asset script",
   );
   const assetPath = assetMatch[1];
+  console.log(`Runtime shell includes asset ${assetPath}; validating asset + config...`);
   const asset = await fetchText(`${baseUrl}/${assetPath.replace(/^\.\//, "")}`);
   if (!asset.res.ok) {
     throw new Error(`Runtime control-ui asset request failed (${asset.res.status})`);
@@ -252,7 +268,7 @@ async function runRuntimeHttpSmokeForFlavor(baseUrl: string, deploymentFlavor: D
     throw new Error("Runtime control-ui JS asset did not include expected client identifier.");
   }
 
-  const config = await fetch(`${baseUrl}/__openclaw/control-ui-config.json`);
+  const config = await fetchWithTimeout(`${baseUrl}/__openclaw/control-ui-config.json`);
   if (!config.ok) {
     throw new Error(`Runtime control-ui config request failed (${config.status})`);
   }
