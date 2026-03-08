@@ -21,6 +21,7 @@ import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runti
 import { probeRuntimeHttp } from "@/lib/runtimeHealth";
 import { buildVideoMemoryUrl } from "@/lib/runtime/videoMemoryUrl";
 import { setServerlessTelegramWebhook } from "@/lib/telegram/serverlessWebhook";
+import { ensureOttoAuthAccountForBot, resolveServerlessBotId } from "@/lib/runtime/ottoauthAccounts";
 
 type DeploymentJob = {
   deploymentId: string;
@@ -1608,6 +1609,32 @@ export async function processDeploymentJob(job: DeploymentJob) {
     } catch (error) {
       const message = error instanceof Error ? error.message : "unknown error";
       await appendEvent(job.deploymentId, "starting", `Telegram webhook setup warning: ${message}`);
+    }
+  }
+
+  if (runtime.deployProvider === "lambda") {
+    const lambdaBotId = resolveServerlessBotId({
+      deploymentId: job.deploymentId,
+      runtimeBotId: null,
+    });
+    await appendEvent(job.deploymentId, "starting", `Provisioning OttoAuth account for bot ${lambdaBotId}`);
+    try {
+      const account = await ensureOttoAuthAccountForBot({
+        deploymentId: job.deploymentId,
+        botId: lambdaBotId,
+        botName: runtimeSlugSource,
+      });
+      await pool.query(
+        `UPDATE deployments
+         SET runtime_bot_id = COALESCE(NULLIF(TRIM(runtime_bot_id), ''), $1),
+             updated_at = NOW()
+         WHERE id = $2`,
+        [lambdaBotId, job.deploymentId],
+      );
+      await appendEvent(job.deploymentId, "starting", `OttoAuth account ready (${account.username})`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      await appendEvent(job.deploymentId, "starting", `OttoAuth account provisioning warning: ${message}`);
     }
   }
 

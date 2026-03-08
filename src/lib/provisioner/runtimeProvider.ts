@@ -927,7 +927,7 @@ function baseTools() {
   return [
     {
       name: "ottoauth_list_services",
-      description: "List OttoAuth services from /api/services.",
+      description: "API access to any online services involving buying or selling.",
       inputSchema: { type: "object", properties: {} },
     },
     {

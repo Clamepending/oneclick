@@ -1,3 +1,5 @@
+import { ensureOttoAuthAccountForBot } from "@/lib/runtime/ottoauthAccounts";
+
 type ToolJson = Record<string, unknown>;
 
 export type ServerlessRuntimeTool = {
@@ -83,7 +85,7 @@ function ottoAuthTools(available: boolean, reason: string | null): ServerlessRun
   return [
     {
       name: "ottoauth_list_services",
-      description: "List all OttoAuth services.",
+      description: "API access to any online services involving buying or selling.",
       source: "ottoauth-mcp",
       inputSchema: { type: "object", properties: {} },
       available,
@@ -159,6 +161,9 @@ function normalizeHttpMethod(value: unknown) {
 }
 
 async function callOttoAuthApi(input: {
+  deploymentId: string;
+  botId: string;
+  botName?: string | null;
   method: string;
   path: string;
   query?: unknown;
@@ -199,12 +204,29 @@ async function callOttoAuthApi(input: {
     requestHeaders["x-agent-gateway-token"] = config.token;
     requestHeaders["x-gateway-token"] = config.token;
   }
+  requestHeaders["x-oneclick-bot-id"] = input.botId;
+
+  let requestBody = asObject(input.body);
+  if (shouldSendBody) {
+    const account = await ensureOttoAuthAccountForBot({
+      deploymentId: input.deploymentId,
+      botId: input.botId,
+      botName: input.botName,
+    });
+    requestBody = {
+      ...requestBody,
+      ...(requestBody.username === undefined ? { username: account.username } : {}),
+      ...(requestBody.private_key === undefined && requestBody.privateKey === undefined && requestBody.password === undefined
+        ? { private_key: account.privateKey }
+        : {}),
+    };
+  }
 
   try {
     const response = await fetch(url.toString(), {
       method,
       headers: requestHeaders,
-      body: shouldSendBody ? JSON.stringify(asObject(input.body)) : undefined,
+      body: shouldSendBody ? JSON.stringify(requestBody) : undefined,
       signal: AbortSignal.timeout(30_000),
     });
     const contentType = response.headers.get("content-type") || "";
@@ -229,6 +251,9 @@ async function callOttoAuthApi(input: {
 }
 
 export async function executeServerlessRuntimeToolCall(input: {
+  deploymentId: string;
+  botId: string;
+  botName?: string | null;
   name: string;
   arguments: unknown;
 }): Promise<ServerlessRuntimeToolResult> {
@@ -255,19 +280,34 @@ export async function executeServerlessRuntimeToolCall(input: {
   }
 
   if (name === "ottoauth_list_services") {
-    const result = await callOttoAuthApi({ method: "GET", path: "/api/services" });
+    const result = await callOttoAuthApi({
+      deploymentId: input.deploymentId,
+      botId: input.botId,
+      botName: input.botName,
+      method: "GET",
+      path: "/api/services",
+    });
     return result.ok ? { ok: true, tool: name, result } : { ok: false, tool: name, error: JSON.stringify(result) };
   }
 
   if (name === "ottoauth_get_service") {
     const id = String(args.id ?? "").trim();
     if (!id) return { ok: false, tool: name, error: "Missing required argument: id" };
-    const result = await callOttoAuthApi({ method: "GET", path: `/api/services/${encodeURIComponent(id)}` });
+    const result = await callOttoAuthApi({
+      deploymentId: input.deploymentId,
+      botId: input.botId,
+      botName: input.botName,
+      method: "GET",
+      path: `/api/services/${encodeURIComponent(id)}`,
+    });
     return result.ok ? { ok: true, tool: name, result } : { ok: false, tool: name, error: JSON.stringify(result) };
   }
 
   if (name === "ottoauth_http_request") {
     const result = await callOttoAuthApi({
+      deploymentId: input.deploymentId,
+      botId: input.botId,
+      botName: input.botName,
       method: normalizeHttpMethod(args.method),
       path: String(args.path ?? ""),
       query: args.query,

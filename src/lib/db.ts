@@ -191,6 +191,24 @@ export async function ensureSchema() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS runtime_ottoauth_accounts (
+      deployment_id TEXT NOT NULL,
+      bot_id TEXT NOT NULL,
+      username TEXT NOT NULL,
+      private_key TEXT NOT NULL,
+      callback_url TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (deployment_id, bot_id)
+    );
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS runtime_ottoauth_accounts_deployment_id_idx
+    ON runtime_ottoauth_accounts (deployment_id, updated_at DESC);
+  `);
+
+  await pool.query(`
     WITH legacy_deployments AS (
       SELECT DISTINCT deployment_id
       FROM runtime_chat_messages

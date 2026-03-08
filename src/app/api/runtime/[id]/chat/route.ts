@@ -12,8 +12,10 @@ const payloadSchema = z.object({
 
 type DeploymentRow = {
   id: string;
+  bot_name: string | null;
   status: string;
   deploy_provider: string | null;
+  runtime_bot_id: string | null;
   model_provider: string | null;
   default_model: string | null;
   openai_api_key: string | null;
@@ -42,8 +44,10 @@ export async function POST(
 
   const deployment = await pool.query<DeploymentRow>(
     `SELECT id,
+            bot_name,
             status,
             deploy_provider,
+            runtime_bot_id,
             model_provider,
             default_model,
             openai_api_key,
@@ -82,6 +86,8 @@ export async function POST(
       userMessage: parsedBody.data.message,
       requestOrigin: new URL(request.url).origin,
       modelConfig: {
+        bot_name: row.bot_name,
+        runtime_bot_id: row.runtime_bot_id,
         model_provider: row.model_provider,
         default_model: row.default_model,
         openai_api_key: row.openai_api_key,

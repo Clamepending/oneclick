@@ -10,6 +10,7 @@ import {
   type ServerlessRuntimeTool,
   type ServerlessRuntimeToolResult,
 } from "@/lib/runtime/serverlessTools";
+import { resolveServerlessBotId } from "@/lib/runtime/ottoauthAccounts";
 
 type StoredMessage = {
   role: "user" | "assistant";
@@ -34,6 +35,8 @@ export type ServerlessRuntimeModelConfig = {
   anthropic_api_key: string | null;
   openrouter_api_key: string | null;
   subsidy_proxy_token: string | null;
+  runtime_bot_id?: string | null;
+  bot_name?: string | null;
 };
 
 function readTrimmedEnv(name: string) {
@@ -60,6 +63,7 @@ function buildToolInstructionBlock(tools: ServerlessRuntimeTool[]) {
     "When you need a tool, output exactly one tool call and no extra text:",
     "- For current time: <tool:current_time>{\"timezone\":\"UTC\"}</tool:current_time>",
     "- For OttoAuth tools: <tool:mcp name=\"tool_name\">{\"arg\":\"value\"}</tool:mcp>",
+    "- Do not ask the user for OttoAuth username/private_key. Bot credentials are injected automatically.",
     "After receiving TOOL_RESULT, respond normally to the user.",
     "Available tools:",
     lines,
@@ -342,6 +346,10 @@ export async function runServerlessChatTurn(input: {
   const availableTools = toolsCatalog.tools.filter((tool) => tool.available);
   const availableToolNames = new Set(availableTools.map((tool) => tool.name));
   const systemPrompt = resolveSystemPrompt(memoryDocs.rows, availableTools);
+  const runtimeBotId = resolveServerlessBotId({
+    deploymentId: input.deploymentId,
+    runtimeBotId: input.modelConfig.runtime_bot_id ?? null,
+  });
   const openaiApiKey = input.modelConfig.openai_api_key?.trim() || "";
   const openrouterApiKey = input.modelConfig.openrouter_api_key?.trim() || "";
   const anthropicApiKey = input.modelConfig.anthropic_api_key?.trim() || "";
@@ -456,6 +464,9 @@ export async function runServerlessChatTurn(input: {
     } else {
       try {
         toolResult = await executeServerlessRuntimeToolCall({
+          deploymentId: input.deploymentId,
+          botId: runtimeBotId,
+          botName: input.modelConfig.bot_name ?? null,
           name: toolCall.name,
           arguments: toolCall.arguments,
         });
