@@ -14,7 +14,7 @@ import { deactivateExpiredFreeTrialsForUser } from "@/lib/trialEnforcement";
 import { buildRuntimeSubdomain, normalizeBotName } from "@/lib/provisioner/runtimeSlug";
 import { applyMemoryRateLimit } from "@/lib/security/rateLimit";
 import { cloneRuntimeHistoryForRedeploy } from "@/lib/runtime/redeployClone";
-import { resolveDefaultRuntimeMetadata } from "@/lib/runtime/runtimeMetadata";
+import { resolveRuntimeMetadataForNewDeployment } from "@/lib/runtime/runtimeVersionRegistry";
 import {
   enqueueDeploymentJob,
   markDeploymentFailed,
@@ -623,7 +623,9 @@ export async function POST(request: Request) {
       parsedPayload.deploymentFlavor ??
       onboardingDeploymentFlavor ??
       "simple_agent_free";
-    const runtimeMetadata = resolveDefaultRuntimeMetadata(selectedDeploymentFlavor);
+    const runtimeMetadata = await resolveRuntimeMetadataForNewDeployment({
+      deploymentFlavor: selectedDeploymentFlavor,
+    });
     const queueInfo = getQueueModeInfo();
     const vercelRuntime = isVercelRuntime();
     const workerCompatibility = await ensureQueueWorkerSupportsFlavor({

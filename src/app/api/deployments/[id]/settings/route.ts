@@ -14,7 +14,7 @@ import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
 import { setServerlessTelegramWebhook } from "@/lib/telegram/serverlessWebhook";
 import { cloneRuntimeHistoryForRedeploy } from "@/lib/runtime/redeployClone";
-import { resolveRuntimeMetadataFromRow } from "@/lib/runtime/runtimeMetadata";
+import { resolveRuntimeMetadataForNewDeployment } from "@/lib/runtime/runtimeVersionRegistry";
 import { enqueueDeploymentJob, markDeploymentFailed, newDeploymentId } from "@/workers/deployWorker";
 
 const payloadSchema = z
@@ -783,12 +783,8 @@ export async function PATCH(
   }
 
   const nextDeploymentId = newDeploymentId();
-  const runtimeMetadata = resolveRuntimeMetadataFromRow({
-    deployment_flavor: current.deployment_flavor,
-    runtime_kind: current.runtime_kind,
-    runtime_version: current.runtime_version,
-    runtime_contract_version: current.runtime_contract_version,
-    runtime_release_channel: current.runtime_release_channel,
+  const runtimeMetadata = await resolveRuntimeMetadataForNewDeployment({
+    deploymentFlavor: current.deployment_flavor,
   });
   await pool.query(
     `INSERT INTO deployments (

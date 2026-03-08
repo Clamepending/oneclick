@@ -18,6 +18,9 @@
     "aws:smoke": "tsx scripts/ecs-smoke-test.ts",
     "smoke:telegram:serverless": "tsx scripts/serverless-telegram-smoke-test.ts",
     "aws:smoke:shared-ottoauth": "tsx scripts/shared-ottoauth-smoke-test.ts",
+    "runtime:register": "tsx scripts/runtimeVersions/register.ts",
+    "runtime:promote": "tsx scripts/runtimeVersions/promote.ts",
+    "runtime:rollback": "tsx scripts/runtimeVersions/rollback.ts",
     "cost:guard:sweep": "tsx scripts/cost-guard-sweep.ts",
     "env:upsert": "node scripts/upsert-env-file.mjs"
   },

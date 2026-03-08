@@ -216,6 +216,35 @@ npm run aws:build:mcp-tool-service
 npm run aws:shared:mcp:ensure
 ```
 
+### Runtime version promotion / rollback
+
+OneClick uses `runtime_versions` as the stable pointer for new deployments.
+
+Register candidate:
+
+```bash
+npm run runtime:register -- simpleagent_embedded embedded-v2 candidate simpleagent:embedded-v2
+```
+
+Promote candidate to stable:
+
+```bash
+npm run runtime:promote -- simpleagent_embedded embedded-v2
+```
+
+Rollback:
+
+```bash
+# rollback to most recent previous candidate
+npm run runtime:rollback -- simpleagent_embedded
+
+# or rollback to explicit version
+npm run runtime:rollback -- simpleagent_embedded embedded-v1
+```
+
+Detailed release procedure:
+- `docs/RUNTIME_RELEASE_RUNBOOK.md`
+
 ### Optional AWS Budget Alerts
 
 The Terraform stack supports opt-in monthly cost alerts via AWS Budgets.
