@@ -2,9 +2,9 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
-import { requireOwnedServerlessDeployment } from "../shared";
+import { ensureDefaultRuntimeMemoryDocs, requireOwnedServerlessDeployment } from "../shared";
 
-const DEFAULT_DOC_KEYS = ["SOUL.md", "USER.md", "STYLE.md", "NOTES.md"] as const;
+const DEFAULT_DOC_KEYS = ["SOUL.md", "USER.md", "STYLE.md", "HEARTBEAT.md", "NOTES.md"] as const;
 
 const patchSchema = z.object({
   docKey: z
@@ -49,6 +49,7 @@ export async function GET(
   if (!access.ok) {
     return NextResponse.json({ ok: false, error: access.error }, { status: access.status });
   }
+  await ensureDefaultRuntimeMemoryDocs(id);
 
   const docs = await pool.query<MemoryDocRow>(
     `SELECT doc_key, content, updated_at
@@ -96,6 +97,7 @@ export async function PATCH(
   if (!access.ok) {
     return NextResponse.json({ ok: false, error: access.error }, { status: access.status });
   }
+  await ensureDefaultRuntimeMemoryDocs(id);
 
   const upserted = await pool.query<MemoryDocRow>(
     `INSERT INTO runtime_memory_docs (deployment_id, doc_key, content, created_at, updated_at)

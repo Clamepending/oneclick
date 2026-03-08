@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
-import { ensureRuntimeSession, requireOwnedServerlessDeployment, touchRuntimeSession } from "../shared";
+import {
+  ensureRuntimeSession,
+  ensureSessionHasStarterMessage,
+  requireOwnedServerlessDeployment,
+  touchRuntimeSession,
+} from "../shared";
 
 type MessageRow = {
   id: number;
@@ -37,6 +42,7 @@ export async function GET(
     return NextResponse.json({ ok: false, error: "Session not found" }, { status: 404 });
   }
   const sessionId = resolved.session.id;
+  await ensureSessionHasStarterMessage({ deploymentId: id, sessionId });
 
   const messages = await pool.query<MessageRow>(
     `SELECT id, role, content, created_at

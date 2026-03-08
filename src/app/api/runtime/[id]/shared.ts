@@ -1,5 +1,21 @@
 import { pool } from "@/lib/db";
 
+const AUTOFILL_MARKER = "<!-- oneclick:autofill -->";
+
+const STARTER_CALIBRATION_MESSAGE = [
+  "Before we start, I want to calibrate like OpenClaw so your memory files are set correctly.",
+  "",
+  "Please reply with these fields:",
+  "- Name: what should I call you?",
+  "- Who you are: role/background in 1-3 lines.",
+  "- Goal: what you are building right now.",
+  "- Interaction style: how you want me to communicate (tone, brevity, structure).",
+  "- Constraints: non-negotiables I must respect.",
+  "- Heartbeat: preferred check-in cadence (for example daily, every 12h, weekly).",
+  "",
+  "I will use your reply to populate USER.md, SOUL.md, STYLE.md, and HEARTBEAT.md.",
+].join("\n");
+
 type DeploymentAccessRow = {
   id: string;
   deploy_provider: string | null;
@@ -17,6 +33,11 @@ type RuntimeSessionWithStatsRow = RuntimeSessionRow & {
   last_message_at: string | null;
 };
 
+type RuntimeMemoryDocRow = {
+  doc_key: string;
+  content: string;
+};
+
 export type RuntimeSessionSummary = {
   id: string;
   name: string;
@@ -25,6 +46,140 @@ export type RuntimeSessionSummary = {
   messageCount: number;
   lastMessageAt: string | null;
 };
+
+function readTrimmedEnv(name: string) {
+  const raw = process.env[name];
+  if (!raw) return "";
+  return raw.trim().replace(/^("|')(.*)("|')$/, "$2").replace(/\\n/g, "").trim();
+}
+
+function defaultHeartbeatMarkdown() {
+  const configured = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_DEFAULT_HEARTBEAT_CONTENT");
+  if (configured) return configured;
+  return [
+    "# Daily Heartbeat",
+    "",
+    "- Review the last 24h conversation summary.",
+    "- Check pending follow-ups and high-priority tasks.",
+    "- If action is needed, post a short update with concrete next steps.",
+    "- If no action is needed, reply with `noop`.",
+  ].join("\n");
+}
+
+function buildDefaultMemoryDocs() {
+  const heartbeatDefault = defaultHeartbeatMarkdown();
+  return {
+    "SOUL.md": [
+      AUTOFILL_MARKER,
+      "# SOUL",
+      "",
+      "You are my pragmatic AI operator.",
+      "",
+      "## Pending Calibration",
+      "Fill this from the first calibration response.",
+    ].join("\n"),
+    "USER.md": [
+      AUTOFILL_MARKER,
+      "# USER",
+      "",
+      "Not calibrated yet.",
+      "",
+      "## Pending Calibration",
+      "Fill this from the first calibration response.",
+    ].join("\n"),
+    "STYLE.md": [
+      AUTOFILL_MARKER,
+      "# STYLE",
+      "",
+      "Not calibrated yet.",
+      "",
+      "## Pending Calibration",
+      "Fill this from the first calibration response.",
+    ].join("\n"),
+    "HEARTBEAT.md": [
+      AUTOFILL_MARKER,
+      heartbeatDefault,
+    ].join("\n\n"),
+    "NOTES.md": [
+      AUTOFILL_MARKER,
+      "# NOTES",
+      "",
+      "Reserved for evolving runtime notes and decisions.",
+    ].join("\n"),
+  } as const;
+}
+
+function isAutofillContent(content: string | null | undefined) {
+  const normalized = (content ?? "").trim();
+  return !normalized || normalized.includes(AUTOFILL_MARKER);
+}
+
+function extractFirstLabeledLine(input: string, labels: string[]) {
+  const lines = input.split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const lower = line.toLowerCase();
+    for (const label of labels) {
+      if (!lower.startsWith(label)) continue;
+      const split = line.split(/[:\-]/, 2);
+      if (split.length < 2) continue;
+      const value = split[1]?.trim();
+      if (value) return value;
+    }
+  }
+  return "";
+}
+
+function trimBlock(input: string, maxChars: number) {
+  const normalized = input.trim();
+  if (!normalized) return "";
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars)}\n...[truncated]`;
+}
+
+async function upsertRuntimeMemoryDoc(input: {
+  deploymentId: string;
+  docKey: string;
+  content: string;
+}) {
+  await pool.query(
+    `INSERT INTO runtime_memory_docs (deployment_id, doc_key, content, created_at, updated_at)
+     VALUES ($1, $2, $3, NOW(), NOW())
+     ON CONFLICT (deployment_id, doc_key)
+     DO UPDATE
+       SET content = EXCLUDED.content,
+           updated_at = NOW()`,
+    [input.deploymentId, input.docKey, input.content],
+  );
+}
+
+export async function ensureDefaultRuntimeMemoryDocs(deploymentId: string) {
+  const docs = buildDefaultMemoryDocs();
+  for (const [docKey, content] of Object.entries(docs)) {
+    await pool.query(
+      `INSERT INTO runtime_memory_docs (deployment_id, doc_key, content, created_at, updated_at)
+       VALUES ($1, $2, $3, NOW(), NOW())
+       ON CONFLICT (deployment_id, doc_key)
+       DO NOTHING`,
+      [deploymentId, docKey, content],
+    );
+  }
+}
+
+async function needsCalibrationPrompt(deploymentId: string) {
+  await ensureDefaultRuntimeMemoryDocs(deploymentId);
+  const result = await pool.query<RuntimeMemoryDocRow>(
+    `SELECT doc_key, content
+     FROM runtime_memory_docs
+     WHERE deployment_id = $1
+       AND doc_key = 'USER.md'
+     LIMIT 1`,
+    [deploymentId],
+  );
+  const userDoc = result.rows[0]?.content ?? "";
+  return isAutofillContent(userDoc);
+}
 
 export function createRuntimeSessionId() {
   return `sess_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
@@ -93,6 +248,7 @@ function normalizeSessionName(value: string | null | undefined, fallback: string
 }
 
 export async function createRuntimeSession(input: { deploymentId: string; name?: string | null }) {
+  await ensureDefaultRuntimeMemoryDocs(input.deploymentId);
   const existingCount = await getRuntimeSessionCount(input.deploymentId);
   const fallbackName = `Session ${existingCount + 1}`;
   const name = normalizeSessionName(input.name, fallbackName);
@@ -122,6 +278,146 @@ export async function ensureRuntimeSession(input: { deploymentId: string; prefer
 
   const created = await createRuntimeSession({ deploymentId: input.deploymentId });
   return { session: created, found: true as const };
+}
+
+export async function ensureSessionHasStarterMessage(input: {
+  deploymentId: string;
+  sessionId: string;
+}) {
+  const shouldPrompt = await needsCalibrationPrompt(input.deploymentId);
+  if (!shouldPrompt) return;
+
+  await pool.query(
+    `WITH existing AS (
+       SELECT 1
+       FROM runtime_chat_messages
+       WHERE deployment_id = $1
+         AND session_id = $2
+       LIMIT 1
+     )
+     INSERT INTO runtime_chat_messages (deployment_id, session_id, role, content)
+     SELECT $1, $2, 'assistant', $3
+     WHERE NOT EXISTS (SELECT 1 FROM existing)`,
+    [input.deploymentId, input.sessionId, STARTER_CALIBRATION_MESSAGE],
+  );
+}
+
+export async function applyCalibrationFromFirstUserMessage(input: {
+  deploymentId: string;
+  userMessage: string;
+}) {
+  await ensureDefaultRuntimeMemoryDocs(input.deploymentId);
+
+  const docs = await pool.query<RuntimeMemoryDocRow>(
+    `SELECT doc_key, content
+     FROM runtime_memory_docs
+     WHERE deployment_id = $1
+       AND doc_key IN ('SOUL.md', 'USER.md', 'STYLE.md', 'HEARTBEAT.md', 'NOTES.md')`,
+    [input.deploymentId],
+  );
+  const byKey = new Map<string, string>();
+  for (const row of docs.rows) byKey.set(row.doc_key, row.content);
+
+  const rawResponse = trimBlock(input.userMessage, 8_000);
+  const extractedName = extractFirstLabeledLine(rawResponse, ["name", "call me", "who are you", "who you are"]);
+  const extractedIdentity = extractFirstLabeledLine(rawResponse, ["who you are", "identity", "about me", "role", "background"]);
+  const extractedGoal = extractFirstLabeledLine(rawResponse, ["goal", "goals", "building", "project"]);
+  const extractedStyle = extractFirstLabeledLine(rawResponse, ["interaction style", "style", "how to interact", "communication", "tone"]);
+  const extractedConstraints = extractFirstLabeledLine(rawResponse, ["constraints", "non-negotiables", "rules", "boundaries"]);
+  const extractedHeartbeat = extractFirstLabeledLine(rawResponse, ["heartbeat", "check-in cadence", "cadence", "checkin"]);
+
+  const now = new Date().toISOString();
+
+  if (isAutofillContent(byKey.get("USER.md"))) {
+    const userDoc = [
+      "# USER",
+      "",
+      `## Name\n${trimBlock(extractedName || "Not specified", 120)}`,
+      "",
+      `## Who I Am\n${trimBlock(extractedIdentity || rawResponse || "Not specified", 2000)}`,
+      "",
+      `## Current Goal\n${trimBlock(extractedGoal || "Not specified", 1000)}`,
+      "",
+      `## Interaction Preferences\n${trimBlock(extractedStyle || "Not specified", 1000)}`,
+      "",
+      `## Constraints\n${trimBlock(extractedConstraints || "Not specified", 1000)}`,
+      "",
+      `## Calibration Source (${now})\n${rawResponse}`,
+    ].join("\n");
+    await upsertRuntimeMemoryDoc({
+      deploymentId: input.deploymentId,
+      docKey: "USER.md",
+      content: userDoc,
+    });
+  }
+
+  if (isAutofillContent(byKey.get("SOUL.md"))) {
+    const soulDoc = [
+      "# SOUL",
+      "",
+      "You are my pragmatic AI operator.",
+      "",
+      "## Interaction Contract",
+      `- Address me as: ${trimBlock(extractedName || "the user", 120)}`,
+      `- Communication style: ${trimBlock(extractedStyle || "concise, direct, structured", 300)}`,
+      `- Constraints to respect: ${trimBlock(extractedConstraints || "none provided yet", 400)}`,
+      "- If requirements are ambiguous, ask direct clarification questions before acting.",
+      "- Keep USER.md and HEARTBEAT.md synchronized when user preferences change.",
+    ].join("\n");
+    await upsertRuntimeMemoryDoc({
+      deploymentId: input.deploymentId,
+      docKey: "SOUL.md",
+      content: soulDoc,
+    });
+  }
+
+  if (isAutofillContent(byKey.get("STYLE.md"))) {
+    const styleDoc = [
+      "# STYLE",
+      "",
+      "## Response Style",
+      `${trimBlock(extractedStyle || "Use concise, direct responses with clear next steps.", 800)}`,
+      "",
+      "## Defaults",
+      "- Prefer plain English.",
+      "- Be explicit about assumptions.",
+      "- Keep outputs actionable.",
+    ].join("\n");
+    await upsertRuntimeMemoryDoc({
+      deploymentId: input.deploymentId,
+      docKey: "STYLE.md",
+      content: styleDoc,
+    });
+  }
+
+  if (extractedHeartbeat && isAutofillContent(byKey.get("HEARTBEAT.md"))) {
+    const heartbeatDoc = [
+      "# HEARTBEAT",
+      "",
+      `- Preferred cadence: ${trimBlock(extractedHeartbeat, 240)}`,
+      "- Review pending tasks and follow-ups on each heartbeat.",
+      "- If there is no actionable update, reply with `noop`.",
+    ].join("\n");
+    await upsertRuntimeMemoryDoc({
+      deploymentId: input.deploymentId,
+      docKey: "HEARTBEAT.md",
+      content: heartbeatDoc,
+    });
+  }
+
+  if (isAutofillContent(byKey.get("NOTES.md"))) {
+    const notesDoc = [
+      "# NOTES",
+      "",
+      `- Initial calibration captured at ${now}.`,
+      "- User can refine USER.md / SOUL.md / STYLE.md / HEARTBEAT.md at any time.",
+    ].join("\n");
+    await upsertRuntimeMemoryDoc({
+      deploymentId: input.deploymentId,
+      docKey: "NOTES.md",
+      content: notesDoc,
+    });
+  }
 }
 
 export async function touchRuntimeSession(input: { deploymentId: string; sessionId: string }) {

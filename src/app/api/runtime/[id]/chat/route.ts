@@ -2,7 +2,12 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
-import { ensureRuntimeSession, touchRuntimeSession } from "../shared";
+import {
+  applyCalibrationFromFirstUserMessage,
+  ensureDefaultRuntimeMemoryDocs,
+  ensureRuntimeSession,
+  touchRuntimeSession,
+} from "../shared";
 
 const payloadSchema = z.object({
   message: z.string().trim().min(1).max(8000),
@@ -55,7 +60,7 @@ function resolveSystemPrompt(memoryDocs: MemoryDocRow[]) {
   const docsBlock = memoryDocs
     .map((doc) => {
       const key = doc.doc_key.trim();
-      const content = clipForPrompt(doc.content.trim(), 12_000);
+      const content = clipForPrompt(doc.content.replace(/<!--\s*oneclick:autofill\s*-->/gi, "").trim(), 12_000);
       return `### ${key}\n${content}`;
     })
     .join("\n\n");
@@ -257,6 +262,16 @@ export async function POST(
   }
   const sessionId = sessionResolution.session.id;
 
+  const existingUserCount = await pool.query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count
+     FROM runtime_chat_messages
+     WHERE deployment_id = $1
+       AND session_id = $2
+       AND role = 'user'`,
+    [id, sessionId],
+  );
+  const isFirstUserMessageForSession = Number(existingUserCount.rows[0]?.count ?? "0") === 0;
+
   const userInsert = await pool.query<InsertedMessageRow>(
     `INSERT INTO runtime_chat_messages (deployment_id, session_id, role, content)
      VALUES ($1, $2, 'user', $3)
@@ -264,6 +279,21 @@ export async function POST(
     [id, sessionId, parsedBody.data.message.trim()],
   );
   const userMessage = userInsert.rows[0];
+
+  if (isFirstUserMessageForSession) {
+    try {
+      await applyCalibrationFromFirstUserMessage({
+        deploymentId: id,
+        userMessage: userMessage.content,
+      });
+    } catch (error) {
+      console.warn(
+        `[runtime-chat:${id}] first-turn calibration update failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
 
   const history = await pool.query<{ role: string; content: string }>(
     `SELECT role, content
@@ -279,6 +309,7 @@ export async function POST(
     .reverse()
     .map((item) => ({ role: item.role as "user" | "assistant", content: item.content }));
 
+  await ensureDefaultRuntimeMemoryDocs(id);
   const memoryDocs = await pool.query<MemoryDocRow>(
     `SELECT doc_key, content
      FROM runtime_memory_docs
