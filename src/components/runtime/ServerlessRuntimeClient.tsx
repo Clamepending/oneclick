@@ -26,6 +26,15 @@ type MemoryDoc = {
   selfUpdateEnabled: boolean;
 };
 
+type RuntimeTool = {
+  name: string;
+  description: string;
+  source: "builtin" | "ottoauth-mcp";
+  inputSchema: Record<string, unknown>;
+  available: boolean;
+  availabilityReason: string | null;
+};
+
 type DeploymentEvent = {
   status: string;
   message: string;
@@ -104,6 +113,19 @@ type RuntimeMemoryPatchResponse =
       ok?: boolean;
       error?: string;
       doc?: MemoryDoc;
+    }
+  | null;
+
+type RuntimeToolsResponse =
+  | {
+      ok?: boolean;
+      error?: string;
+      tools?: RuntimeTool[];
+      ottoauth?: {
+        enabled?: boolean;
+        baseUrl?: string;
+        tokenConfigured?: boolean;
+      };
     }
   | null;
 
@@ -200,7 +222,7 @@ function statusPillMeta(status: string | null | undefined) {
 
 export function ServerlessRuntimeClient({ deploymentId, botName, initialState }: Props) {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<"chat" | "memory" | "settings" | "debug">("chat");
+  const [activeTab, setActiveTab] = useState<"chat" | "memory" | "tools" | "settings" | "debug">("chat");
 
   const [deployment, setDeployment] = useState<DeploymentState | null>(
     initialState
@@ -242,6 +264,15 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
   const [memoryToggleSavingKey, setMemoryToggleSavingKey] = useState<string | null>(null);
   const [selectedDocKey, setSelectedDocKey] = useState<string | null>(null);
   const [docDrafts, setDocDrafts] = useState<Record<string, string>>({});
+
+  const [tools, setTools] = useState<RuntimeTool[]>([]);
+  const [toolsLoading, setToolsLoading] = useState(true);
+  const [toolsError, setToolsError] = useState("");
+  const [ottoauthStatus, setOttoauthStatus] = useState<{
+    enabled: boolean;
+    baseUrl: string;
+    tokenConfigured: boolean;
+  } | null>(null);
 
   const [events, setEvents] = useState<DeploymentEvent[]>([]);
   const [eventsLoading, setEventsLoading] = useState(true);
@@ -383,6 +414,28 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
     }
   }
 
+  async function loadTools() {
+    setToolsLoading(true);
+    setToolsError("");
+    try {
+      const response = await fetch(`/api/runtime/${deploymentId}/tools`, { cache: "no-store" });
+      const body = await readJson<RuntimeToolsResponse>(response);
+      if (!response.ok || !body?.ok || !Array.isArray(body.tools)) {
+        throw new Error(body?.error || "Failed to load tools.");
+      }
+      setTools(body.tools);
+      setOttoauthStatus({
+        enabled: Boolean(body.ottoauth?.enabled),
+        baseUrl: String(body.ottoauth?.baseUrl ?? ""),
+        tokenConfigured: Boolean(body.ottoauth?.tokenConfigured),
+      });
+    } catch (error) {
+      setToolsError(error instanceof Error ? error.message : "Failed to load tools.");
+    } finally {
+      setToolsLoading(false);
+    }
+  }
+
   async function loadEvents() {
     setEventsLoading(true);
     setEventsError("");
@@ -409,7 +462,7 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
   }
 
   async function refreshRuntimeData() {
-    await Promise.all([loadDeployment(), loadSessions(), loadMemoryDocs(), loadEvents()]);
+    await Promise.all([loadDeployment(), loadSessions(), loadMemoryDocs(), loadTools(), loadEvents()]);
   }
 
   useEffect(() => {
@@ -764,6 +817,13 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
           </button>
           <button
             type="button"
+            className={`button ${activeTab === "tools" ? "" : "secondary"}`}
+            onClick={() => setActiveTab("tools")}
+          >
+            Tools
+          </button>
+          <button
+            type="button"
             className={`button ${activeTab === "settings" ? "" : "secondary"}`}
             onClick={() => setActiveTab("settings")}
           >
@@ -1056,6 +1116,89 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
             {memoryError ? (
               <p role="alert" style={{ color: "#ff8e8e", margin: 0 }}>
                 {memoryError}
+              </p>
+            ) : null}
+          </section>
+        ) : null}
+
+        {activeTab === "tools" ? (
+          <section style={{ display: "grid", gap: 10 }}>
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+              <p className="muted" style={{ margin: 0 }}>
+                Tools available to the serverless agent
+              </p>
+              <button className="button secondary" type="button" onClick={() => void loadTools()} disabled={toolsLoading}>
+                {toolsLoading ? "Refreshing..." : "Refresh tools"}
+              </button>
+            </div>
+
+            {ottoauthStatus ? (
+              <div
+                style={{
+                  border: "1px solid var(--border)",
+                  borderRadius: 10,
+                  background: "var(--surface-strong)",
+                  padding: 10,
+                  display: "grid",
+                  gap: 4,
+                }}
+              >
+                <p className="muted" style={{ margin: 0 }}>
+                  OttoAuth MCP: <code>{ottoauthStatus.enabled ? "enabled" : "disabled"}</code>
+                </p>
+                <p className="muted" style={{ margin: 0 }}>
+                  Base URL: <code>{ottoauthStatus.baseUrl || "n/a"}</code>
+                </p>
+                <p className="muted" style={{ margin: 0 }}>
+                  Gateway token: <code>{ottoauthStatus.tokenConfigured ? "configured" : "not configured"}</code>
+                </p>
+              </div>
+            ) : null}
+
+            {toolsLoading ? (
+              <p className="muted" style={{ margin: 0 }}>
+                Loading tools...
+              </p>
+            ) : tools.length === 0 ? (
+              <p className="muted" style={{ margin: 0 }}>
+                No tools available.
+              </p>
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
+                {tools.map((tool) => (
+                  <div
+                    key={tool.name}
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: 10,
+                      background: "var(--surface-strong)",
+                      padding: 10,
+                      display: "grid",
+                      gap: 4,
+                    }}
+                  >
+                    <p style={{ margin: 0 }}>
+                      <code>{tool.name}</code>
+                    </p>
+                    <p className="muted" style={{ margin: 0 }}>
+                      {tool.description || "No description."}
+                    </p>
+                    <p className="muted" style={{ margin: 0 }}>
+                      Source: <code>{tool.source}</code> | Status: <code>{tool.available ? "available" : "unavailable"}</code>
+                    </p>
+                    {tool.availabilityReason ? (
+                      <p className="muted" style={{ margin: 0 }}>
+                        Reason: <code>{tool.availabilityReason}</code>
+                      </p>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {toolsError ? (
+              <p role="alert" style={{ color: "#ff8e8e", margin: 0 }}>
+                {toolsError}
               </p>
             ) : null}
           </section>

@@ -4,6 +4,12 @@ import {
   ensureDefaultRuntimeMemoryDocs,
   touchRuntimeSession,
 } from "@/app/api/runtime/[id]/shared";
+import {
+  executeServerlessRuntimeToolCall,
+  listServerlessRuntimeTools,
+  type ServerlessRuntimeTool,
+  type ServerlessRuntimeToolResult,
+} from "@/lib/runtime/serverlessTools";
 
 type StoredMessage = {
   role: "user" | "assistant";
@@ -41,9 +47,31 @@ function clipForPrompt(value: string, maxChars: number) {
   return `${value.slice(0, maxChars)}\n...[truncated]`;
 }
 
-function resolveSystemPrompt(memoryDocs: MemoryDocRow[]) {
+function buildToolInstructionBlock(tools: ServerlessRuntimeTool[]) {
+  if (!tools.length) return "";
+  const lines = tools
+    .map((tool) => {
+      const schema = JSON.stringify(tool.inputSchema);
+      return `- ${tool.name}: ${tool.description} (schema: ${schema})`;
+    })
+    .join("\n");
+  return [
+    "Tool usage is enabled.",
+    "When you need a tool, output exactly one tool call and no extra text:",
+    "- For current time: <tool:current_time>{\"timezone\":\"UTC\"}</tool:current_time>",
+    "- For OttoAuth tools: <tool:mcp name=\"tool_name\">{\"arg\":\"value\"}</tool:mcp>",
+    "After receiving TOOL_RESULT, respond normally to the user.",
+    "Available tools:",
+    lines,
+  ].join("\n");
+}
+
+function resolveSystemPrompt(memoryDocs: MemoryDocRow[], tools: ServerlessRuntimeTool[]) {
   const basePrompt = readTrimmedEnv("SIMPLE_AGENT_MICROSERVICES_SYSTEM_PROMPT") || "You are a concise, helpful assistant.";
-  if (!memoryDocs.length) return basePrompt;
+  const toolBlock = buildToolInstructionBlock(tools);
+  if (!memoryDocs.length) {
+    return toolBlock ? `${basePrompt}\n\n${toolBlock}` : basePrompt;
+  }
 
   const docsBlock = memoryDocs
     .map((doc) => {
@@ -57,7 +85,9 @@ function resolveSystemPrompt(memoryDocs: MemoryDocRow[]) {
 
 Follow these runtime memory docs exactly when they apply:
 
-${docsBlock}`;
+${docsBlock}
+
+${toolBlock}`.trim();
 }
 
 function resolveOpenAiModel(defaultModel: string | null | undefined) {
@@ -103,6 +133,54 @@ function openAiContentToText(content: unknown) {
       .trim();
   }
   return "";
+}
+
+type ParsedToolCall = {
+  name: string;
+  arguments: Record<string, unknown>;
+};
+
+function parseJsonObjectOrDefault(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return {} as Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {} as Record<string, unknown>;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return {} as Record<string, unknown>;
+  }
+}
+
+function extractToolCall(text: string, availableToolNames: Set<string>) {
+  const mcpMatch = text.match(/<tool:mcp\s+name="([^"]+)">\s*([\s\S]*?)\s*<\/tool:mcp>/i);
+  if (mcpMatch) {
+    const mcpName = mcpMatch[1]?.trim() || "";
+    if (!mcpName) return null;
+    return {
+      name: mcpName,
+      arguments: parseJsonObjectOrDefault(mcpMatch[2] ?? ""),
+    } satisfies ParsedToolCall;
+  }
+
+  const directMatch = text.match(/<tool:([A-Za-z0-9_.-]+)>\s*([\s\S]*?)\s*<\/tool:\1>/i);
+  if (!directMatch) return null;
+
+  const rawName = directMatch[1]?.trim() || "";
+  if (!rawName || rawName === "mcp") return null;
+  const name = rawName === "time_now" ? "current_time" : rawName;
+  if (!availableToolNames.has(name)) {
+    return {
+      name,
+      arguments: parseJsonObjectOrDefault(directMatch[2] ?? ""),
+    } satisfies ParsedToolCall;
+  }
+  return {
+    name,
+    arguments: parseJsonObjectOrDefault(directMatch[2] ?? ""),
+  } satisfies ParsedToolCall;
 }
 
 async function callOpenAiCompatible(input: {
@@ -260,7 +338,10 @@ export async function runServerlessChatTurn(input: {
      LIMIT 12`,
     [input.deploymentId],
   );
-  const systemPrompt = resolveSystemPrompt(memoryDocs.rows);
+  const toolsCatalog = await listServerlessRuntimeTools();
+  const availableTools = toolsCatalog.tools.filter((tool) => tool.available);
+  const availableToolNames = new Set(availableTools.map((tool) => tool.name));
+  const systemPrompt = resolveSystemPrompt(memoryDocs.rows, availableTools);
   const openaiApiKey = input.modelConfig.openai_api_key?.trim() || "";
   const openrouterApiKey = input.modelConfig.openrouter_api_key?.trim() || "";
   const anthropicApiKey = input.modelConfig.anthropic_api_key?.trim() || "";
@@ -268,78 +349,133 @@ export async function runServerlessChatTurn(input: {
   const preferredModelProvider = (input.modelConfig.model_provider ?? "").trim().toLowerCase();
   const defaultModel = input.modelConfig.default_model?.trim() || null;
 
-  let assistantText = "";
-  if (preferredModelProvider === "openrouter") {
-    if (!openrouterApiKey) {
-      throw new Error("Model provider is set to OpenRouter, but no OpenRouter API key is configured.");
+  async function generateAssistantReply(messages: StoredMessage[]) {
+    if (preferredModelProvider === "openrouter") {
+      if (!openrouterApiKey) {
+        throw new Error("Model provider is set to OpenRouter, but no OpenRouter API key is configured.");
+      }
+      return await callOpenAiCompatible({
+        baseUrl: normalizeBaseUrl(readTrimmedEnv("OPENROUTER_BASE_URL"), "https://openrouter.ai/api/v1"),
+        token: openrouterApiKey,
+        model: resolveOpenAiModel(defaultModel),
+        systemPrompt,
+        messages,
+        extraHeaders: {
+          "HTTP-Referer": normalizeOriginUrl(readTrimmedEnv("APP_BASE_URL"), input.requestOrigin || "http://localhost:3000"),
+          "X-Title": "OneClick Serverless Runtime",
+        },
+      });
     }
-    assistantText = await callOpenAiCompatible({
-      baseUrl: normalizeBaseUrl(readTrimmedEnv("OPENROUTER_BASE_URL"), "https://openrouter.ai/api/v1"),
-      token: openrouterApiKey,
-      model: resolveOpenAiModel(defaultModel),
-      systemPrompt,
-      messages: contextMessages,
-      extraHeaders: {
-        "HTTP-Referer": normalizeOriginUrl(readTrimmedEnv("APP_BASE_URL"), input.requestOrigin || "http://localhost:3000"),
-        "X-Title": "OneClick Serverless Runtime",
-      },
-    });
-  } else if (preferredModelProvider === "openai") {
-    if (!openaiApiKey && !subsidyToken) {
-      throw new Error("Model provider is set to OpenAI, but no OpenAI key or subsidy token is available.");
+
+    if (preferredModelProvider === "openai") {
+      if (!openaiApiKey && !subsidyToken) {
+        throw new Error("Model provider is set to OpenAI, but no OpenAI key or subsidy token is available.");
+      }
+      const baseUrl = subsidyToken
+        ? `${input.requestOrigin}/api/subsidy/openai/${input.deploymentId}`
+        : normalizeBaseUrl(readTrimmedEnv("OPENAI_BASE_URL") || readTrimmedEnv("OPENAI_API_BASE"), "https://api.openai.com/v1");
+      return await callOpenAiCompatible({
+        baseUrl,
+        token: subsidyToken || openaiApiKey,
+        model: resolveOpenAiModel(defaultModel),
+        systemPrompt,
+        messages,
+      });
     }
-    const baseUrl = subsidyToken
-      ? `${input.requestOrigin}/api/subsidy/openai/${input.deploymentId}`
-      : normalizeBaseUrl(readTrimmedEnv("OPENAI_BASE_URL") || readTrimmedEnv("OPENAI_API_BASE"), "https://api.openai.com/v1");
-    assistantText = await callOpenAiCompatible({
-      baseUrl,
-      token: subsidyToken || openaiApiKey,
-      model: resolveOpenAiModel(defaultModel),
-      systemPrompt,
-      messages: contextMessages,
-    });
-  } else if (preferredModelProvider === "anthropic") {
-    if (!anthropicApiKey) {
-      throw new Error("Model provider is set to Anthropic, but no Anthropic API key is configured.");
+
+    if (preferredModelProvider === "anthropic") {
+      if (!anthropicApiKey) {
+        throw new Error("Model provider is set to Anthropic, but no Anthropic API key is configured.");
+      }
+      return await callAnthropic({
+        token: anthropicApiKey,
+        model: resolveAnthropicModel(defaultModel),
+        systemPrompt,
+        messages,
+      });
     }
-    assistantText = await callAnthropic({
-      token: anthropicApiKey,
-      model: resolveAnthropicModel(defaultModel),
-      systemPrompt,
-      messages: contextMessages,
-    });
-  } else if (openrouterApiKey) {
-    assistantText = await callOpenAiCompatible({
-      baseUrl: normalizeBaseUrl(readTrimmedEnv("OPENROUTER_BASE_URL"), "https://openrouter.ai/api/v1"),
-      token: openrouterApiKey,
-      model: resolveOpenAiModel(defaultModel),
-      systemPrompt,
-      messages: contextMessages,
-      extraHeaders: {
-        "HTTP-Referer": normalizeOriginUrl(readTrimmedEnv("APP_BASE_URL"), input.requestOrigin || "http://localhost:3000"),
-        "X-Title": "OneClick Serverless Runtime",
-      },
-    });
-  } else if (openaiApiKey || subsidyToken) {
-    const baseUrl = subsidyToken
-      ? `${input.requestOrigin}/api/subsidy/openai/${input.deploymentId}`
-      : normalizeBaseUrl(readTrimmedEnv("OPENAI_BASE_URL") || readTrimmedEnv("OPENAI_API_BASE"), "https://api.openai.com/v1");
-    assistantText = await callOpenAiCompatible({
-      baseUrl,
-      token: subsidyToken || openaiApiKey,
-      model: resolveOpenAiModel(defaultModel),
-      systemPrompt,
-      messages: contextMessages,
-    });
-  } else if (anthropicApiKey) {
-    assistantText = await callAnthropic({
-      token: anthropicApiKey,
-      model: resolveAnthropicModel(defaultModel),
-      systemPrompt,
-      messages: contextMessages,
-    });
-  } else {
+
+    if (openrouterApiKey) {
+      return await callOpenAiCompatible({
+        baseUrl: normalizeBaseUrl(readTrimmedEnv("OPENROUTER_BASE_URL"), "https://openrouter.ai/api/v1"),
+        token: openrouterApiKey,
+        model: resolveOpenAiModel(defaultModel),
+        systemPrompt,
+        messages,
+        extraHeaders: {
+          "HTTP-Referer": normalizeOriginUrl(readTrimmedEnv("APP_BASE_URL"), input.requestOrigin || "http://localhost:3000"),
+          "X-Title": "OneClick Serverless Runtime",
+        },
+      });
+    }
+
+    if (openaiApiKey || subsidyToken) {
+      const baseUrl = subsidyToken
+        ? `${input.requestOrigin}/api/subsidy/openai/${input.deploymentId}`
+        : normalizeBaseUrl(readTrimmedEnv("OPENAI_BASE_URL") || readTrimmedEnv("OPENAI_API_BASE"), "https://api.openai.com/v1");
+      return await callOpenAiCompatible({
+        baseUrl,
+        token: subsidyToken || openaiApiKey,
+        model: resolveOpenAiModel(defaultModel),
+        systemPrompt,
+        messages,
+      });
+    }
+
+    if (anthropicApiKey) {
+      return await callAnthropic({
+        token: anthropicApiKey,
+        model: resolveAnthropicModel(defaultModel),
+        systemPrompt,
+        messages,
+      });
+    }
+
     throw new Error("No model API key found. Set OpenAI, OpenRouter, or Anthropic key in deployment settings.");
+  }
+
+  let workingMessages = [...contextMessages];
+  let assistantText = "";
+  const maxToolPasses = 4;
+  for (let step = 0; step <= maxToolPasses; step++) {
+    assistantText = await generateAssistantReply(workingMessages);
+    const toolCall = extractToolCall(assistantText, availableToolNames);
+    if (!toolCall) break;
+    if (step === maxToolPasses) {
+      assistantText = "I hit the tool-call depth limit. Please try again with a more specific request.";
+      break;
+    }
+
+    let toolResult: ServerlessRuntimeToolResult;
+    if (!availableToolNames.has(toolCall.name)) {
+      toolResult = {
+        ok: false,
+        tool: toolCall.name,
+        error: `Tool '${toolCall.name}' is not available in this runtime.`,
+      };
+    } else {
+      try {
+        toolResult = await executeServerlessRuntimeToolCall({
+          name: toolCall.name,
+          arguments: toolCall.arguments,
+        });
+      } catch (error) {
+        toolResult = {
+          ok: false,
+          tool: toolCall.name,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    }
+
+    workingMessages = [
+      ...workingMessages,
+      { role: "assistant", content: assistantText },
+      {
+        role: "user",
+        content: `TOOL_RESULT ${toolCall.name}\n${JSON.stringify(toolResult, null, 2)}`,
+      },
+    ];
   }
 
   const assistantInsert = await pool.query<InsertedMessageRow>(
