@@ -13,6 +13,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
 import { setServerlessTelegramWebhook } from "@/lib/telegram/serverlessWebhook";
+import { cloneRuntimeHistoryForRedeploy } from "@/lib/runtime/redeployClone";
 import { enqueueDeploymentJob, markDeploymentFailed, newDeploymentId } from "@/workers/deployWorker";
 
 const payloadSchema = z
@@ -819,6 +820,10 @@ export async function PATCH(
            updated_at = NOW()`,
     [nextDeploymentId, id],
   );
+  await cloneRuntimeHistoryForRedeploy({
+    sourceDeploymentId: id,
+    targetDeploymentId: nextDeploymentId,
+  });
 
   await pool.query(
     `INSERT INTO deployment_events (deployment_id, status, message)

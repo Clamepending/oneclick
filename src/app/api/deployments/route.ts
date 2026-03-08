@@ -13,6 +13,7 @@ import { getRuntimeBaseDomain } from "@/lib/subdomainConfig";
 import { deactivateExpiredFreeTrialsForUser } from "@/lib/trialEnforcement";
 import { buildRuntimeSubdomain, normalizeBotName } from "@/lib/provisioner/runtimeSlug";
 import { applyMemoryRateLimit } from "@/lib/security/rateLimit";
+import { cloneRuntimeHistoryForRedeploy } from "@/lib/runtime/redeployClone";
 import {
   enqueueDeploymentJob,
   markDeploymentFailed,
@@ -696,6 +697,10 @@ export async function POST(request: Request) {
                updated_at = NOW()`,
         [deploymentId, sourceDeploymentRow.id],
       );
+      await cloneRuntimeHistoryForRedeploy({
+        sourceDeploymentId: sourceDeploymentRow.id,
+        targetDeploymentId: deploymentId,
+      });
     }
 
     await pool.query(
