@@ -31,10 +31,20 @@ export default function OnboardingPage() {
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [serverlessRuntimeVersion, setServerlessRuntimeVersion] = useState("");
+  const [serverlessRuntimeSourceUrl, setServerlessRuntimeSourceUrl] = useState("");
 
   useEffect(() => {
     void (async () => {
       await fetch("/api/onboarding/start", { method: "POST" });
+      const metadataResponse = await fetch("/api/onboarding/serverless-runtime", { cache: "no-store" });
+      if (!metadataResponse.ok) return;
+      const metadata = (await metadataResponse.json().catch(() => null)) as
+        | { runtimeVersion?: string; sourceUrl?: string }
+        | null;
+      if (!metadata) return;
+      setServerlessRuntimeVersion(typeof metadata.runtimeVersion === "string" ? metadata.runtimeVersion.trim() : "");
+      setServerlessRuntimeSourceUrl(typeof metadata.sourceUrl === "string" ? metadata.sourceUrl.trim() : "");
     })();
   }, []);
 
@@ -109,6 +119,8 @@ export default function OnboardingPage() {
           onDeploymentFlavorChange={setDeploymentFlavor}
           onDeploy={handleDeploy}
           loading={loading}
+          serverlessRuntimeVersion={serverlessRuntimeVersion}
+          serverlessRuntimeSourceUrl={serverlessRuntimeSourceUrl}
         />
       </div>
 
