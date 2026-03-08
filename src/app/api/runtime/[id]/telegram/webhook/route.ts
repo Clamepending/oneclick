@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { ensureSchema, pool } from "@/lib/db";
 import { runServerlessChatTurn } from "@/lib/runtime/serverlessChatEngine";
 import {
+  sendTelegramTypingAction,
   sendTelegramTextMessage,
   verifyServerlessTelegramSecret,
 } from "@/lib/telegram/serverlessWebhook";
@@ -106,11 +107,17 @@ export async function POST(
   }
 
   const sessionId = `telegram:${chatId}`;
-  await ensureRuntimeSessionById({
-    deploymentId: id,
-    sessionId,
-    name: `Telegram ${chatId}`,
-  });
+  await Promise.all([
+    ensureRuntimeSessionById({
+      deploymentId: id,
+      sessionId,
+      name: `Telegram ${chatId}`,
+    }),
+    sendTelegramTypingAction({
+      botToken,
+      chatId,
+    }).catch(() => null),
+  ]);
 
   try {
     const result = await runServerlessChatTurn({

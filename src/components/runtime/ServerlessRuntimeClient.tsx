@@ -889,26 +889,44 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
                 <p className="muted" style={{ margin: 0 }}>
                   Select or create a session to start chatting.
                 </p>
-              ) : messages.length === 0 ? (
+              ) : messages.length === 0 && !sending ? (
                 <p className="muted" style={{ margin: 0 }}>
                   No messages yet in this session.
                 </p>
               ) : (
-                messages.map((message) => (
-                  <div
-                    key={message.id}
-                    style={{
-                      justifySelf: message.role === "user" ? "end" : "start",
-                      maxWidth: "88%",
-                      borderRadius: 10,
-                      border: "1px solid var(--border)",
-                      background: message.role === "user" ? "var(--accent-surface)" : "var(--surface)",
-                      padding: "8px 10px",
-                    }}
-                  >
-                    <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{message.content}</p>
-                  </div>
-                ))
+                <>
+                  {messages.map((message) => (
+                    <div
+                      key={message.id}
+                      style={{
+                        justifySelf: message.role === "user" ? "end" : "start",
+                        maxWidth: "88%",
+                        borderRadius: 10,
+                        border: "1px solid var(--border)",
+                        background: message.role === "user" ? "var(--accent-surface)" : "var(--surface)",
+                        padding: "8px 10px",
+                      }}
+                    >
+                      <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{message.content}</p>
+                    </div>
+                  ))}
+                  {sending ? (
+                    <div
+                      style={{
+                        justifySelf: "start",
+                        maxWidth: "88%",
+                        borderRadius: 10,
+                        border: "1px solid var(--border)",
+                        background: "var(--surface)",
+                        padding: "8px 10px",
+                      }}
+                    >
+                      <p className="muted" style={{ margin: 0 }}>
+                        Typing...
+                      </p>
+                    </div>
+                  ) : null}
+                </>
               )}
             </div>
 

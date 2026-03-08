@@ -175,3 +175,17 @@ export async function sendTelegramTextMessage(input: {
     },
   });
 }
+
+export async function sendTelegramTypingAction(input: {
+  botToken: string;
+  chatId: number;
+}) {
+  return await telegramApiPost({
+    botToken: input.botToken,
+    method: "sendChatAction",
+    body: {
+      chat_id: input.chatId,
+      action: "typing",
+    },
+  });
+}
