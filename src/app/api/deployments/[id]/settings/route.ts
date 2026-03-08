@@ -12,6 +12,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
+import { setServerlessTelegramWebhook } from "@/lib/telegram/serverlessWebhook";
 import { enqueueDeploymentJob, markDeploymentFailed, newDeploymentId } from "@/workers/deployWorker";
 
 const payloadSchema = z
@@ -347,6 +348,35 @@ async function tryHotApplyTelegramToken(input: {
   readyUrl: string | null;
   telegramBotToken: string;
 }) {
+  const provider = (input.deployProvider ?? "").trim().toLowerCase();
+  if (provider === "lambda") {
+    try {
+      const setWebhook = await setServerlessTelegramWebhook({
+        deploymentId: input.deploymentId,
+        botToken: input.telegramBotToken,
+      });
+      if (setWebhook.ok) {
+        return {
+          attempted: true as const,
+          applied: true as const,
+          webhookUrl: setWebhook.webhookUrl,
+        };
+      }
+      return {
+        attempted: true as const,
+        applied: false as const,
+        reason: setWebhook.reason,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "setWebhook failed";
+      return {
+        attempted: true as const,
+        applied: false as const,
+        reason: `setWebhook: ${message}`,
+      };
+    }
+  }
+
   const gatewayUrl = await resolveRuntimeGatewayUrl({
     deploymentId: input.deploymentId,
     deployProvider: input.deployProvider,

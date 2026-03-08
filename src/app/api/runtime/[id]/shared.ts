@@ -262,6 +262,34 @@ export async function createRuntimeSession(input: { deploymentId: string; name?:
   return created.rows[0];
 }
 
+export async function ensureRuntimeSessionById(input: {
+  deploymentId: string;
+  sessionId: string;
+  name?: string | null;
+}) {
+  const normalizedSessionId = input.sessionId.trim();
+  if (!normalizedSessionId) return null;
+
+  const existing = await getRuntimeSessionById({
+    deploymentId: input.deploymentId,
+    sessionId: normalizedSessionId,
+  });
+  if (existing) return existing;
+
+  await ensureDefaultRuntimeMemoryDocs(input.deploymentId);
+  const fallbackName = normalizeSessionName(input.name, "Session");
+  const created = await pool.query<RuntimeSessionRow>(
+    `INSERT INTO runtime_chat_sessions (id, deployment_id, name, created_at, updated_at)
+     VALUES ($1, $2, $3, NOW(), NOW())
+     ON CONFLICT (id)
+     DO UPDATE
+       SET updated_at = NOW()
+     RETURNING id, name, created_at, updated_at`,
+    [normalizedSessionId, input.deploymentId, fallbackName],
+  );
+  return created.rows[0] ?? null;
+}
+
 export async function ensureRuntimeSession(input: { deploymentId: string; preferredSessionId?: string | null }) {
   const preferredId = (input.preferredSessionId ?? "").trim();
   if (preferredId) {

@@ -20,6 +20,7 @@ import { getRuntimePort } from "@/lib/provisioner/openclawBundle";
 import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runtimeProvider";
 import { probeRuntimeHttp } from "@/lib/runtimeHealth";
 import { buildVideoMemoryUrl } from "@/lib/runtime/videoMemoryUrl";
+import { setServerlessTelegramWebhook } from "@/lib/telegram/serverlessWebhook";
 
 type DeploymentJob = {
   deploymentId: string;
@@ -1582,6 +1583,32 @@ export async function processDeploymentJob(job: DeploymentJob) {
       [job.deploymentId],
     );
     await appendEvent(job.deploymentId, "starting", "VideoMemory sidecar health check passed");
+  }
+
+  if (runtime.deployProvider === "lambda" && telegramBotToken?.trim()) {
+    await appendEvent(job.deploymentId, "starting", "Configuring Telegram webhook for serverless runtime");
+    try {
+      const configured = await setServerlessTelegramWebhook({
+        deploymentId: job.deploymentId,
+        botToken: telegramBotToken.trim(),
+      });
+      if (configured.ok) {
+        await appendEvent(
+          job.deploymentId,
+          "starting",
+          `Telegram webhook configured: ${configured.webhookUrl}`,
+        );
+      } else {
+        await appendEvent(
+          job.deploymentId,
+          "starting",
+          `Telegram webhook skipped: ${configured.reason}`,
+        );
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown error";
+      await appendEvent(job.deploymentId, "starting", `Telegram webhook setup warning: ${message}`);
+    }
   }
 
   await pool.query(
