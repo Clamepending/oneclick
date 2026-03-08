@@ -22,6 +22,10 @@ export type Deployment = {
   runtimeUserId: string | null;
   runtimeBotId: string | null;
   runtimeBotSecret: string | null;
+  runtimeKind: string | null;
+  runtimeVersion: string | null;
+  runtimeContractVersion: string | null;
+  runtimeReleaseChannel: string | null;
   readyUrl: string | null;
   error: string | null;
   createdAt: string;

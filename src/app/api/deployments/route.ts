@@ -14,6 +14,7 @@ import { deactivateExpiredFreeTrialsForUser } from "@/lib/trialEnforcement";
 import { buildRuntimeSubdomain, normalizeBotName } from "@/lib/provisioner/runtimeSlug";
 import { applyMemoryRateLimit } from "@/lib/security/rateLimit";
 import { cloneRuntimeHistoryForRedeploy } from "@/lib/runtime/redeployClone";
+import { resolveDefaultRuntimeMetadata } from "@/lib/runtime/runtimeMetadata";
 import {
   enqueueDeploymentJob,
   markDeploymentFailed,
@@ -622,6 +623,7 @@ export async function POST(request: Request) {
       parsedPayload.deploymentFlavor ??
       onboardingDeploymentFlavor ??
       "simple_agent_free";
+    const runtimeMetadata = resolveDefaultRuntimeMetadata(selectedDeploymentFlavor);
     const queueInfo = getQueueModeInfo();
     const vercelRuntime = isVercelRuntime();
     const workerCompatibility = await ensureQueueWorkerSupportsFlavor({
@@ -654,9 +656,10 @@ export async function POST(request: Request) {
     await pool.query(
     `INSERT INTO deployments (
        id, user_id, bot_name, status, model_provider, default_model, openai_api_key, anthropic_api_key, telegram_bot_token,
-       plan_tier, deployment_flavor, trial_started_at, trial_expires_at, monthly_price_cents
+       plan_tier, deployment_flavor, trial_started_at, trial_expires_at, monthly_price_cents,
+       runtime_kind, runtime_version, runtime_contract_version, runtime_release_channel
      )
-     VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+     VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
     [
       deploymentId,
       session.user.email,
@@ -671,6 +674,10 @@ export async function POST(request: Request) {
       null,
       null,
       null,
+      runtimeMetadata.runtimeKind,
+      runtimeMetadata.runtimeVersion,
+      runtimeMetadata.runtimeContractVersion,
+      runtimeMetadata.runtimeReleaseChannel,
     ],
   );
 
@@ -718,6 +725,14 @@ export async function POST(request: Request) {
         : selectedDeploymentFlavor === "simple_agent_videomemory_free"
           ? "Selected deployment type: Simple Agent + VideoMemory (Free)."
           : "Selected deployment type: Simple Agent (Serverless).",
+    ],
+  );
+  await pool.query(
+    `INSERT INTO deployment_events (deployment_id, status, message)
+     VALUES ($1, 'queued', $2)`,
+    [
+      deploymentId,
+      `Runtime metadata pinned: kind=${runtimeMetadata.runtimeKind} version=${runtimeMetadata.runtimeVersion} contract=${runtimeMetadata.runtimeContractVersion} channel=${runtimeMetadata.runtimeReleaseChannel}`,
     ],
   );
   if (sourceDeploymentRow) {

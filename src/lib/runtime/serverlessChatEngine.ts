@@ -11,6 +11,10 @@ import {
   type ServerlessRuntimeToolResult,
 } from "@/lib/runtime/serverlessTools";
 import { resolveServerlessBotId } from "@/lib/runtime/ottoauthAccounts";
+import {
+  RUNTIME_CONTRACT_VERSION,
+  TOOLS_PROTOCOL_VERSION,
+} from "@/lib/runtime/runtimeMetadata";
 
 type StoredMessage = {
   role: "user" | "assistant";
@@ -37,6 +41,15 @@ export type ServerlessRuntimeModelConfig = {
   subsidy_proxy_token: string | null;
   runtime_bot_id?: string | null;
   bot_name?: string | null;
+};
+
+export type ServerlessToolTraceEntry = {
+  call_id: string;
+  tool: string;
+  source: "builtin" | "mcp" | "gateway";
+  ok: boolean;
+  latency_ms: number;
+  error?: string | null;
 };
 
 function readTrimmedEnv(name: string) {
@@ -185,6 +198,12 @@ function extractToolCall(text: string, availableToolNames: Set<string>) {
     name,
     arguments: parseJsonObjectOrDefault(directMatch[2] ?? ""),
   } satisfies ParsedToolCall;
+}
+
+function resolveToolSource(toolName: string): "builtin" | "mcp" | "gateway" {
+  if (toolName.includes(".")) return "mcp";
+  if (toolName.startsWith("gateway")) return "gateway";
+  return "builtin";
 }
 
 async function callOpenAiCompatible(input: {
@@ -445,6 +464,7 @@ export async function runServerlessChatTurn(input: {
   let workingMessages = [...contextMessages];
   let assistantText = "";
   const maxToolPasses = 4;
+  const toolTrace: ServerlessToolTraceEntry[] = [];
   for (let step = 0; step <= maxToolPasses; step++) {
     assistantText = await generateAssistantReply(workingMessages);
     const toolCall = extractToolCall(assistantText, availableToolNames);
@@ -455,6 +475,8 @@ export async function runServerlessChatTurn(input: {
     }
 
     let toolResult: ServerlessRuntimeToolResult;
+    const callId = `tc_${step + 1}`;
+    const toolStartedAt = Date.now();
     if (!availableToolNames.has(toolCall.name)) {
       toolResult = {
         ok: false,
@@ -478,6 +500,14 @@ export async function runServerlessChatTurn(input: {
         };
       }
     }
+    toolTrace.push({
+      call_id: callId,
+      tool: toolCall.name,
+      source: resolveToolSource(toolCall.name),
+      ok: Boolean(toolResult.ok),
+      latency_ms: Date.now() - toolStartedAt,
+      error: toolResult.ok ? null : toolResult.error ?? "tool call failed",
+    });
 
     workingMessages = [
       ...workingMessages,
@@ -511,6 +541,22 @@ export async function runServerlessChatTurn(input: {
       role: "assistant" as const,
       content: assistantMessage.content,
       createdAt: assistantMessage.created_at,
+    },
+    toolTrace,
+  };
+}
+
+export function getServerlessEmbeddedCapabilities() {
+  return {
+    runtime_contract_version: RUNTIME_CONTRACT_VERSION,
+    tools_protocol: TOOLS_PROTOCOL_VERSION,
+    max_tool_passes: 4,
+    features: {
+      web_search: true,
+      web_fetch: true,
+      mcp: true,
+      telegram_webhook: true,
+      streaming: false,
     },
   };
 }

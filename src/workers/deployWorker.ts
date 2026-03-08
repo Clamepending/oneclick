@@ -20,6 +20,7 @@ import { getRuntimePort } from "@/lib/provisioner/openclawBundle";
 import { destroyUserRuntime, launchUserContainer } from "@/lib/provisioner/runtimeProvider";
 import { probeRuntimeHttp } from "@/lib/runtimeHealth";
 import { buildVideoMemoryUrl } from "@/lib/runtime/videoMemoryUrl";
+import { resolveRuntimeMetadataFromRow } from "@/lib/runtime/runtimeMetadata";
 import { setServerlessTelegramWebhook } from "@/lib/telegram/serverlessWebhook";
 import { ensureOttoAuthAccountForBot, resolveServerlessBotId } from "@/lib/runtime/ottoauthAccounts";
 
@@ -1342,14 +1343,26 @@ export async function processDeploymentJob(job: DeploymentJob) {
     telegram_bot_token: string | null;
     plan_tier: string | null;
     deployment_flavor: string | null;
+    runtime_kind: string | null;
+    runtime_version: string | null;
+    runtime_contract_version: string | null;
+    runtime_release_channel: string | null;
   }>(
-    `SELECT bot_name, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token, plan_tier, deployment_flavor
+    `SELECT bot_name, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token, plan_tier, deployment_flavor,
+            runtime_kind, runtime_version, runtime_contract_version, runtime_release_channel
      FROM deployments
      WHERE id = $1
      LIMIT 1`,
     [job.deploymentId],
   );
   const deploymentFlavor = normalizeDeploymentFlavor(deploymentRow.rows[0]?.deployment_flavor) as DeploymentFlavor;
+  const pinnedRuntimeMetadata = resolveRuntimeMetadataFromRow({
+    deployment_flavor: deploymentRow.rows[0]?.deployment_flavor,
+    runtime_kind: deploymentRow.rows[0]?.runtime_kind,
+    runtime_version: deploymentRow.rows[0]?.runtime_version,
+    runtime_contract_version: deploymentRow.rows[0]?.runtime_contract_version,
+    runtime_release_channel: deploymentRow.rows[0]?.runtime_release_channel,
+  });
   const onboarding = await pool.query<{
     bot_name: string | null;
     channel: string | null;
@@ -1434,6 +1447,10 @@ export async function processDeploymentJob(job: DeploymentJob) {
       startCommand: "",
       hostName: "shared",
       readyUrl: sharedBaseUrl,
+      runtimeKind: pinnedRuntimeMetadata.runtimeKind,
+      runtimeVersion: pinnedRuntimeMetadata.runtimeVersion,
+      runtimeContractVersion: pinnedRuntimeMetadata.runtimeContractVersion,
+      runtimeReleaseChannel: pinnedRuntimeMetadata.runtimeReleaseChannel,
     };
   } else {
     runtime = await launchUserContainer({
@@ -1452,20 +1469,44 @@ export async function processDeploymentJob(job: DeploymentJob) {
       ecsServicePrefixOverride: deploymentStrategy.ecsServicePrefixOverride,
     });
   }
+  const runtimeKind = runtime.runtimeKind || pinnedRuntimeMetadata.runtimeKind;
+  const runtimeVersion = runtime.runtimeVersion || pinnedRuntimeMetadata.runtimeVersion;
+  const runtimeContractVersion =
+    runtime.runtimeContractVersion || pinnedRuntimeMetadata.runtimeContractVersion;
+  const runtimeReleaseChannel =
+    runtime.runtimeReleaseChannel || pinnedRuntimeMetadata.runtimeReleaseChannel;
   await pool.query(
     `UPDATE deployments
      SET ready_url = $1,
          runtime_id = $2,
          deploy_provider = $3,
+         runtime_kind = $4,
+         runtime_version = $5,
+         runtime_contract_version = $6,
+         runtime_release_channel = $7,
          runtime_user_id = NULL,
          runtime_bot_id = NULL,
          runtime_bot_secret = NULL,
          video_memory_ready_at = NULL,
          updated_at = NOW()
-     WHERE id = $4`,
-    [runtime.readyUrl, runtime.runtimeId, runtime.deployProvider, job.deploymentId],
+     WHERE id = $8`,
+    [
+      runtime.readyUrl,
+      runtime.runtimeId,
+      runtime.deployProvider,
+      runtimeKind,
+      runtimeVersion,
+      runtimeContractVersion,
+      runtimeReleaseChannel,
+      job.deploymentId,
+    ],
   );
   await appendEvent(job.deploymentId, "starting", "Runtime launched; persisted runtime metadata");
+  await appendEvent(
+    job.deploymentId,
+    "starting",
+    `Runtime metadata: kind=${runtimeKind} version=${runtimeVersion} contract=${runtimeContractVersion} channel=${runtimeReleaseChannel}`,
+  );
   if (runtime.deployProvider !== "lambda") {
     await appendEvent(job.deploymentId, "starting", "Waiting for runtime health check");
     await waitForRuntimeReady({

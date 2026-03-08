@@ -55,6 +55,10 @@ export async function ensureSchema() {
       runtime_user_id TEXT,
       runtime_bot_id TEXT,
       runtime_bot_secret TEXT,
+      runtime_kind TEXT,
+      runtime_version TEXT,
+      runtime_contract_version TEXT,
+      runtime_release_channel TEXT,
       ready_url TEXT,
       error TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -75,6 +79,10 @@ export async function ensureSchema() {
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS runtime_user_id TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS runtime_bot_id TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS runtime_bot_secret TEXT;`);
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS runtime_kind TEXT;`);
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS runtime_version TEXT;`);
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS runtime_contract_version TEXT;`);
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS runtime_release_channel TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS plan_tier TEXT NOT NULL DEFAULT 'free';`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMPTZ;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS trial_expires_at TIMESTAMPTZ;`);
@@ -264,6 +272,74 @@ export async function ensureSchema() {
     CREATE INDEX IF NOT EXISTS bot_identities_owner_user_id_idx
     ON bot_identities (owner_user_id);
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS runtime_versions (
+      id BIGSERIAL PRIMARY KEY,
+      runtime_kind TEXT NOT NULL,
+      runtime_version TEXT NOT NULL,
+      runtime_contract_version TEXT NOT NULL,
+      status TEXT NOT NULL,
+      artifact_ref TEXT,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      promoted_at TIMESTAMPTZ,
+      UNIQUE (runtime_kind, runtime_version)
+    );
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS runtime_versions_kind_status_idx
+    ON runtime_versions (runtime_kind, status, created_at DESC);
+  `);
+
+  await pool.query(
+    `INSERT INTO runtime_versions (
+       runtime_kind,
+       runtime_version,
+       runtime_contract_version,
+       status,
+       artifact_ref,
+       metadata,
+       promoted_at
+     )
+     VALUES (
+       'simpleagent_embedded',
+       $1,
+       'v1',
+       'stable',
+       'embedded-runtime',
+       '{"seed":"ensureSchema"}'::jsonb,
+       NOW()
+     )
+     ON CONFLICT (runtime_kind, runtime_version)
+     DO NOTHING`,
+    [(process.env.SIMPLE_AGENT_EMBEDDED_RUNTIME_VERSION ?? "embedded-v1").trim() || "embedded-v1"],
+  );
+
+  await pool.query(
+    `INSERT INTO runtime_versions (
+       runtime_kind,
+       runtime_version,
+       runtime_contract_version,
+       status,
+       artifact_ref,
+       metadata,
+       promoted_at
+     )
+     VALUES (
+       'simpleagent_vm_ssh',
+       $1,
+       'v1',
+       'stable',
+       'vm-runtime',
+       '{"seed":"ensureSchema"}'::jsonb,
+       NOW()
+     )
+     ON CONFLICT (runtime_kind, runtime_version)
+     DO NOTHING`,
+    [(process.env.SIMPLE_AGENT_VM_RUNTIME_VERSION ?? "vm-legacy-v1").trim() || "vm-legacy-v1"],
+  );
     initialized = true;
   } catch (error) {
     initialized = false;

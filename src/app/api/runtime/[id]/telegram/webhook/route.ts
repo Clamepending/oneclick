@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { ensureSchema, pool } from "@/lib/db";
-import { runServerlessChatTurn } from "@/lib/runtime/serverlessChatEngine";
 import {
   sendTelegramTypingAction,
   sendTelegramTextMessage,
   verifyServerlessTelegramSecret,
 } from "@/lib/telegram/serverlessWebhook";
 import { ensureRuntimeSessionById } from "../../shared";
+import { runRuntimeTurn, RuntimeRouterError } from "@/lib/runtime/runtimeRouter";
+import { resolveRuntimeMetadataFromRow } from "@/lib/runtime/runtimeMetadata";
 
 type DeploymentRow = {
   id: string;
@@ -21,6 +22,11 @@ type DeploymentRow = {
   anthropic_api_key: string | null;
   openrouter_api_key: string | null;
   subsidy_proxy_token: string | null;
+  deployment_flavor: string | null;
+  runtime_kind: string | null;
+  runtime_version: string | null;
+  runtime_contract_version: string | null;
+  runtime_release_channel: string | null;
 };
 
 type TelegramUpdate = {
@@ -62,7 +68,12 @@ export async function POST(
             openai_api_key,
             anthropic_api_key,
             openrouter_api_key,
-            subsidy_proxy_token
+            subsidy_proxy_token,
+            deployment_flavor,
+            runtime_kind,
+            runtime_version,
+            runtime_contract_version,
+            runtime_release_channel
      FROM deployments
      WHERE id = $1
      LIMIT 1`,
@@ -82,6 +93,14 @@ export async function POST(
   if (!botToken) {
     return NextResponse.json({ ok: true, ignored: "missing_telegram_token" });
   }
+
+  const runtimeMetadata = resolveRuntimeMetadataFromRow({
+    deployment_flavor: row.deployment_flavor,
+    runtime_kind: row.runtime_kind,
+    runtime_version: row.runtime_version,
+    runtime_contract_version: row.runtime_contract_version,
+    runtime_release_channel: row.runtime_release_channel,
+  });
 
   const receivedSecret = request.headers.get("x-telegram-bot-api-secret-token");
   if (
@@ -124,11 +143,12 @@ export async function POST(
   ]);
 
   try {
-    const result = await runServerlessChatTurn({
+    const result = await runRuntimeTurn({
       deploymentId: id,
       sessionId,
       userMessage: userText,
       requestOrigin: new URL(request.url).origin,
+      runtimeMetadata,
       modelConfig: {
         bot_name: row.bot_name,
         runtime_bot_id: row.runtime_bot_id,
@@ -157,7 +177,12 @@ export async function POST(
       assistantMessageId: result.assistantMessage.id,
     });
   } catch (error) {
-    const reason = error instanceof Error ? error.message : "runtime_failed";
+    const reason =
+      error instanceof RuntimeRouterError
+        ? `${error.code}: ${error.message}`
+        : error instanceof Error
+          ? error.message
+          : "runtime_failed";
     try {
       await sendTelegramTextMessage({
         botToken,

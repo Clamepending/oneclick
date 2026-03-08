@@ -27,6 +27,11 @@ import {
   type PlanTier,
 } from "@/lib/plans";
 import {
+  resolveDefaultRuntimeMetadata,
+  type RuntimeKind,
+  type RuntimeReleaseChannel,
+} from "@/lib/runtime/runtimeMetadata";
+import {
   getOttoAgentBuildRepo,
   getOttoAgentMcpBuildRepo,
   getOttoAgentMcpImage,
@@ -66,6 +71,21 @@ type LaunchInput = {
   providerOverride?: "mock" | "ssh" | "ecs" | "lambda" | null;
   ecsServicePrefixOverride?: string | null;
   host?: Host;
+};
+
+export type LaunchResult = {
+  runtimeId: string;
+  deployProvider: "ssh" | "ecs" | "lambda" | "shared";
+  image: string;
+  port: number;
+  hostPort: number | null;
+  startCommand: string;
+  hostName: string;
+  readyUrl: string;
+  runtimeKind: RuntimeKind;
+  runtimeVersion: string;
+  runtimeContractVersion: "v1";
+  runtimeReleaseChannel: RuntimeReleaseChannel;
 };
 
 type DestroyInput = {
@@ -667,8 +687,9 @@ function resolveAppBaseUrl() {
   }
 }
 
-async function launchViaLambda(input: LaunchInput) {
+async function launchViaLambda(input: LaunchInput): Promise<LaunchResult> {
   const deploymentFlavor = normalizeDeploymentFlavor(input.deploymentFlavor);
+  const runtimeMetadata = resolveDefaultRuntimeMetadata(deploymentFlavor);
   const baseUrl = resolveAppBaseUrl();
   return {
     runtimeId: runtimeIdFromLambda(input.deploymentId),
@@ -679,6 +700,10 @@ async function launchViaLambda(input: LaunchInput) {
     startCommand: "",
     hostName: "lambda",
     readyUrl: `${baseUrl}/runtime/${input.deploymentId}`,
+    runtimeKind: runtimeMetadata.runtimeKind,
+    runtimeVersion: runtimeMetadata.runtimeVersion,
+    runtimeContractVersion: runtimeMetadata.runtimeContractVersion,
+    runtimeReleaseChannel: runtimeMetadata.runtimeReleaseChannel,
   };
 }
 
@@ -1415,7 +1440,7 @@ function toReadyUrl(host: Host, hostPort: number, deploymentId: string) {
   return `http://${hostname}:${hostPort}`;
 }
 
-async function launchViaSsh(input: LaunchInput) {
+async function launchViaSsh(input: LaunchInput): Promise<LaunchResult> {
   if (!input.host) {
     throw new Error("Host is required for DEPLOY_PROVIDER=ssh.");
   }
@@ -1431,6 +1456,7 @@ async function launchViaSsh(input: LaunchInput) {
   }
 
   const deploymentFlavor = normalizeDeploymentFlavor(input.deploymentFlavor);
+  const runtimeMetadata = resolveDefaultRuntimeMetadata(deploymentFlavor);
   const isOpenClawRuntime = deploymentFlavor === "deploy_openclaw_free";
   const isSimpleAgentWithVideoMemory = deploymentFlavor === "simple_agent_videomemory_free";
   const isSimpleAgentWithOttoAgentMcp = deploymentFlavor === "ottoagent_free";
@@ -1662,10 +1688,14 @@ async function launchViaSsh(input: LaunchInput) {
     startCommand,
     hostName: input.host?.name ?? "mock",
     readyUrl: withGatewayToken(runtimeDomain.readyUrl, gatewayToken),
+    runtimeKind: runtimeMetadata.runtimeKind,
+    runtimeVersion: runtimeMetadata.runtimeVersion,
+    runtimeContractVersion: runtimeMetadata.runtimeContractVersion,
+    runtimeReleaseChannel: runtimeMetadata.runtimeReleaseChannel,
   };
 }
 
-async function launchViaEcs(input: LaunchInput) {
+async function launchViaEcs(input: LaunchInput): Promise<LaunchResult> {
   const region = requireEnv("AWS_REGION");
   const cluster = requireEnv("ECS_CLUSTER");
   const subnets = parseCsvEnv("ECS_SUBNET_IDS");
@@ -1679,6 +1709,7 @@ async function launchViaEcs(input: LaunchInput) {
     ? "DISABLED"
     : "ENABLED";
   const deploymentFlavor = normalizeDeploymentFlavor(input.deploymentFlavor);
+  const runtimeMetadata = resolveDefaultRuntimeMetadata(deploymentFlavor);
   const isOpenClawRuntime = deploymentFlavor === "deploy_openclaw_free";
   const isSimpleAgentMicroservicesEcs = deploymentFlavor === "simple_agent_microservices_ecs";
   const isSimpleAgentWithOttoAuthEcs = isOttoAuthEcsFlavor(deploymentFlavor);
@@ -2026,6 +2057,10 @@ async function launchViaEcs(input: LaunchInput) {
       startCommand,
       hostName: albRouting?.hostName ?? `ecs:${cluster}`,
       readyUrl: readyUrlBase,
+      runtimeKind: runtimeMetadata.runtimeKind,
+      runtimeVersion: runtimeMetadata.runtimeVersion,
+      runtimeContractVersion: runtimeMetadata.runtimeContractVersion,
+      runtimeReleaseChannel: runtimeMetadata.runtimeReleaseChannel,
     };
   }
 
@@ -2356,10 +2391,14 @@ async function launchViaEcs(input: LaunchInput) {
     startCommand,
     hostName: albRouting?.hostName ?? `ecs:${cluster}`,
     readyUrl: withGatewayToken(readyUrlBase, gatewayToken),
+    runtimeKind: runtimeMetadata.runtimeKind,
+    runtimeVersion: runtimeMetadata.runtimeVersion,
+    runtimeContractVersion: runtimeMetadata.runtimeContractVersion,
+    runtimeReleaseChannel: runtimeMetadata.runtimeReleaseChannel,
   };
 }
 
-export async function launchUserContainer(input: LaunchInput) {
+export async function launchUserContainer(input: LaunchInput): Promise<LaunchResult> {
   if (input.providerOverride === "ecs") {
     return launchViaEcs(input);
   }

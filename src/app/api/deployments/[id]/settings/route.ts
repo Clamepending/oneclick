@@ -14,6 +14,7 @@ import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
 import { setServerlessTelegramWebhook } from "@/lib/telegram/serverlessWebhook";
 import { cloneRuntimeHistoryForRedeploy } from "@/lib/runtime/redeployClone";
+import { resolveRuntimeMetadataFromRow } from "@/lib/runtime/runtimeMetadata";
 import { enqueueDeploymentJob, markDeploymentFailed, newDeploymentId } from "@/workers/deployWorker";
 
 const payloadSchema = z
@@ -661,9 +662,14 @@ export async function PATCH(
     ready_url: string | null;
     plan_tier: string | null;
     deployment_flavor: string | null;
+    runtime_kind: string | null;
+    runtime_version: string | null;
+    runtime_contract_version: string | null;
+    runtime_release_channel: string | null;
   }>(
     `SELECT id, status, bot_name, model_provider, default_model, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token,
-            deploy_provider, runtime_id, ready_url, plan_tier, deployment_flavor
+            deploy_provider, runtime_id, ready_url, plan_tier, deployment_flavor,
+            runtime_kind, runtime_version, runtime_contract_version, runtime_release_channel
      FROM deployments
      WHERE id = $1 AND user_id = $2
      LIMIT 1`,
@@ -777,12 +783,20 @@ export async function PATCH(
   }
 
   const nextDeploymentId = newDeploymentId();
+  const runtimeMetadata = resolveRuntimeMetadataFromRow({
+    deployment_flavor: current.deployment_flavor,
+    runtime_kind: current.runtime_kind,
+    runtime_version: current.runtime_version,
+    runtime_contract_version: current.runtime_contract_version,
+    runtime_release_channel: current.runtime_release_channel,
+  });
   await pool.query(
     `INSERT INTO deployments (
        id, user_id, bot_name, status, model_provider, default_model, openai_api_key, anthropic_api_key, openrouter_api_key, telegram_bot_token,
-       plan_tier, deployment_flavor, trial_started_at, trial_expires_at, monthly_price_cents
+       plan_tier, deployment_flavor, trial_started_at, trial_expires_at, monthly_price_cents,
+       runtime_kind, runtime_version, runtime_contract_version, runtime_release_channel
      )
-     VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, $9, $10, $11, NULL, NULL, NULL)`,
+     VALUES ($1, $2, $3, 'queued', $4, $5, $6, $7, $8, $9, $10, $11, NULL, NULL, NULL, $12, $13, $14, $15)`,
     [
       nextDeploymentId,
       session.user.email,
@@ -795,6 +809,10 @@ export async function PATCH(
       source.telegram_bot_token,
       current.plan_tier?.trim() || "free",
       current.deployment_flavor?.trim() || "simple_agent_free",
+      runtimeMetadata.runtimeKind,
+      runtimeMetadata.runtimeVersion,
+      runtimeMetadata.runtimeContractVersion,
+      runtimeMetadata.runtimeReleaseChannel,
     ],
   );
 

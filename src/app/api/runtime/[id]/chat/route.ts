@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
-import { runServerlessChatTurn } from "@/lib/runtime/serverlessChatEngine";
 import { ensureRuntimeSession } from "../shared";
+import { runRuntimeTurn, RuntimeRouterError } from "@/lib/runtime/runtimeRouter";
+import { resolveRuntimeMetadataFromRow } from "@/lib/runtime/runtimeMetadata";
 
 const payloadSchema = z.object({
   message: z.string().trim().min(1).max(8000),
@@ -22,6 +23,11 @@ type DeploymentRow = {
   anthropic_api_key: string | null;
   openrouter_api_key: string | null;
   subsidy_proxy_token: string | null;
+  deployment_flavor: string | null;
+  runtime_kind: string | null;
+  runtime_version: string | null;
+  runtime_contract_version: string | null;
+  runtime_release_channel: string | null;
 };
 
 export async function POST(
@@ -53,7 +59,12 @@ export async function POST(
             openai_api_key,
             anthropic_api_key,
             openrouter_api_key,
-            subsidy_proxy_token
+            subsidy_proxy_token,
+            deployment_flavor,
+            runtime_kind,
+            runtime_version,
+            runtime_contract_version,
+            runtime_release_channel
      FROM deployments
      WHERE id = $1
        AND user_id = $2
@@ -71,6 +82,14 @@ export async function POST(
     return NextResponse.json({ ok: false, error: "Deployment is not ready yet." }, { status: 409 });
   }
 
+  const runtimeMetadata = resolveRuntimeMetadataFromRow({
+    deployment_flavor: row.deployment_flavor,
+    runtime_kind: row.runtime_kind,
+    runtime_version: row.runtime_version,
+    runtime_contract_version: row.runtime_contract_version,
+    runtime_release_channel: row.runtime_release_channel,
+  });
+
   const sessionResolution = await ensureRuntimeSession({
     deploymentId: id,
     preferredSessionId: parsedBody.data.sessionId,
@@ -80,11 +99,12 @@ export async function POST(
   }
 
   try {
-    const result = await runServerlessChatTurn({
+    const result = await runRuntimeTurn({
       deploymentId: id,
       sessionId: sessionResolution.session.id,
       userMessage: parsedBody.data.message,
       requestOrigin: new URL(request.url).origin,
+      runtimeMetadata,
       modelConfig: {
         bot_name: row.bot_name,
         runtime_bot_id: row.runtime_bot_id,
@@ -98,6 +118,12 @@ export async function POST(
     });
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
+    if (error instanceof RuntimeRouterError) {
+      return NextResponse.json(
+        { ok: false, error: error.message, code: error.code },
+        { status: error.statusCode },
+      );
+    }
     const message = error instanceof Error ? error.message : "Model call failed.";
     return NextResponse.json({ ok: false, error: message }, { status: 502 });
   }
