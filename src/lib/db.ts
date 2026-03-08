@@ -201,6 +201,36 @@ export async function ensureSchema() {
     ON runtime_chat_messages (deployment_id, session_id, id);
   `);
 
+  // Backfill session rows for any historical messages that exist without a
+  // matching runtime_chat_sessions record (possible from older global-id PK
+  // collisions).
+  await pool.query(`
+    INSERT INTO runtime_chat_sessions (id, deployment_id, name, created_at, updated_at)
+    SELECT orphan.session_id,
+           orphan.deployment_id,
+           CASE
+             WHEN orphan.session_id LIKE 'telegram:%'
+               THEN CONCAT('Telegram ', SUBSTRING(orphan.session_id FROM 10))
+             ELSE 'Session'
+           END AS name,
+           orphan.first_message_at,
+           orphan.last_message_at
+    FROM (
+      SELECT m.deployment_id,
+             m.session_id,
+             MIN(m.created_at) AS first_message_at,
+             MAX(m.created_at) AS last_message_at
+      FROM runtime_chat_messages m
+      WHERE m.session_id IS NOT NULL
+      GROUP BY m.deployment_id, m.session_id
+    ) orphan
+    LEFT JOIN runtime_chat_sessions s
+      ON s.deployment_id = orphan.deployment_id
+     AND s.id = orphan.session_id
+    WHERE s.id IS NULL
+    ON CONFLICT (deployment_id, id) DO NOTHING;
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS runtime_memory_docs (
       deployment_id TEXT NOT NULL,
