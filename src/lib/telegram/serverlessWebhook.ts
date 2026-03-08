@@ -51,6 +51,28 @@ export function buildServerlessTelegramWebhookUrl(input: {
   return `${base}/api/runtime/${encodeURIComponent(input.deploymentId)}/telegram/webhook`;
 }
 
+async function resolveCanonicalWebhookUrl(webhookUrl: string) {
+  try {
+    const probe = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ probe: true }),
+      redirect: "manual",
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (probe.status >= 300 && probe.status < 400) {
+      const location = probe.headers.get("location");
+      if (location) {
+        const resolved = new URL(location, webhookUrl);
+        return resolved.toString();
+      }
+    }
+  } catch {
+    // Keep original URL if probe fails; Telegram may still reach it.
+  }
+  return webhookUrl;
+}
+
 export function buildServerlessTelegramSecret(input: {
   deploymentId: string;
   botToken: string;
@@ -105,16 +127,17 @@ export async function setServerlessTelegramWebhook(input: {
   botToken: string;
   baseUrlOverride?: string | null;
 }) {
-  const url = buildServerlessTelegramWebhookUrl({
+  const rawUrl = buildServerlessTelegramWebhookUrl({
     deploymentId: input.deploymentId,
     baseUrlOverride: input.baseUrlOverride,
   });
-  if (!url) {
+  if (!rawUrl) {
     return {
       ok: false as const,
       reason: "missing_public_base_url",
     };
   }
+  const url = await resolveCanonicalWebhookUrl(rawUrl);
   const secretToken = buildServerlessTelegramSecret({
     deploymentId: input.deploymentId,
     botToken: input.botToken,
