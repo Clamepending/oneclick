@@ -201,6 +201,33 @@ export async function ensureSchema() {
     ON runtime_chat_messages (deployment_id, session_id, id);
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS runtime_event_logs (
+      id BIGSERIAL PRIMARY KEY,
+      deployment_id TEXT NOT NULL,
+      source TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      session_id TEXT,
+      error TEXT,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      result JSONB,
+      replay_of_event_id BIGINT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS runtime_event_logs_deployment_created_idx
+    ON runtime_event_logs (deployment_id, created_at DESC);
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS runtime_event_logs_deployment_status_created_idx
+    ON runtime_event_logs (deployment_id, status, created_at DESC);
+  `);
+
   // Backfill session rows for any historical messages that exist without a
   // matching runtime_chat_sessions record (possible from older global-id PK
   // collisions).

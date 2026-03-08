@@ -264,6 +264,7 @@ export async function DELETE(
     }
 
     await pool.query(`DELETE FROM deployment_events WHERE deployment_id = $1`, [id]);
+    await pool.query(`DELETE FROM runtime_event_logs WHERE deployment_id = $1`, [id]);
     await pool.query(`DELETE FROM runtime_chat_messages WHERE deployment_id = $1`, [id]);
     await pool.query(`DELETE FROM runtime_chat_sessions WHERE deployment_id = $1`, [id]);
     await pool.query(`DELETE FROM runtime_memory_docs WHERE deployment_id = $1`, [id]);

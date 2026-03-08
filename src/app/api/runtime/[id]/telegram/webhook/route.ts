@@ -1,12 +1,10 @@
 import { NextResponse } from "next/server";
 import { ensureSchema, pool } from "@/lib/db";
+import { createRuntimeEventLog } from "@/lib/runtime/runtimeEventLog";
+import { executeServerlessTelegramTurn } from "@/lib/runtime/serverlessTelegramHandler";
 import {
-  sendTelegramTypingAction,
-  sendTelegramTextMessage,
   verifyServerlessTelegramSecret,
 } from "@/lib/telegram/serverlessWebhook";
-import { ensureRuntimeSessionById } from "../../shared";
-import { runRuntimeTurn, RuntimeRouterError } from "@/lib/runtime/runtimeRouter";
 import { resolveRuntimeMetadataFromRow } from "@/lib/runtime/runtimeMetadata";
 
 type DeploymentRow = {
@@ -116,89 +114,97 @@ export async function POST(
   const payload = (await request.json().catch(() => null)) as TelegramUpdate | null;
   const message = payload?.message;
   if (!message || message.from?.is_bot) {
+    await createRuntimeEventLog({
+      deploymentId: id,
+      source: "telegram_webhook",
+      eventType: "telegram_message",
+      status: "ignored",
+      error: "no_message",
+      payload: {
+        updateId: payload?.update_id ?? null,
+      },
+    });
     return NextResponse.json({ ok: true, ignored: "no_message" });
   }
 
   const chatId = parseTelegramChatId(message.chat?.id);
   if (chatId === null) {
+    await createRuntimeEventLog({
+      deploymentId: id,
+      source: "telegram_webhook",
+      eventType: "telegram_message",
+      status: "ignored",
+      error: "missing_chat_id",
+      payload: {
+        updateId: payload?.update_id ?? null,
+      },
+    });
     return NextResponse.json({ ok: true, ignored: "missing_chat_id" });
   }
 
   const userText = String(message.text ?? message.caption ?? "").trim();
   if (!userText) {
+    await createRuntimeEventLog({
+      deploymentId: id,
+      source: "telegram_webhook",
+      eventType: "telegram_message",
+      status: "ignored",
+      error: "empty_text",
+      payload: {
+        updateId: payload?.update_id ?? null,
+        chatId,
+      },
+    });
     return NextResponse.json({ ok: true, ignored: "empty_text" });
   }
 
-  const sessionId = `telegram:${chatId}`;
-  await Promise.all([
-    ensureRuntimeSessionById({
-      deploymentId: id,
-      sessionId,
-      name: `Telegram ${chatId}`,
-    }),
-    sendTelegramTypingAction({
-      botToken,
-      chatId,
-    }).catch(() => null),
-  ]);
+  const result = await executeServerlessTelegramTurn({
+    deploymentId: id,
+    botToken,
+    chatId,
+    messageId: typeof message.message_id === "number" ? message.message_id : null,
+    userText,
+    runtimeMetadata,
+    requestOrigin: new URL(request.url).origin,
+    modelConfig: {
+      bot_name: row.bot_name,
+      runtime_bot_id: row.runtime_bot_id,
+      model_provider: row.model_provider,
+      default_model: row.default_model,
+      openai_api_key: row.openai_api_key,
+      anthropic_api_key: row.anthropic_api_key,
+      openrouter_api_key: row.openrouter_api_key,
+      subsidy_proxy_token: row.subsidy_proxy_token,
+    },
+  });
 
-  try {
-    const result = await runRuntimeTurn({
-      deploymentId: id,
-      sessionId,
-      userMessage: userText,
-      requestOrigin: new URL(request.url).origin,
-      runtimeMetadata,
-      modelConfig: {
-        bot_name: row.bot_name,
-        runtime_bot_id: row.runtime_bot_id,
-        model_provider: row.model_provider,
-        default_model: row.default_model,
-        openai_api_key: row.openai_api_key,
-        anthropic_api_key: row.anthropic_api_key,
-        openrouter_api_key: row.openrouter_api_key,
-        subsidy_proxy_token: row.subsidy_proxy_token,
-      },
-    });
-
-    await sendTelegramTextMessage({
-      botToken,
-      chatId,
-      text: result.assistantMessage.content,
-      replyToMessageId: typeof message.message_id === "number" ? message.message_id : null,
-    });
-
-    return NextResponse.json({
-      ok: true,
-      processed: true,
+  await createRuntimeEventLog({
+    deploymentId: id,
+    source: "telegram_webhook",
+    eventType: "telegram_message",
+    status: result.processed ? "processed" : "failed",
+    sessionId: result.sessionId,
+    error: result.error,
+    payload: {
       updateId: payload?.update_id ?? null,
-      sessionId,
-      userMessageId: result.userMessage.id,
-      assistantMessageId: result.assistantMessage.id,
-    });
-  } catch (error) {
-    const reason =
-      error instanceof RuntimeRouterError
-        ? `${error.code}: ${error.message}`
-        : error instanceof Error
-          ? error.message
-          : "runtime_failed";
-    try {
-      await sendTelegramTextMessage({
-        botToken,
-        chatId,
-        text: `OneClick runtime error: ${reason}`,
-        replyToMessageId: typeof message.message_id === "number" ? message.message_id : null,
-      });
-    } catch {
-      // Ignore secondary Telegram send failures; webhook still needs a deterministic response.
-    }
-    return NextResponse.json({
-      ok: true,
-      processed: false,
-      updateId: payload?.update_id ?? null,
-      sessionId,
-      error: reason,
-    });
-  }
+      chatId,
+      messageId: typeof message.message_id === "number" ? message.message_id : null,
+      text: userText,
+    },
+    result: {
+      processed: result.processed,
+      userMessageId: result.userMessageId,
+      assistantMessageId: result.assistantMessageId,
+    },
+  });
+
+  return NextResponse.json({
+    ok: true,
+    processed: result.processed,
+    updateId: payload?.update_id ?? null,
+    sessionId: result.sessionId,
+    userMessageId: result.userMessageId,
+    assistantMessageId: result.assistantMessageId,
+    error: result.error,
+  });
 }

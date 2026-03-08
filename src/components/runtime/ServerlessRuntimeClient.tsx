@@ -41,6 +41,44 @@ type DeploymentEvent = {
   ts: string;
 };
 
+type RuntimeEvent = {
+  id: number;
+  source: string;
+  eventType: string;
+  status: string;
+  sessionId: string | null;
+  error: string | null;
+  payload: Record<string, unknown>;
+  result: Record<string, unknown> | null;
+  replayOfEventId: number | null;
+  createdAt: string;
+  updatedAt: string;
+  replayable: boolean;
+};
+
+type RuntimeHealth = {
+  status: string;
+  provider: string | null;
+  runtimeId: string | null;
+  readyUrl: string | null;
+  updatedAt: string;
+  db: { ok: boolean };
+  runtime: { probe: { ok: boolean; status: number } | null };
+  telegram: { configured: boolean };
+  events: {
+    total24h: number;
+    failed24h: number;
+    latestEventAt: string | null;
+    lastFailed: {
+      id: number;
+      status: string;
+      source: string;
+      error: string | null;
+      createdAt: string;
+    } | null;
+  };
+};
+
 type DeploymentSettingsState = {
   modelProvider: string;
   defaultModel: string;
@@ -161,6 +199,65 @@ type DeploymentEventsResponse =
     }
   | null;
 
+type RuntimeEventsResponse =
+  | {
+      ok?: boolean;
+      error?: string;
+      items?: Array<{
+        id?: number;
+        source?: string;
+        eventType?: string;
+        status?: string;
+        sessionId?: string | null;
+        error?: string | null;
+        payload?: Record<string, unknown>;
+        result?: Record<string, unknown> | null;
+        replayOfEventId?: number | null;
+        createdAt?: string;
+        updatedAt?: string;
+        replayable?: boolean;
+      }>;
+    }
+  | null;
+
+type RuntimeHealthResponse =
+  | {
+      ok?: boolean;
+      error?: string;
+      status?: string;
+      provider?: string | null;
+      runtimeId?: string | null;
+      readyUrl?: string | null;
+      updatedAt?: string;
+      db?: { ok?: boolean };
+      runtime?: { probe?: { ok?: boolean; status?: number } | null };
+      telegram?: { configured?: boolean };
+      events?: {
+        total24h?: number;
+        failed24h?: number;
+        latestEventAt?: string | null;
+        lastFailed?: {
+          id?: number;
+          status?: string;
+          source?: string;
+          error?: string | null;
+          createdAt?: string;
+        } | null;
+      };
+    }
+  | null;
+
+type ReplayRuntimeEventResponse =
+  | {
+      ok?: boolean;
+      error?: string | null;
+      replayed?: boolean;
+      eventId?: number | null;
+      originalEventId?: number | null;
+      sessionId?: string;
+    }
+  | null;
+
 type SettingsPatchResponse =
   | {
       ok?: boolean;
@@ -277,6 +374,16 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
   const [events, setEvents] = useState<DeploymentEvent[]>([]);
   const [eventsLoading, setEventsLoading] = useState(true);
   const [eventsError, setEventsError] = useState("");
+
+  const [runtimeEvents, setRuntimeEvents] = useState<RuntimeEvent[]>([]);
+  const [runtimeEventsLoading, setRuntimeEventsLoading] = useState(true);
+  const [runtimeEventsError, setRuntimeEventsError] = useState("");
+  const [replayingEventId, setReplayingEventId] = useState<number | null>(null);
+  const [runtimeEventActionMessage, setRuntimeEventActionMessage] = useState("");
+
+  const [runtimeHealth, setRuntimeHealth] = useState<RuntimeHealth | null>(null);
+  const [runtimeHealthLoading, setRuntimeHealthLoading] = useState(true);
+  const [runtimeHealthError, setRuntimeHealthError] = useState("");
 
   const [openaiApiKey, setOpenaiApiKey] = useState("");
   const [anthropicApiKey, setAnthropicApiKey] = useState("");
@@ -461,8 +568,108 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
     }
   }
 
+  async function loadRuntimeEvents() {
+    setRuntimeEventsLoading(true);
+    setRuntimeEventsError("");
+    try {
+      const response = await fetch(`/api/runtime/${deploymentId}/events?limit=120`, { cache: "no-store" });
+      const body = await readJson<RuntimeEventsResponse>(response);
+      if (!response.ok || !body?.ok || !Array.isArray(body.items)) {
+        throw new Error(body?.error || "Failed to load runtime events.");
+      }
+      setRuntimeEvents(
+        body.items
+          .filter((item) => item && typeof item.id === "number")
+          .map((item) => ({
+            id: item.id as number,
+            source: String(item.source ?? "unknown"),
+            eventType: String(item.eventType ?? "unknown"),
+            status: String(item.status ?? "unknown"),
+            sessionId: typeof item.sessionId === "string" ? item.sessionId : null,
+            error: typeof item.error === "string" ? item.error : null,
+            payload: item.payload && typeof item.payload === "object" ? item.payload : {},
+            result: item.result && typeof item.result === "object" ? item.result : null,
+            replayOfEventId: typeof item.replayOfEventId === "number" ? item.replayOfEventId : null,
+            createdAt: String(item.createdAt ?? new Date().toISOString()),
+            updatedAt: String(item.updatedAt ?? item.createdAt ?? new Date().toISOString()),
+            replayable: Boolean(item.replayable),
+          })),
+      );
+    } catch (error) {
+      setRuntimeEventsError(error instanceof Error ? error.message : "Failed to load runtime events.");
+    } finally {
+      setRuntimeEventsLoading(false);
+    }
+  }
+
+  async function loadRuntimeHealth() {
+    setRuntimeHealthLoading(true);
+    setRuntimeHealthError("");
+    try {
+      const response = await fetch(`/api/runtime/${deploymentId}/health`, { cache: "no-store" });
+      const body = await readJson<RuntimeHealthResponse>(response);
+      if (!response.ok || !body?.ok || !body.status) {
+        throw new Error(body?.error || "Failed to load runtime health.");
+      }
+      setRuntimeHealth({
+        status: body.status,
+        provider: body.provider ?? null,
+        runtimeId: body.runtimeId ?? null,
+        readyUrl: body.readyUrl ?? null,
+        updatedAt: body.updatedAt ?? "",
+        db: {
+          ok: Boolean(body.db?.ok),
+        },
+        runtime: {
+          probe:
+            body.runtime?.probe &&
+            typeof body.runtime.probe.ok === "boolean" &&
+            typeof body.runtime.probe.status === "number"
+              ? {
+                  ok: body.runtime.probe.ok,
+                  status: body.runtime.probe.status,
+                }
+              : null,
+        },
+        telegram: {
+          configured: Boolean(body.telegram?.configured),
+        },
+        events: {
+          total24h: Number(body.events?.total24h ?? 0),
+          failed24h: Number(body.events?.failed24h ?? 0),
+          latestEventAt: body.events?.latestEventAt ?? null,
+          lastFailed:
+            body.events?.lastFailed && typeof body.events.lastFailed.id === "number"
+              ? {
+                  id: body.events.lastFailed.id,
+                  status: String(body.events.lastFailed.status ?? "unknown"),
+                  source: String(body.events.lastFailed.source ?? "unknown"),
+                  error:
+                    typeof body.events.lastFailed.error === "string"
+                      ? body.events.lastFailed.error
+                      : null,
+                  createdAt: String(body.events.lastFailed.createdAt ?? ""),
+                }
+              : null,
+        },
+      });
+    } catch (error) {
+      setRuntimeHealthError(error instanceof Error ? error.message : "Failed to load runtime health.");
+    } finally {
+      setRuntimeHealthLoading(false);
+    }
+  }
+
   async function refreshRuntimeData() {
-    await Promise.all([loadDeployment(), loadSessions(), loadMemoryDocs(), loadTools(), loadEvents()]);
+    await Promise.all([
+      loadDeployment(),
+      loadSessions(),
+      loadMemoryDocs(),
+      loadTools(),
+      loadEvents(),
+      loadRuntimeEvents(),
+      loadRuntimeHealth(),
+    ]);
   }
 
   useEffect(() => {
@@ -583,6 +790,36 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
       setChatError(error instanceof Error ? error.message : "Failed to clear session messages.");
     } finally {
       setClearing(false);
+    }
+  }
+
+  async function handleReplayRuntimeEvent(eventId: number) {
+    if (replayingEventId !== null) return;
+    setReplayingEventId(eventId);
+    setRuntimeEventActionMessage("");
+    setRuntimeEventsError("");
+    try {
+      const response = await fetch(`/api/runtime/${deploymentId}/events/${eventId}/replay`, {
+        method: "POST",
+      });
+      const body = await readJson<ReplayRuntimeEventResponse>(response);
+      if (!response.ok || !body) {
+        throw new Error(body?.error || "Failed to replay runtime event.");
+      }
+      if (body.ok) {
+        setRuntimeEventActionMessage("Replay succeeded.");
+      } else {
+        const detail = body.error ? ` (${body.error})` : "";
+        setRuntimeEventActionMessage(`Replay attempted but did not complete${detail}.`);
+      }
+      await Promise.all([loadRuntimeEvents(), loadRuntimeHealth(), loadSessions(), loadDeployment()]);
+      if (body.sessionId && body.sessionId === activeSessionId) {
+        await loadMessages(body.sessionId);
+      }
+    } catch (error) {
+      setRuntimeEventsError(error instanceof Error ? error.message : "Failed to replay runtime event.");
+    } finally {
+      setReplayingEventId(null);
     }
   }
 
@@ -1347,11 +1584,41 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
                 Health: <code>{deployment?.health ? `${deployment.health.ok ? "ok" : "not_ok"} (${deployment.health.status})` : "unknown"}</code>
               </p>
               <p className="muted" style={{ margin: 0 }}>
+                DB health: <code>{runtimeHealthLoading ? "loading" : runtimeHealth?.db.ok ? "ok" : "not_ok"}</code>
+              </p>
+              <p className="muted" style={{ margin: 0 }}>
+                Runtime probe:{" "}
+                <code>
+                  {runtimeHealthLoading
+                    ? "loading"
+                    : runtimeHealth?.runtime.probe
+                      ? `${runtimeHealth.runtime.probe.ok ? "ok" : "not_ok"} (${runtimeHealth.runtime.probe.status})`
+                      : "n/a"}
+                </code>
+              </p>
+              <p className="muted" style={{ margin: 0 }}>
+                Telegram configured: <code>{runtimeHealthLoading ? "loading" : runtimeHealth?.telegram.configured ? "yes" : "no"}</code>
+              </p>
+              <p className="muted" style={{ margin: 0 }}>
+                Runtime events (24h):{" "}
+                <code>
+                  {runtimeHealthLoading
+                    ? "loading"
+                    : `${runtimeHealth?.events.total24h ?? 0} total / ${runtimeHealth?.events.failed24h ?? 0} failed`}
+                </code>
+              </p>
+              <p className="muted" style={{ margin: 0 }}>
                 Active sessions: <code>{sessions.length}</code>
               </p>
               <p className="muted" style={{ margin: 0 }}>
                 Updated: <code>{deployment?.updatedAt ? new Date(deployment.updatedAt).toLocaleString() : "unknown"}</code>
               </p>
+              {runtimeHealth?.events.lastFailed ? (
+                <p style={{ color: "#ffb3b3", margin: 0 }}>
+                  Last runtime error ({new Date(runtimeHealth.events.lastFailed.createdAt).toLocaleTimeString()}):{" "}
+                  {runtimeHealth.events.lastFailed.error || "Unknown runtime failure"}
+                </p>
+              ) : null}
               {deployment?.error ? (
                 <p style={{ color: "#ff8e8e", margin: 0 }}>
                   Deployment error: {deployment.error}
@@ -1371,6 +1638,82 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
                 overflowY: "auto",
               }}
             >
+              <p className="muted" style={{ margin: 0 }}>
+                Runtime event log
+              </p>
+              {runtimeEventsLoading ? (
+                <p className="muted" style={{ margin: 0 }}>
+                  Loading runtime events...
+                </p>
+              ) : runtimeEvents.length === 0 ? (
+                <p className="muted" style={{ margin: 0 }}>
+                  No runtime events yet.
+                </p>
+              ) : (
+                runtimeEvents.map((item) => {
+                  const payloadText = typeof item.payload.text === "string" ? item.payload.text : "";
+                  return (
+                    <div
+                      key={`runtime-event-${item.id}`}
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 8,
+                        padding: 10,
+                        display: "grid",
+                        gap: 6,
+                        background: "rgba(0,0,0,0.14)",
+                      }}
+                    >
+                      <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                        <strong style={{ fontSize: 12, letterSpacing: 0.3 }}>
+                          {item.status.toUpperCase()} · {item.source}
+                        </strong>
+                        <span className="muted" style={{ fontSize: 12 }}>
+                          {new Date(item.createdAt).toLocaleTimeString()}
+                        </span>
+                      </div>
+                      <p className="muted" style={{ margin: 0 }}>
+                        Event: <code>{item.eventType}</code> | Session: <code>{item.sessionId ?? "n/a"}</code>
+                      </p>
+                      {payloadText ? <p style={{ margin: 0 }}>Input: {payloadText}</p> : null}
+                      {item.error ? (
+                        <p style={{ margin: 0, color: "#ff9d9d" }}>
+                          Error: {item.error}
+                        </p>
+                      ) : null}
+                      {item.replayable ? (
+                        <div className="row" style={{ justifyContent: "flex-end" }}>
+                          <button
+                            className="button secondary"
+                            type="button"
+                            onClick={() => void handleReplayRuntimeEvent(item.id)}
+                            disabled={replayingEventId === item.id || replayingEventId !== null}
+                          >
+                            {replayingEventId === item.id ? "Replaying..." : "Replay"}
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div
+              style={{
+                border: "1px solid var(--border)",
+                borderRadius: 10,
+                background: "var(--surface-strong)",
+                padding: 12,
+                display: "grid",
+                gap: 8,
+                maxHeight: "44vh",
+                overflowY: "auto",
+              }}
+            >
+              <p className="muted" style={{ margin: 0 }}>
+                Deployment orchestration events
+              </p>
               {eventsLoading ? (
                 <p className="muted" style={{ margin: 0 }}>
                   Loading events...
@@ -1404,9 +1747,24 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
               )}
             </div>
 
+            {runtimeEventActionMessage ? (
+              <p className="muted" style={{ margin: 0 }}>
+                {runtimeEventActionMessage}
+              </p>
+            ) : null}
             {eventsError ? (
               <p role="alert" style={{ color: "#ff8e8e", margin: 0 }}>
                 {eventsError}
+              </p>
+            ) : null}
+            {runtimeEventsError ? (
+              <p role="alert" style={{ color: "#ff8e8e", margin: 0 }}>
+                {runtimeEventsError}
+              </p>
+            ) : null}
+            {runtimeHealthError ? (
+              <p role="alert" style={{ color: "#ff8e8e", margin: 0 }}>
+                {runtimeHealthError}
               </p>
             ) : null}
             {deploymentError ? (

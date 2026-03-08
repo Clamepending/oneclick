@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
+import { createRuntimeEventLog } from "@/lib/runtime/runtimeEventLog";
 import { ensureRuntimeSession } from "../shared";
 import { runRuntimeTurn, RuntimeRouterError } from "@/lib/runtime/runtimeRouter";
 import { resolveRuntimeMetadataFromRow } from "@/lib/runtime/runtimeMetadata";
@@ -116,15 +117,47 @@ export async function POST(
         subsidy_proxy_token: row.subsidy_proxy_token,
       },
     });
+    await createRuntimeEventLog({
+      deploymentId: id,
+      source: "runtime_chat",
+      eventType: "chat_message",
+      status: "processed",
+      sessionId: sessionResolution.session.id,
+      payload: {
+        sessionId: sessionResolution.session.id,
+        message: parsedBody.data.message,
+      },
+      result: {
+        userMessageId: result.userMessage.id,
+        assistantMessageId: result.assistantMessage.id,
+      },
+    });
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
+    const message =
+      error instanceof RuntimeRouterError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : "Model call failed.";
+    await createRuntimeEventLog({
+      deploymentId: id,
+      source: "runtime_chat",
+      eventType: "chat_message",
+      status: "failed",
+      sessionId: sessionResolution.session.id,
+      error: message,
+      payload: {
+        sessionId: sessionResolution.session.id,
+        message: parsedBody.data.message,
+      },
+    });
     if (error instanceof RuntimeRouterError) {
       return NextResponse.json(
         { ok: false, error: error.message, code: error.code },
         { status: error.statusCode },
       );
     }
-    const message = error instanceof Error ? error.message : "Model call failed.";
     return NextResponse.json({ ok: false, error: message }, { status: 502 });
   }
 }
