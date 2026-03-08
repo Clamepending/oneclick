@@ -685,6 +685,17 @@ export async function POST(request: Request) {
                updated_at = NOW()`,
         [deploymentId, sourceDeploymentRow.id],
       );
+      await pool.query(
+        `INSERT INTO runtime_memory_doc_prefs (deployment_id, doc_key, self_update_enabled, created_at, updated_at)
+         SELECT $1, doc_key, self_update_enabled, NOW(), NOW()
+         FROM runtime_memory_doc_prefs
+         WHERE deployment_id = $2
+         ON CONFLICT (deployment_id, doc_key)
+         DO UPDATE
+           SET self_update_enabled = EXCLUDED.self_update_enabled,
+               updated_at = NOW()`,
+        [deploymentId, sourceDeploymentRow.id],
+      );
     }
 
     await pool.query(

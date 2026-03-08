@@ -16,6 +16,9 @@ const STARTER_CALIBRATION_MESSAGE = [
   "I will use your reply to populate USER.md, SOUL.md, STYLE.md, and HEARTBEAT.md.",
 ].join("\n");
 
+export const DEFAULT_RUNTIME_MEMORY_DOC_KEYS = ["SOUL.md", "USER.md", "STYLE.md", "HEARTBEAT.md", "NOTES.md"] as const;
+type RuntimeMemoryDefaultDocKey = (typeof DEFAULT_RUNTIME_MEMORY_DOC_KEYS)[number];
+
 type DeploymentAccessRow = {
   id: string;
   deploy_provider: string | null;
@@ -36,6 +39,10 @@ type RuntimeSessionWithStatsRow = RuntimeSessionRow & {
 type RuntimeMemoryDocRow = {
   doc_key: string;
   content: string;
+};
+
+type RuntimeMemoryDocWithPrefsRow = RuntimeMemoryDocRow & {
+  self_update_enabled: boolean;
 };
 
 export type RuntimeSessionSummary = {
@@ -154,6 +161,42 @@ async function upsertRuntimeMemoryDoc(input: {
   );
 }
 
+async function ensureDefaultRuntimeMemoryDocPrefs(deploymentId: string) {
+  for (const docKey of DEFAULT_RUNTIME_MEMORY_DOC_KEYS) {
+    await pool.query(
+      `INSERT INTO runtime_memory_doc_prefs (deployment_id, doc_key, self_update_enabled, created_at, updated_at)
+       VALUES ($1, $2, TRUE, NOW(), NOW())
+       ON CONFLICT (deployment_id, doc_key)
+       DO NOTHING`,
+      [deploymentId, docKey],
+    );
+  }
+}
+
+export async function setRuntimeMemoryDocSelfUpdatePreference(input: {
+  deploymentId: string;
+  docKey: string;
+  selfUpdateEnabled: boolean;
+}) {
+  await pool.query(
+    `INSERT INTO runtime_memory_doc_prefs (deployment_id, doc_key, self_update_enabled, created_at, updated_at)
+     VALUES ($1, $2, $3, NOW(), NOW())
+     ON CONFLICT (deployment_id, doc_key)
+     DO UPDATE
+       SET self_update_enabled = EXCLUDED.self_update_enabled,
+           updated_at = NOW()`,
+    [input.deploymentId, input.docKey, input.selfUpdateEnabled],
+  );
+}
+
+function isRuntimeMemoryDocSelfUpdateEnabled(
+  byKey: Map<string, boolean>,
+  docKey: RuntimeMemoryDefaultDocKey,
+) {
+  const value = byKey.get(docKey);
+  return value !== false;
+}
+
 export async function ensureDefaultRuntimeMemoryDocs(deploymentId: string) {
   const docs = buildDefaultMemoryDocs();
   for (const [docKey, content] of Object.entries(docs)) {
@@ -165,6 +208,7 @@ export async function ensureDefaultRuntimeMemoryDocs(deploymentId: string) {
       [deploymentId, docKey, content],
     );
   }
+  await ensureDefaultRuntimeMemoryDocPrefs(deploymentId);
 }
 
 async function needsCalibrationPrompt(deploymentId: string) {
@@ -336,15 +380,22 @@ export async function applyCalibrationFromFirstUserMessage(input: {
 }) {
   await ensureDefaultRuntimeMemoryDocs(input.deploymentId);
 
-  const docs = await pool.query<RuntimeMemoryDocRow>(
-    `SELECT doc_key, content
-     FROM runtime_memory_docs
-     WHERE deployment_id = $1
-       AND doc_key IN ('SOUL.md', 'USER.md', 'STYLE.md', 'HEARTBEAT.md', 'NOTES.md')`,
-    [input.deploymentId],
+  const docs = await pool.query<RuntimeMemoryDocWithPrefsRow>(
+    `SELECT docs.doc_key,
+            docs.content,
+            COALESCE(prefs.self_update_enabled, TRUE) AS self_update_enabled
+     FROM runtime_memory_docs docs
+     LEFT JOIN runtime_memory_doc_prefs prefs
+       ON prefs.deployment_id = docs.deployment_id
+      AND prefs.doc_key = docs.doc_key
+     WHERE docs.deployment_id = $1
+       AND docs.doc_key = ANY($2::text[])`,
+    [input.deploymentId, DEFAULT_RUNTIME_MEMORY_DOC_KEYS],
   );
   const byKey = new Map<string, string>();
+  const selfUpdateByKey = new Map<string, boolean>();
   for (const row of docs.rows) byKey.set(row.doc_key, row.content);
+  for (const row of docs.rows) selfUpdateByKey.set(row.doc_key, row.self_update_enabled);
 
   const rawResponse = trimBlock(input.userMessage, 8_000);
   const extractedName = extractFirstLabeledLine(rawResponse, ["name", "call me", "who are you", "who you are"]);
@@ -356,7 +407,7 @@ export async function applyCalibrationFromFirstUserMessage(input: {
 
   const now = new Date().toISOString();
 
-  if (isAutofillContent(byKey.get("USER.md"))) {
+  if (isRuntimeMemoryDocSelfUpdateEnabled(selfUpdateByKey, "USER.md") && isAutofillContent(byKey.get("USER.md"))) {
     const userDoc = [
       "# USER",
       "",
@@ -379,7 +430,7 @@ export async function applyCalibrationFromFirstUserMessage(input: {
     });
   }
 
-  if (isAutofillContent(byKey.get("SOUL.md"))) {
+  if (isRuntimeMemoryDocSelfUpdateEnabled(selfUpdateByKey, "SOUL.md") && isAutofillContent(byKey.get("SOUL.md"))) {
     const soulDoc = [
       "# SOUL",
       "",
@@ -399,7 +450,7 @@ export async function applyCalibrationFromFirstUserMessage(input: {
     });
   }
 
-  if (isAutofillContent(byKey.get("STYLE.md"))) {
+  if (isRuntimeMemoryDocSelfUpdateEnabled(selfUpdateByKey, "STYLE.md") && isAutofillContent(byKey.get("STYLE.md"))) {
     const styleDoc = [
       "# STYLE",
       "",
@@ -418,7 +469,11 @@ export async function applyCalibrationFromFirstUserMessage(input: {
     });
   }
 
-  if (extractedHeartbeat && isAutofillContent(byKey.get("HEARTBEAT.md"))) {
+  if (
+    extractedHeartbeat &&
+    isRuntimeMemoryDocSelfUpdateEnabled(selfUpdateByKey, "HEARTBEAT.md") &&
+    isAutofillContent(byKey.get("HEARTBEAT.md"))
+  ) {
     const heartbeatDoc = [
       "# HEARTBEAT",
       "",
@@ -433,7 +488,7 @@ export async function applyCalibrationFromFirstUserMessage(input: {
     });
   }
 
-  if (isAutofillContent(byKey.get("NOTES.md"))) {
+  if (isRuntimeMemoryDocSelfUpdateEnabled(selfUpdateByKey, "NOTES.md") && isAutofillContent(byKey.get("NOTES.md"))) {
     const notesDoc = [
       "# NOTES",
       "",

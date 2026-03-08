@@ -267,6 +267,7 @@ export async function DELETE(
     await pool.query(`DELETE FROM runtime_chat_messages WHERE deployment_id = $1`, [id]);
     await pool.query(`DELETE FROM runtime_chat_sessions WHERE deployment_id = $1`, [id]);
     await pool.query(`DELETE FROM runtime_memory_docs WHERE deployment_id = $1`, [id]);
+    await pool.query(`DELETE FROM runtime_memory_doc_prefs WHERE deployment_id = $1`, [id]);
     await pool.query(`DELETE FROM deployments WHERE id = $1 AND user_id = $2`, [id, session.user.email]);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to delete deployment";

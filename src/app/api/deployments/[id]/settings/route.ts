@@ -808,6 +808,17 @@ export async function PATCH(
            updated_at = NOW()`,
     [nextDeploymentId, id],
   );
+  await pool.query(
+    `INSERT INTO runtime_memory_doc_prefs (deployment_id, doc_key, self_update_enabled, created_at, updated_at)
+     SELECT $1, doc_key, self_update_enabled, NOW(), NOW()
+     FROM runtime_memory_doc_prefs
+     WHERE deployment_id = $2
+     ON CONFLICT (deployment_id, doc_key)
+     DO UPDATE
+       SET self_update_enabled = EXCLUDED.self_update_enabled,
+           updated_at = NOW()`,
+    [nextDeploymentId, id],
+  );
 
   await pool.query(
     `INSERT INTO deployment_events (deployment_id, status, message)

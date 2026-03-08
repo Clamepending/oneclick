@@ -175,6 +175,22 @@ export async function ensureSchema() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS runtime_memory_doc_prefs (
+      deployment_id TEXT NOT NULL,
+      doc_key TEXT NOT NULL,
+      self_update_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (deployment_id, doc_key)
+    );
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS runtime_memory_doc_prefs_deployment_id_idx
+    ON runtime_memory_doc_prefs (deployment_id, updated_at DESC);
+  `);
+
+  await pool.query(`
     WITH legacy_deployments AS (
       SELECT DISTINCT deployment_id
       FROM runtime_chat_messages

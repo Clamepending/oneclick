@@ -23,6 +23,7 @@ type MemoryDoc = {
   docKey: string;
   content: string;
   updatedAt: string | null;
+  selfUpdateEnabled: boolean;
 };
 
 type DeploymentEvent = {
@@ -238,6 +239,7 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
   const [memoryError, setMemoryError] = useState("");
   const [memoryMessage, setMemoryMessage] = useState("");
   const [memorySaving, setMemorySaving] = useState(false);
+  const [memoryToggleSavingKey, setMemoryToggleSavingKey] = useState<string | null>(null);
   const [selectedDocKey, setSelectedDocKey] = useState<string | null>(null);
   const [docDrafts, setDocDrafts] = useState<Record<string, string>>({});
 
@@ -531,6 +533,61 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
     }
   }
 
+  async function patchMemoryDoc(input: {
+    docKey: string;
+    content?: string;
+    selfUpdateEnabled?: boolean;
+    successMessage: string;
+    syncDraft?: boolean;
+  }) {
+    const response = await fetch(`/api/runtime/${deploymentId}/memory`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        docKey: input.docKey,
+        ...(input.content !== undefined ? { content: input.content } : {}),
+        ...(input.selfUpdateEnabled !== undefined ? { selfUpdateEnabled: input.selfUpdateEnabled } : {}),
+      }),
+    });
+    const body = await readJson<RuntimeMemoryPatchResponse>(response);
+    if (!response.ok || !body?.ok || !body.doc) {
+      throw new Error(body?.error || "Failed to save memory doc.");
+    }
+
+    setMemoryDocs((current) => {
+      const existing = current.find((doc) => doc.docKey === input.docKey);
+      if (!existing) {
+        return [
+          ...current,
+          {
+            docKey: input.docKey,
+            content: body.doc?.content ?? "",
+            updatedAt: body.doc?.updatedAt ?? null,
+            selfUpdateEnabled: body.doc?.selfUpdateEnabled ?? true,
+          },
+        ];
+      }
+      return current.map((doc) =>
+        doc.docKey === input.docKey
+          ? {
+              ...doc,
+              content: body.doc?.content ?? doc.content,
+              updatedAt: body.doc?.updatedAt ?? doc.updatedAt,
+              selfUpdateEnabled: body.doc?.selfUpdateEnabled ?? doc.selfUpdateEnabled,
+            }
+          : doc,
+      );
+    });
+
+    if (input.syncDraft) {
+      setDocDrafts((current) => ({
+        ...current,
+        [input.docKey]: body.doc?.content ?? current[input.docKey] ?? "",
+      }));
+    }
+    setMemoryMessage(input.successMessage);
+  }
+
   async function handleSaveMemoryDoc() {
     if (memorySaving || !selectedDocKey) return;
 
@@ -538,30 +595,35 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
     setMemoryError("");
     setMemoryMessage("");
     try {
-      const response = await fetch(`/api/runtime/${deploymentId}/memory`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          docKey: selectedDocKey,
-          content: docDrafts[selectedDocKey] ?? "",
-        }),
+      await patchMemoryDoc({
+        docKey: selectedDocKey,
+        content: docDrafts[selectedDocKey] ?? "",
+        successMessage: `Saved ${selectedDocKey}.`,
+        syncDraft: true,
       });
-      const body = await readJson<RuntimeMemoryPatchResponse>(response);
-      if (!response.ok || !body?.ok || !body.doc) {
-        throw new Error(body?.error || "Failed to save memory doc.");
-      }
-      setMemoryDocs((current) =>
-        current.map((doc) =>
-          doc.docKey === selectedDocKey
-            ? { ...doc, content: body.doc?.content ?? doc.content, updatedAt: body.doc?.updatedAt ?? doc.updatedAt }
-            : doc,
-        ),
-      );
-      setMemoryMessage(`Saved ${selectedDocKey}.`);
     } catch (error) {
       setMemoryError(error instanceof Error ? error.message : "Failed to save memory doc.");
     } finally {
       setMemorySaving(false);
+    }
+  }
+
+  async function handleSetMemorySelfUpdate(docKey: string, selfUpdateEnabled: boolean) {
+    if (memoryLoading || memorySaving || memoryToggleSavingKey === docKey) return;
+
+    setMemoryToggleSavingKey(docKey);
+    setMemoryError("");
+    setMemoryMessage("");
+    try {
+      await patchMemoryDoc({
+        docKey,
+        selfUpdateEnabled,
+        successMessage: `${selfUpdateEnabled ? "Enabled" : "Disabled"} auto-update for ${docKey}.`,
+      });
+    } catch (error) {
+      setMemoryError(error instanceof Error ? error.message : "Failed to update memory toggle.");
+    } finally {
+      setMemoryToggleSavingKey(null);
     }
   }
 
@@ -905,6 +967,36 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
                 Refresh docs
               </button>
             </div>
+
+            {memoryDocs.length ? (
+              <div style={{ display: "grid", gap: 6 }}>
+                <p className="muted" style={{ margin: 0 }}>
+                  Agent self-update toggles
+                </p>
+                <div style={{ display: "grid", gap: 6 }}>
+                  {memoryDocs.map((doc) => (
+                    <label
+                      key={`self-update-${doc.docKey}`}
+                      className="muted"
+                      style={{ display: "flex", alignItems: "center", gap: 8 }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={doc.selfUpdateEnabled}
+                        onChange={(event) => void handleSetMemorySelfUpdate(doc.docKey, event.target.checked)}
+                        disabled={memoryLoading || memorySaving || memoryToggleSavingKey === doc.docKey}
+                      />
+                      <span>{`Update ${doc.docKey}`}</span>
+                      {memoryToggleSavingKey === doc.docKey ? (
+                        <span className="muted" style={{ fontSize: 12 }}>
+                          Saving...
+                        </span>
+                      ) : null}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             {memoryLoading ? (
               <p className="muted" style={{ margin: 0 }}>

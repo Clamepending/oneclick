@@ -2,22 +2,32 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
-import { ensureDefaultRuntimeMemoryDocs, requireOwnedServerlessDeployment } from "../shared";
+import {
+  DEFAULT_RUNTIME_MEMORY_DOC_KEYS,
+  ensureDefaultRuntimeMemoryDocs,
+  requireOwnedServerlessDeployment,
+  setRuntimeMemoryDocSelfUpdatePreference,
+} from "../shared";
 
-const DEFAULT_DOC_KEYS = ["SOUL.md", "USER.md", "STYLE.md", "HEARTBEAT.md", "NOTES.md"] as const;
+const DEFAULT_DOC_KEYS = DEFAULT_RUNTIME_MEMORY_DOC_KEYS;
 
 const patchSchema = z.object({
   docKey: z
     .string()
     .trim()
     .regex(/^[A-Za-z0-9_.-]{1,80}\.md$/),
-  content: z.string().max(100_000),
-});
+  content: z.string().max(100_000).optional(),
+  selfUpdateEnabled: z.boolean().optional(),
+}).refine(
+  (value) => value.content !== undefined || value.selfUpdateEnabled !== undefined,
+  { message: "At least one field must be provided." },
+);
 
 type MemoryDocRow = {
   doc_key: string;
   content: string;
-  updated_at: string;
+  updated_at: string | null;
+  self_update_enabled: boolean | null;
 };
 
 function sortDocKeys(keys: string[]) {
@@ -52,9 +62,15 @@ export async function GET(
   await ensureDefaultRuntimeMemoryDocs(id);
 
   const docs = await pool.query<MemoryDocRow>(
-    `SELECT doc_key, content, updated_at
-     FROM runtime_memory_docs
-     WHERE deployment_id = $1`,
+    `SELECT docs.doc_key,
+            docs.content,
+            docs.updated_at,
+            COALESCE(prefs.self_update_enabled, TRUE) AS self_update_enabled
+     FROM runtime_memory_docs docs
+     LEFT JOIN runtime_memory_doc_prefs prefs
+       ON prefs.deployment_id = docs.deployment_id
+      AND prefs.doc_key = docs.doc_key
+     WHERE docs.deployment_id = $1`,
     [id],
   );
 
@@ -70,6 +86,7 @@ export async function GET(
         docKey: key,
         content: row?.content ?? "",
         updatedAt: row?.updated_at ?? null,
+        selfUpdateEnabled: row?.self_update_enabled ?? true,
       };
     }),
   });
@@ -99,24 +116,61 @@ export async function PATCH(
   }
   await ensureDefaultRuntimeMemoryDocs(id);
 
-  const upserted = await pool.query<MemoryDocRow>(
-    `INSERT INTO runtime_memory_docs (deployment_id, doc_key, content, created_at, updated_at)
-     VALUES ($1, $2, $3, NOW(), NOW())
-     ON CONFLICT (deployment_id, doc_key)
-     DO UPDATE
-       SET content = EXCLUDED.content,
-           updated_at = NOW()
-     RETURNING doc_key, content, updated_at`,
-    [id, parsed.data.docKey, parsed.data.content],
+  if (parsed.data.content !== undefined) {
+    await pool.query(
+      `INSERT INTO runtime_memory_docs (deployment_id, doc_key, content, created_at, updated_at)
+       VALUES ($1, $2, $3, NOW(), NOW())
+       ON CONFLICT (deployment_id, doc_key)
+       DO UPDATE
+         SET content = EXCLUDED.content,
+             updated_at = NOW()`,
+      [id, parsed.data.docKey, parsed.data.content],
+    );
+  }
+
+  if (parsed.data.selfUpdateEnabled !== undefined) {
+    await setRuntimeMemoryDocSelfUpdatePreference({
+      deploymentId: id,
+      docKey: parsed.data.docKey,
+      selfUpdateEnabled: parsed.data.selfUpdateEnabled,
+    });
+  }
+
+  const selected = await pool.query<MemoryDocRow>(
+    `SELECT docs.doc_key,
+            docs.content,
+            docs.updated_at,
+            COALESCE(prefs.self_update_enabled, TRUE) AS self_update_enabled
+     FROM runtime_memory_docs docs
+     LEFT JOIN runtime_memory_doc_prefs prefs
+       ON prefs.deployment_id = docs.deployment_id
+      AND prefs.doc_key = docs.doc_key
+     WHERE docs.deployment_id = $1
+       AND docs.doc_key = $2
+     LIMIT 1`,
+    [id, parsed.data.docKey],
   );
 
-  const row = upserted.rows[0];
+  const row = selected.rows[0];
+  if (!row) {
+    return NextResponse.json({
+      ok: true,
+      doc: {
+        docKey: parsed.data.docKey,
+        content: "",
+        updatedAt: null,
+        selfUpdateEnabled: parsed.data.selfUpdateEnabled ?? true,
+      },
+    });
+  }
+
   return NextResponse.json({
     ok: true,
     doc: {
       docKey: row.doc_key,
       content: row.content,
       updatedAt: row.updated_at,
+      selfUpdateEnabled: row.self_update_enabled ?? true,
     },
   });
 }
