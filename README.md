@@ -183,6 +183,32 @@ ECS_SHARED_OTTOAUTH_SMOKE_ALLOW_MUTATING_TOOLS=true \
 npm run aws:smoke:shared-ottoauth
 ```
 
+### Serverless Telegram smoke test (recommended for dogfooding)
+
+Use this to validate serverless Telegram ingestion, session persistence, runtime event logging, and replay execution parity.
+
+```bash
+ONECLICK_TELEGRAM_SMOKE_DEPLOYMENT_ID=<deployment-id> \
+ONECLICK_TELEGRAM_SMOKE_CHAT_ID=<telegram-chat-id> \
+ONECLICK_TELEGRAM_SMOKE_BASE_URL=https://www.oneclickagent.net \
+npm run smoke:telegram:serverless
+```
+
+Optional strict mode:
+
+```bash
+# Require both webhook + replay execution to be fully processed (not just logged)
+ONECLICK_TELEGRAM_SMOKE_REQUIRE_PROCESSED=true \
+ONECLICK_TELEGRAM_SMOKE_DEPLOYMENT_ID=<deployment-id> \
+ONECLICK_TELEGRAM_SMOKE_CHAT_ID=<telegram-chat-id> \
+ONECLICK_TELEGRAM_SMOKE_BASE_URL=https://www.oneclickagent.net \
+npm run smoke:telegram:serverless
+```
+
+Notes:
+- Requires `DATABASE_URL` access to the same DB used by OneClick runtime APIs.
+- Uses the deployment's existing `telegram_bot_token`; no extra token env is required.
+
 If your shared runtime is missing the `mcp-tool-service` sidecar, build/push and roll it in-place:
 
 ```bash

@@ -16,6 +16,7 @@
     "aws:build:mcp-tool-service": "bash scripts/build-push-mcp-tool-service-image.sh",
     "aws:shared:mcp:ensure": "tsx scripts/ensure-shared-runtime-mcp-sidecar.ts",
     "aws:smoke": "tsx scripts/ecs-smoke-test.ts",
+    "smoke:telegram:serverless": "tsx scripts/serverless-telegram-smoke-test.ts",
     "aws:smoke:shared-ottoauth": "tsx scripts/shared-ottoauth-smoke-test.ts",
     "cost:guard:sweep": "tsx scripts/cost-guard-sweep.ts",
     "env:upsert": "node scripts/upsert-env-file.mjs"
