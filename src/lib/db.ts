@@ -125,12 +125,47 @@ export async function ensureSchema() {
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS runtime_chat_sessions (
-      id TEXT PRIMARY KEY,
+      id TEXT NOT NULL,
       deployment_id TEXT NOT NULL,
       name TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (deployment_id, id)
     );
+  `);
+
+  // Migration: older installs used a global primary key on `id`, which causes
+  // cross-deployment session collisions for deterministic IDs like
+  // `telegram:<chat_id>`. Scope the primary key per deployment.
+  await pool.query(`
+    DO $$
+    DECLARE
+      key_columns TEXT;
+    BEGIN
+      SELECT STRING_AGG(att.attname, ',' ORDER BY k.ord)
+      INTO key_columns
+      FROM pg_constraint con
+      JOIN pg_class cls
+        ON cls.oid = con.conrelid
+      JOIN pg_namespace ns
+        ON ns.oid = cls.relnamespace
+      JOIN UNNEST(con.conkey) WITH ORDINALITY AS k(attnum, ord)
+        ON TRUE
+      JOIN pg_attribute att
+        ON att.attrelid = cls.oid
+       AND att.attnum = k.attnum
+      WHERE con.contype = 'p'
+        AND cls.relname = 'runtime_chat_sessions'
+        AND ns.nspname = current_schema();
+
+      IF key_columns IS DISTINCT FROM 'deployment_id,id' THEN
+        ALTER TABLE runtime_chat_sessions
+          DROP CONSTRAINT IF EXISTS runtime_chat_sessions_pkey;
+        ALTER TABLE runtime_chat_sessions
+          ADD CONSTRAINT runtime_chat_sessions_pkey PRIMARY KEY (deployment_id, id);
+      END IF;
+    END
+    $$;
   `);
 
   await pool.query(`
@@ -226,7 +261,7 @@ export async function ensureSchema() {
       INSERT INTO runtime_chat_sessions (id, deployment_id, name, created_at, updated_at)
       SELECT CONCAT('legacy_', deployment_id), deployment_id, 'Session 1', NOW(), NOW()
       FROM legacy_deployments
-      ON CONFLICT (id) DO NOTHING
+      ON CONFLICT (deployment_id, id) DO NOTHING
       RETURNING id
     )
     UPDATE runtime_chat_messages

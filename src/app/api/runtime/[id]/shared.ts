@@ -325,7 +325,7 @@ export async function ensureRuntimeSessionById(input: {
   const created = await pool.query<RuntimeSessionRow>(
     `INSERT INTO runtime_chat_sessions (id, deployment_id, name, created_at, updated_at)
      VALUES ($1, $2, $3, NOW(), NOW())
-     ON CONFLICT (id)
+     ON CONFLICT (deployment_id, id)
      DO UPDATE
        SET updated_at = NOW()
      RETURNING id, name, created_at, updated_at`,
