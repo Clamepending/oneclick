@@ -12,6 +12,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
+import { ensureQueueWorkerSupportsFlavor } from "@/lib/deployWorkerCompatibility";
+import { normalizeDeploymentFlavor } from "@/lib/plans";
 import { setServerlessTelegramWebhook } from "@/lib/telegram/serverlessWebhook";
 import { cloneRuntimeHistoryForRedeploy } from "@/lib/runtime/redeployClone";
 import { resolveRuntimeMetadataForNewDeployment } from "@/lib/runtime/runtimeVersionRegistry";
@@ -782,9 +784,19 @@ export async function PATCH(
     );
   }
 
+  const queueInfo = getQueueModeInfo();
+  const selectedDeploymentFlavor = normalizeDeploymentFlavor(current.deployment_flavor);
+  const workerCompatibility = await ensureQueueWorkerSupportsFlavor({
+    selectedDeploymentFlavor,
+    queueUsable: queueInfo.usable,
+  });
+  if (!workerCompatibility.ok) {
+    return NextResponse.json({ ok: false, error: workerCompatibility.error }, { status: 503 });
+  }
+
   const nextDeploymentId = newDeploymentId();
   const runtimeMetadata = await resolveRuntimeMetadataForNewDeployment({
-    deploymentFlavor: current.deployment_flavor,
+    deploymentFlavor: selectedDeploymentFlavor,
   });
   await pool.query(
     `INSERT INTO deployments (
@@ -845,7 +857,6 @@ export async function PATCH(
     [nextDeploymentId],
   );
 
-  const queueInfo = getQueueModeInfo();
   await pool.query(
     `INSERT INTO deployment_events (deployment_id, status, message)
      VALUES ($1, 'queued', $2)`,

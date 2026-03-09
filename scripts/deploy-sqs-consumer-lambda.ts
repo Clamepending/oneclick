@@ -56,6 +56,7 @@ function parseCsv(value: string) {
 
 const REQUIRED_WORKER_FEATURES = [
   "deployment_strategy_v2",
+  "runtime_chat_sessions_scoped_pk",
   "simple_agent_microservices_ecs",
   "simple_agent_microservices_shared",
   "simple_agent_microservices_shared_ottoauth",
@@ -74,6 +75,9 @@ const LAMBDA_ENV_TRIM_CANDIDATES = [
   "OPENCLAW_CONFIG_MOUNT_BASE",
   "OPENCLAW_WORKSPACE_SUFFIX",
   "OTTOAGENT_MCP_REFRESH_MS",
+  "OPENCLAW_STARTUP_TIMEOUT_MS",
+  "OPENCLAW_HEALTH_PATH",
+  "SIMPLE_AGENT_MICROSERVICES_HEALTH_PATH",
 ];
 
 function lambdaEnvSize(value: Record<string, string>) {
