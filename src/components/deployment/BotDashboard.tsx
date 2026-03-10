@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { DeploymentActions } from "@/components/deployment/DeploymentActions";
 import { deploymentModeDisplayName, normalizeDeploymentFlavor, normalizePlanTier } from "@/lib/plans";
+import { buildSimpleAgentOpenUiUrl } from "@/lib/runtime/openUiUrl";
 
 type DeploymentSummary = {
   id: string;
@@ -199,6 +200,11 @@ export function BotDashboard({ deployments }: Props) {
 
           {selectedGroup.deployments.map((deployment) => {
             const statusMeta = getStatusMeta(deployment.status);
+            const openUiUrl = buildSimpleAgentOpenUiUrl({
+              botDashboardUrl: deployment.botDashboardUrl,
+              readyUrl: deployment.readyUrl,
+              fallbackRuntimePath: `/runtime/${deployment.id}`,
+            });
             return (
               <div
                 key={deployment.id}
@@ -275,9 +281,11 @@ export function BotDashboard({ deployments }: Props) {
                 ) : null}
                 {deployment.status === "ready" ? (
                   <div className="row">
-                    <Link className="button" href={`/runtime/${deployment.id}`}>
-                      Open UI
-                    </Link>
+                    {openUiUrl ? (
+                      <a className="button" href={openUiUrl} target="_blank" rel="noreferrer">
+                        Open UI
+                      </a>
+                    ) : null}
                     {deployment.videoMemoryUrl ? (
                       <a className="button secondary" href={deployment.videoMemoryUrl} target="_blank" rel="noreferrer">
                         Open VideoMemory

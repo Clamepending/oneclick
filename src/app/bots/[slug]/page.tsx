@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
 import { DeploymentActions } from "@/components/deployment/DeploymentActions";
+import { buildBotDashboardUrl } from "@/lib/bots/botDashboardUrl";
+import { buildSimpleAgentOpenUiUrl } from "@/lib/runtime/openUiUrl";
 import { buildVideoMemoryUrl } from "@/lib/runtime/videoMemoryUrl";
 import { deactivateExpiredFreeTrialsForUser } from "@/lib/trialEnforcement";
 
@@ -117,6 +119,11 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
           <div style={{ display: "grid", gap: 10 }}>
             {deploymentsResult.rows.map((deployment) => {
               const statusMeta = getStatusMeta(deployment.status);
+              const openUiUrl = buildSimpleAgentOpenUiUrl({
+                botDashboardUrl: buildBotDashboardUrl(identity.runtime_slug),
+                readyUrl: deployment.ready_url,
+                fallbackRuntimePath: `/runtime/${deployment.id}`,
+              });
               const videoMemoryUrl = buildVideoMemoryUrl({
                 deploymentId: deployment.id,
                 deploymentFlavor: deployment.deployment_flavor,
@@ -178,9 +185,9 @@ export default async function BotPage({ params }: { params: Promise<{ slug: stri
                     <Link className="button secondary" href={`/deployments/${deployment.id}`}>
                       View deployment details
                     </Link>
-                    {deployment.status === "ready" && deployment.ready_url ? (
+                    {deployment.status === "ready" && openUiUrl ? (
                       <>
-                        <a className="button" href={deployment.ready_url} target="_blank" rel="noreferrer">
+                        <a className="button" href={openUiUrl} target="_blank" rel="noreferrer">
                           Open UI
                         </a>
                         {videoMemoryUrl ? (
