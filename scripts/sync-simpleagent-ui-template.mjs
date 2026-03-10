@@ -34,7 +34,7 @@ async function main() {
   const source = await fs.readFile(inputPath, "utf8");
 
   const match = source.match(
-    /@app\.route\("\/", methods=\["GET"\]\)\n\s*def index\(\):\n\s*return """([\s\S]*?)"""\n\n\s*def _queue_policy_snapshot/,
+    /@app\.route\("\/", methods=\["GET"\]\)\n\s*def index\(\):\n\s*return """([\s\S]*?)\n\s*"""/,
   );
   if (!match?.[1]) {
     console.error("[sync-simpleagent-ui] Failed to locate root HTML template block in app.py");
@@ -42,6 +42,10 @@ async function main() {
   }
 
   const html = match[1];
+  if (/@app\.route\(/.test(html) || /\bdef\s+ops_dashboard\s*\(/.test(html)) {
+    console.error("[sync-simpleagent-ui] Extracted HTML appears to include Python route code; aborting.");
+    process.exit(1);
+  }
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, html, "utf8");
   console.log(`[sync-simpleagent-ui] Source: ${inputPath}`);
