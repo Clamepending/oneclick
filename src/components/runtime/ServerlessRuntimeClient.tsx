@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type ChatMessage = {
@@ -33,6 +33,26 @@ type RuntimeTool = {
   inputSchema: Record<string, unknown>;
   available: boolean;
   availabilityReason: string | null;
+};
+
+type RuntimeToolTraceEntry = {
+  call_id: string;
+  tool: string;
+  source: "builtin" | "mcp" | "gateway";
+  ok: boolean;
+  latency_ms: number;
+  arguments?: Record<string, unknown> | null;
+  result?: unknown;
+  error?: string | null;
+};
+
+type RuntimeContextUsage = {
+  estimated: boolean;
+  model: string;
+  currentTokens: number;
+  maxTokens: number;
+  remainingTokens: number;
+  usageRatio: number;
 };
 
 type DeploymentEvent = {
@@ -118,6 +138,8 @@ type RuntimeChatResponse =
       sessionId?: string;
       userMessage?: ChatMessage;
       assistantMessage?: ChatMessage;
+      toolTrace?: RuntimeToolTraceEntry[];
+      contextUsage?: RuntimeContextUsage;
     }
   | null;
 
@@ -258,6 +280,20 @@ type ReplayRuntimeEventResponse =
     }
   | null;
 
+type RuntimeContextUsageResponse =
+  | {
+      ok?: boolean;
+      error?: string;
+      sessionId?: string;
+      estimated?: boolean;
+      model?: string;
+      currentTokens?: number;
+      maxTokens?: number;
+      remainingTokens?: number;
+      usageRatio?: number;
+    }
+  | null;
+
 type SettingsPatchResponse =
   | {
       ok?: boolean;
@@ -317,6 +353,13 @@ function statusPillMeta(status: string | null | undefined) {
   return { label: (normalized || "unknown").toUpperCase(), color: "#c3c9d4", bg: "rgba(195,201,212,0.18)" };
 }
 
+function formatTokenCount(value: number) {
+  const safe = Math.max(0, Number(value || 0));
+  if (safe >= 1_000_000) return `${(safe / 1_000_000).toFixed(2)}M`;
+  if (safe >= 1_000) return `${(safe / 1_000).toFixed(1)}k`;
+  return String(Math.round(safe));
+}
+
 export function ServerlessRuntimeClient({ deploymentId, botName, initialState }: Props) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<"chat" | "memory" | "tools" | "settings" | "debug">("chat");
@@ -352,6 +395,10 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
   const [sending, setSending] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [latestToolTrace, setLatestToolTrace] = useState<RuntimeToolTraceEntry[]>([]);
+  const [contextUsage, setContextUsage] = useState<RuntimeContextUsage | null>(null);
+  const [contextUsageUnavailable, setContextUsageUnavailable] = useState(false);
+  const contextUsageRequestSeq = useRef(0);
 
   const [memoryDocs, setMemoryDocs] = useState<MemoryDoc[]>([]);
   const [memoryLoading, setMemoryLoading] = useState(true);
@@ -404,6 +451,20 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
     () => (selectedDocKey ? memoryDocs.find((doc) => doc.docKey === selectedDocKey) ?? null : null),
     [memoryDocs, selectedDocKey],
   );
+  const contextUsageRatio = useMemo(() => {
+    if (!contextUsage) return 0;
+    return Math.max(0, Math.min(1, Number(contextUsage.usageRatio || 0)));
+  }, [contextUsage]);
+  const contextUsageLabel = useMemo(() => {
+    if (contextUsageUnavailable) return "context: unavailable";
+    if (!contextUsage) return "context: -- / --";
+    return `context: ${formatTokenCount(contextUsage.currentTokens)} / ${formatTokenCount(contextUsage.maxTokens)}`;
+  }, [contextUsage, contextUsageUnavailable]);
+  const contextUsageColor = useMemo(() => {
+    if (contextUsageRatio >= 0.9) return "#a33535";
+    if (contextUsageRatio >= 0.75) return "#b16b21";
+    return "#6a8693";
+  }, [contextUsageRatio]);
 
   useEffect(() => {
     if (!deployment || settingsHydrated) return;
@@ -490,6 +551,45 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
       setChatError(error instanceof Error ? error.message : "Failed to load chat history.");
     } finally {
       setMessagesLoading(false);
+    }
+  }
+
+  async function loadContextUsage(input?: { draftMessage?: string }) {
+    if (!activeSessionId) {
+      setContextUsage(null);
+      setContextUsageUnavailable(false);
+      return;
+    }
+
+    const requestSeq = ++contextUsageRequestSeq.current;
+    try {
+      const response = await fetch(`/api/runtime/${deploymentId}/context/usage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: activeSessionId,
+          draftMessage: input?.draftMessage ?? draft,
+          model: defaultModel || deployment?.settings.defaultModel || "",
+        }),
+      });
+      const body = await readJson<RuntimeContextUsageResponse>(response);
+      if (requestSeq !== contextUsageRequestSeq.current) return;
+      if (!response.ok || !body?.ok) {
+        throw new Error(body?.error || "Failed to load context usage.");
+      }
+
+      setContextUsage({
+        estimated: Boolean(body.estimated),
+        model: String(body.model ?? (defaultModel || deployment?.settings.defaultModel || "gpt-4o-mini")),
+        currentTokens: Number(body.currentTokens ?? 0),
+        maxTokens: Number(body.maxTokens ?? 0),
+        remainingTokens: Number(body.remainingTokens ?? 0),
+        usageRatio: Number(body.usageRatio ?? 0),
+      });
+      setContextUsageUnavailable(false);
+    } catch {
+      if (requestSeq !== contextUsageRequestSeq.current) return;
+      setContextUsageUnavailable(true);
     }
   }
 
@@ -680,10 +780,22 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
     if (!activeSessionId) {
       setMessages([]);
       setMessagesLoading(false);
+      setLatestToolTrace([]);
+      setContextUsage(null);
+      setContextUsageUnavailable(false);
       return;
     }
+    setLatestToolTrace([]);
     void loadMessages(activeSessionId);
   }, [deploymentId, activeSessionId]);
+
+  useEffect(() => {
+    if (activeTab !== "chat" || !activeSessionId) return;
+    const timer = setTimeout(() => {
+      void loadContextUsage();
+    }, 140);
+    return () => clearTimeout(timer);
+  }, [activeTab, deploymentId, activeSessionId, draft, defaultModel, deployment?.settings.defaultModel, messages.length]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -706,6 +818,22 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
         setActiveSessionId(body.sessionId);
       }
       setMessages((current) => [...current, body.userMessage as ChatMessage, body.assistantMessage as ChatMessage]);
+      setLatestToolTrace(Array.isArray(body.toolTrace) ? body.toolTrace : []);
+      if (body.contextUsage) {
+        setContextUsage({
+          estimated: Boolean(body.contextUsage.estimated),
+          model: String(
+            body.contextUsage.model ?? (defaultModel || deployment?.settings.defaultModel || "gpt-4o-mini"),
+          ),
+          currentTokens: Number(body.contextUsage.currentTokens ?? 0),
+          maxTokens: Number(body.contextUsage.maxTokens ?? 0),
+          remainingTokens: Number(body.contextUsage.remainingTokens ?? 0),
+          usageRatio: Number(body.contextUsage.usageRatio ?? 0),
+        });
+        setContextUsageUnavailable(false);
+      } else {
+        void loadContextUsage({ draftMessage: "" });
+      }
       setSessions((current) =>
         current.map((session) =>
           session.id === (body.sessionId ?? activeSessionId)
@@ -749,6 +877,9 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
       setSessions((current) => [body.session as RuntimeSession, ...current]);
       setActiveSessionId(body.session.id);
       setMessages([]);
+      setLatestToolTrace([]);
+      setContextUsage(null);
+      setContextUsageUnavailable(false);
       setDraft("");
     } catch (error) {
       setChatError(error instanceof Error ? error.message : "Failed to create session.");
@@ -774,6 +905,9 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
         throw new Error(body?.error || "Failed to clear session messages.");
       }
       setMessages([]);
+      setLatestToolTrace([]);
+      setContextUsage(null);
+      setContextUsageUnavailable(false);
       setSessions((current) =>
         current.map((session) =>
           session.id === activeSessionId
@@ -1211,6 +1345,52 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
                     {sending ? "Sending..." : "Send"}
                   </button>
                 </form>
+
+                <div className="runtime-context-meter-wrap">
+                  <div className="runtime-context-meter">
+                    <div
+                      className="runtime-context-meter-bar"
+                      style={{
+                        width: `${(contextUsageRatio * 100).toFixed(1)}%`,
+                        background: contextUsageColor,
+                      }}
+                    />
+                  </div>
+                  <div className="runtime-context-meter-label" title="Estimated prompt context usage for the selected model.">
+                    {contextUsageLabel}
+                  </div>
+                </div>
+
+                {latestToolTrace.length ? (
+                  <div className="runtime-tool-trace-group">
+                    <div className="runtime-tool-trace-title">Tool Calls</div>
+                    {latestToolTrace.map((entry, index) => {
+                      const payload = {
+                        arguments: entry.arguments ?? {},
+                        result: entry.result ?? null,
+                        error: entry.error ?? null,
+                      };
+                      return (
+                        <details
+                          key={`${entry.call_id || "call"}-${entry.tool}-${entry.latency_ms}-${index}`}
+                          className="runtime-tool-call"
+                          open={index === latestToolTrace.length - 1}
+                        >
+                          <summary>
+                            <span className={`runtime-tool-call-state ${entry.ok ? "ok" : "error"}`}>
+                              {entry.ok ? "OK" : "ERROR"}
+                            </span>
+                            <span className="runtime-tool-call-name">{entry.tool}</span>
+                            <span className="runtime-tool-call-meta">
+                              {entry.source} · {Math.max(0, Number(entry.latency_ms || 0))}ms
+                            </span>
+                          </summary>
+                          <pre className="runtime-tool-call-payload">{JSON.stringify(payload, null, 2)}</pre>
+                        </details>
+                      );
+                    })}
+                  </div>
+                ) : null}
               </div>
             </div>
 

@@ -49,7 +49,18 @@ export type ServerlessToolTraceEntry = {
   source: "builtin" | "mcp" | "gateway";
   ok: boolean;
   latency_ms: number;
+  arguments?: Record<string, unknown> | null;
+  result?: unknown;
   error?: string | null;
+};
+
+export type ServerlessContextUsage = {
+  estimated: true;
+  model: string;
+  currentTokens: number;
+  maxTokens: number;
+  remainingTokens: number;
+  usageRatio: number;
 };
 
 function readTrimmedEnv(name: string) {
@@ -206,6 +217,124 @@ function resolveToolSource(toolName: string): "builtin" | "mcp" | "gateway" {
   return "builtin";
 }
 
+const MODEL_CONTEXT_LIMITS_TOKENS: Record<string, number> = {
+  "gpt-4o-mini": 128_000,
+  "gpt-5.3-codex": 200_000,
+  "gpt-5-thinking-high": 200_000,
+  "gpt-5-mini": 200_000,
+  "gpt-5.2-pro": 200_000,
+  "claude-opus-4-6": 200_000,
+  "claude-sonnet-4-6": 200_000,
+  "claude-haiku-4-5": 200_000,
+  "gemini-3.1-pro": 1_000_000,
+  "gemini-3-flash": 1_000_000,
+};
+
+export function maxContextTokensForModel(modelId: string | null | undefined) {
+  const clean = (modelId ?? "").trim();
+  if (!clean) return 128_000;
+  const exact = MODEL_CONTEXT_LIMITS_TOKENS[clean];
+  if (exact) return exact;
+  const lowered = clean.toLowerCase();
+  if (lowered.startsWith("gpt-4o")) return 128_000;
+  if (lowered.startsWith("gpt-5") || lowered.startsWith("o1") || lowered.startsWith("o3") || lowered.includes("codex")) {
+    return 200_000;
+  }
+  if (lowered.startsWith("claude")) return 200_000;
+  if (lowered.startsWith("gemini")) return 1_000_000;
+  return 128_000;
+}
+
+export function estimateTokensForMessages(messages: Array<{ role: string; content: string }>) {
+  let total = 2;
+  for (const message of messages) {
+    const role = String(message.role ?? "").trim();
+    const content = String(message.content ?? "").trim();
+    total += 4;
+    if (role) total += Math.max(1, Math.ceil(role.length / 4));
+    if (content) total += Math.max(1, Math.ceil(content.length / 4));
+  }
+  return Math.max(0, total);
+}
+
+function buildContextUsageMetrics(input: {
+  messages: Array<{ role: string; content: string }>;
+  model: string;
+}): ServerlessContextUsage {
+  const model = input.model.trim() || "gpt-4o-mini";
+  const currentTokens = estimateTokensForMessages(input.messages);
+  const maxTokens = maxContextTokensForModel(model);
+  const remainingTokens = Math.max(0, maxTokens - currentTokens);
+  const usageRatio = maxTokens > 0 ? Math.max(0, Math.min(1, currentTokens / maxTokens)) : 0;
+  return {
+    estimated: true,
+    model,
+    currentTokens,
+    maxTokens,
+    remainingTokens,
+    usageRatio,
+  };
+}
+
+async function loadServerlessPromptContext(input: { deploymentId: string; sessionId: string }) {
+  const history = await pool.query<{ role: string; content: string }>(
+    `SELECT role, content
+     FROM runtime_chat_messages
+     WHERE deployment_id = $1
+       AND session_id = $2
+       AND role IN ('user', 'assistant')
+     ORDER BY id DESC
+     LIMIT 24`,
+    [input.deploymentId, input.sessionId],
+  );
+  const contextMessages: StoredMessage[] = history.rows
+    .reverse()
+    .map((item) => ({ role: item.role as "user" | "assistant", content: item.content }));
+
+  await ensureDefaultRuntimeMemoryDocs(input.deploymentId);
+  const memoryDocs = await pool.query<MemoryDocRow>(
+    `SELECT doc_key, content
+     FROM runtime_memory_docs
+     WHERE deployment_id = $1
+       AND LENGTH(TRIM(content)) > 0
+     ORDER BY doc_key ASC
+     LIMIT 12`,
+    [input.deploymentId],
+  );
+  const toolsCatalog = await listServerlessRuntimeTools();
+  const availableTools = toolsCatalog.tools.filter((tool) => tool.available);
+  const systemPrompt = resolveSystemPrompt(memoryDocs.rows, availableTools);
+  return {
+    contextMessages,
+    systemPrompt,
+    availableToolNames: new Set(availableTools.map((tool) => tool.name)),
+  };
+}
+
+export async function estimateServerlessContextUsage(input: {
+  deploymentId: string;
+  sessionId: string;
+  selectedModel: string;
+  draftMessage?: string | null;
+}) {
+  const promptContext = await loadServerlessPromptContext({
+    deploymentId: input.deploymentId,
+    sessionId: input.sessionId,
+  });
+  const draftMessage = (input.draftMessage ?? "").trim();
+  const usageMessages: Array<{ role: string; content: string }> = [
+    { role: "system", content: promptContext.systemPrompt },
+    ...promptContext.contextMessages.map((item) => ({ role: item.role, content: item.content })),
+  ];
+  if (draftMessage) {
+    usageMessages.push({ role: "user", content: draftMessage.slice(0, 8_000) });
+  }
+  return buildContextUsageMetrics({
+    messages: usageMessages,
+    model: input.selectedModel,
+  });
+}
+
 async function callOpenAiCompatible(input: {
   baseUrl: string;
   token: string;
@@ -337,34 +466,13 @@ export async function runServerlessChatTurn(input: {
     }
   }
 
-  const history = await pool.query<{ role: string; content: string }>(
-    `SELECT role, content
-     FROM runtime_chat_messages
-     WHERE deployment_id = $1
-       AND session_id = $2
-       AND role IN ('user', 'assistant')
-     ORDER BY id DESC
-     LIMIT 24`,
-    [input.deploymentId, input.sessionId],
-  );
-  const contextMessages: StoredMessage[] = history.rows
-    .reverse()
-    .map((item) => ({ role: item.role as "user" | "assistant", content: item.content }));
-
-  await ensureDefaultRuntimeMemoryDocs(input.deploymentId);
-  const memoryDocs = await pool.query<MemoryDocRow>(
-    `SELECT doc_key, content
-     FROM runtime_memory_docs
-     WHERE deployment_id = $1
-       AND LENGTH(TRIM(content)) > 0
-     ORDER BY doc_key ASC
-     LIMIT 12`,
-    [input.deploymentId],
-  );
-  const toolsCatalog = await listServerlessRuntimeTools();
-  const availableTools = toolsCatalog.tools.filter((tool) => tool.available);
-  const availableToolNames = new Set(availableTools.map((tool) => tool.name));
-  const systemPrompt = resolveSystemPrompt(memoryDocs.rows, availableTools);
+  const promptContext = await loadServerlessPromptContext({
+    deploymentId: input.deploymentId,
+    sessionId: input.sessionId,
+  });
+  const contextMessages = promptContext.contextMessages;
+  const availableToolNames = promptContext.availableToolNames;
+  const systemPrompt = promptContext.systemPrompt;
   const runtimeBotId = resolveServerlessBotId({
     deploymentId: input.deploymentId,
     runtimeBotId: input.modelConfig.runtime_bot_id ?? null,
@@ -506,6 +614,8 @@ export async function runServerlessChatTurn(input: {
       source: resolveToolSource(toolCall.name),
       ok: Boolean(toolResult.ok),
       latency_ms: Date.now() - toolStartedAt,
+      arguments: toolCall.arguments,
+      result: toolResult.ok ? (toolResult.result ?? null) : null,
       error: toolResult.ok ? null : toolResult.error ?? "tool call failed",
     });
 
@@ -527,6 +637,14 @@ export async function runServerlessChatTurn(input: {
   );
   const assistantMessage = assistantInsert.rows[0];
   await touchRuntimeSession({ deploymentId: input.deploymentId, sessionId: input.sessionId });
+  const contextUsage = buildContextUsageMetrics({
+    messages: [
+      { role: "system", content: systemPrompt },
+      ...contextMessages,
+      { role: "assistant", content: assistantMessage.content },
+    ],
+    model: defaultModel || resolveOpenAiModel(defaultModel),
+  });
 
   return {
     sessionId: input.sessionId,
@@ -543,6 +661,7 @@ export async function runServerlessChatTurn(input: {
       createdAt: assistantMessage.created_at,
     },
     toolTrace,
+    contextUsage,
   };
 }
 

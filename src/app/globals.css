@@ -286,8 +286,139 @@ code {
   align-self: stretch;
 }
 
+.runtime-context-meter-wrap {
+  margin-top: 2px;
+  display: grid;
+  gap: 4px;
+}
+
+.runtime-context-meter {
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.runtime-context-meter-bar {
+  width: 0%;
+  height: 100%;
+  border-radius: 999px;
+  transition: width 130ms ease;
+}
+
+.runtime-context-meter-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+  font-family: "IBM Plex Mono", Menlo, Consolas, monospace;
+}
+
+.runtime-tool-trace-group {
+  margin-top: 2px;
+  padding: 8px;
+  border-radius: 11px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.runtime-tool-trace-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
+
+.runtime-tool-call {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: rgba(0, 0, 0, 0.14);
+  margin-bottom: 6px;
+  overflow: hidden;
+}
+
+.runtime-tool-call summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  padding: 7px 9px;
+  font-size: 12px;
+}
+
+.runtime-tool-call summary::-webkit-details-marker {
+  display: none;
+}
+
+.runtime-tool-call summary::after {
+  content: "▸";
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  transition: transform 130ms ease;
+}
+
+.runtime-tool-call[open] summary::after {
+  transform: rotate(90deg);
+}
+
+.runtime-tool-call-state {
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.runtime-tool-call-state.ok {
+  border-color: #2a7550;
+  background: rgba(42, 117, 80, 0.18);
+  color: #8de2b7;
+}
+
+.runtime-tool-call-state.error {
+  border-color: #904044;
+  background: rgba(144, 64, 68, 0.2);
+  color: #ffb5bb;
+}
+
+.runtime-tool-call-name {
+  font-weight: 700;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.runtime-tool-call-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+  padding-right: 8px;
+}
+
+.runtime-tool-call-payload {
+  margin: 0;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text);
+  font-family: "IBM Plex Mono", Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-x: auto;
+  white-space: pre;
+}
+
 @media (max-width: 1040px) {
   .runtime-chat-layout {
+    grid-template-columns: 1fr;
+  }
+  .runtime-compose-row {
     grid-template-columns: 1fr;
   }
 }
