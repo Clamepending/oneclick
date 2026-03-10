@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type ChatMessage = {
@@ -595,6 +595,13 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
     if (contextUsageRatio >= 0.75) return "#b16b21";
     return "#6a8693";
   }, [contextUsageRatio]);
+  const lastAssistantMessageId = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role === "assistant") return message.id;
+    }
+    return null;
+  }, [messages]);
 
   useEffect(() => {
     if (!deployment || settingsHydrated) return;
@@ -1426,6 +1433,38 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
     }
   }
 
+  function renderToolTraceGroup() {
+    if (!latestToolTrace.length) return null;
+    return (
+      <div className="runtime-tool-trace-group">
+        <div className="runtime-tool-trace-title">Tool Calls</div>
+        {latestToolTrace.map((entry, index) => {
+          const state = normalizeToolTraceState(entry);
+          const payload = buildToolTracePayload(entry, state);
+          return (
+            <details
+              key={`${entry.call_id || "call"}-${entry.tool}-${index}`}
+              className="runtime-tool-call"
+            >
+              <summary>
+                <span className={`runtime-tool-call-state ${state}`}>
+                  {state === "running" ? "CALLED" : state === "ok" ? "COMPLETED" : "ERROR"}
+                </span>
+                <span className="runtime-tool-call-name">{entry.tool}</span>
+                <span className="runtime-tool-call-meta">
+                  {state === "running"
+                    ? `${entry.source} · calling...`
+                    : `${entry.source} · ${Math.max(0, Number(entry.latency_ms || 0))}ms`}
+                </span>
+              </summary>
+              <pre className="runtime-tool-call-payload">{JSON.stringify(payload, null, 2)}</pre>
+            </details>
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
     <main className="container" style={{ maxWidth: 1180 }}>
       <div className="card" style={{ gap: 14 }}>
@@ -1597,49 +1636,31 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
                   ) : (
                     <>
                       {messages.map((message) => (
-                        <div
-                          key={message.id}
-                          className={`runtime-msg ${message.role === "user" ? "runtime-msg-user" : "runtime-msg-assistant"}`}
-                          style={{ justifySelf: message.role === "user" ? "end" : "start" }}
-                        >
-                          <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{message.content}</p>
-                        </div>
+                        <Fragment key={message.id}>
+                          <div
+                            className={`runtime-msg ${message.role === "user" ? "runtime-msg-user" : "runtime-msg-assistant"}`}
+                            style={{ justifySelf: message.role === "user" ? "end" : "start" }}
+                          >
+                            <p style={{ margin: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word" }}>
+                              {message.content}
+                            </p>
+                          </div>
+                          {!sending && message.role === "assistant" && message.id === lastAssistantMessageId
+                            ? renderToolTraceGroup()
+                            : null}
+                        </Fragment>
                       ))}
                       {sending ? (
-                        <div className="runtime-msg runtime-msg-assistant" style={{ justifySelf: "start" }}>
-                          <p className="muted" style={{ margin: 0 }}>
+                        <div
+                          className="runtime-msg runtime-msg-assistant"
+                          style={{ justifySelf: "start", overflowWrap: "anywhere", wordBreak: "break-word" }}
+                        >
+                          <p className="muted" style={{ margin: 0, whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word" }}>
                             Typing...
                           </p>
                         </div>
                       ) : null}
-                      {latestToolTrace.length ? (
-                        <div className="runtime-tool-trace-group">
-                          <div className="runtime-tool-trace-title">Tool Calls</div>
-                          {latestToolTrace.map((entry, index) => {
-                            const state = normalizeToolTraceState(entry);
-                            const payload = buildToolTracePayload(entry, state);
-                            return (
-                              <details
-                                key={`${entry.call_id || "call"}-${entry.tool}-${index}`}
-                                className="runtime-tool-call"
-                              >
-                                <summary>
-                                  <span className={`runtime-tool-call-state ${state}`}>
-                                    {state === "running" ? "CALLED" : state === "ok" ? "COMPLETED" : "ERROR"}
-                                  </span>
-                                  <span className="runtime-tool-call-name">{entry.tool}</span>
-                                  <span className="runtime-tool-call-meta">
-                                    {state === "running"
-                                      ? `${entry.source} · calling...`
-                                      : `${entry.source} · ${Math.max(0, Number(entry.latency_ms || 0))}ms`}
-                                  </span>
-                                </summary>
-                                <pre className="runtime-tool-call-payload">{JSON.stringify(payload, null, 2)}</pre>
-                              </details>
-                            );
-                          })}
-                        </div>
-                      ) : null}
+                      {sending ? renderToolTraceGroup() : null}
                     </>
                   )}
                 </div>
