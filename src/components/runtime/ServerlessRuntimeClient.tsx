@@ -465,6 +465,26 @@ function mergeToolTraceEntries(
   return order.map((key) => byKey.get(key)).filter((entry): entry is RuntimeToolTraceEntry => Boolean(entry));
 }
 
+function buildToolTracePayload(entry: RuntimeToolTraceEntry, state: RuntimeToolTraceEntry["status"]) {
+  const payload: Record<string, unknown> = {
+    status: state,
+  };
+  const args =
+    entry.arguments && typeof entry.arguments === "object" && !Array.isArray(entry.arguments)
+      ? (entry.arguments as Record<string, unknown>)
+      : {};
+  if (Object.keys(args).length) {
+    payload.arguments = args;
+  }
+  if (state === "ok" && entry.result !== null && entry.result !== undefined) {
+    payload.result = entry.result;
+  }
+  if (state === "error" && entry.error) {
+    payload.error = entry.error;
+  }
+  return payload;
+}
+
 export function ServerlessRuntimeClient({ deploymentId, botName, initialState }: Props) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<"chat" | "memory" | "tools" | "settings" | "debug">("chat");
@@ -1634,17 +1654,11 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
                     <div className="runtime-tool-trace-title">Tool Calls</div>
                     {latestToolTrace.map((entry, index) => {
                       const state = normalizeToolTraceState(entry);
-                      const payload = {
-                        status: state,
-                        result: entry.result ?? null,
-                        arguments: entry.arguments ?? {},
-                        error: entry.error ?? null,
-                      };
+                      const payload = buildToolTracePayload(entry, state);
                       return (
                         <details
-                          key={`${entry.call_id || "call"}-${entry.tool}-${entry.latency_ms}-${index}`}
+                          key={`${entry.call_id || "call"}-${entry.tool}-${index}`}
                           className="runtime-tool-call"
-                          open={state === "running" || index === latestToolTrace.length - 1}
                         >
                           <summary>
                             <span className={`runtime-tool-call-state ${state}`}>
