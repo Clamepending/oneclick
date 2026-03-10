@@ -22,7 +22,8 @@
     "runtime:promote": "tsx scripts/runtimeVersions/promote.ts",
     "runtime:rollback": "tsx scripts/runtimeVersions/rollback.ts",
     "cost:guard:sweep": "tsx scripts/cost-guard-sweep.ts",
-    "env:upsert": "node scripts/upsert-env-file.mjs"
+    "env:upsert": "node scripts/upsert-env-file.mjs",
+    "sync:simpleagent-ui": "node scripts/sync-simpleagent-ui-template.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-cloudwatch-logs": "^3.998.0",
