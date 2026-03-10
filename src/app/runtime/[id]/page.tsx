@@ -205,6 +205,16 @@ function withRuntimeUiParams(urlValue: string, uiParams: URLSearchParams) {
   return parsed.toString();
 }
 
+function buildRelativeUrlWithUiParams(pathname: string, uiParams: URLSearchParams) {
+  const params = new URLSearchParams(uiParams);
+  if (!params.get("ui_mode")) params.set("ui_mode", "oneclick");
+  if (!params.get("hide_bot_session") && !params.get("hide_bot_ui")) {
+    params.set("hide_bot_session", "1");
+  }
+  const query = params.toString();
+  return query ? `${pathname}?${query}` : pathname;
+}
+
 async function isRuntimeControlUiReachable(readyUrl: string) {
   const result = await probeRuntimeHttp(readyUrl, 3000);
   return result.ok;
@@ -263,6 +273,10 @@ export default async function RuntimePage({
   const provider = (deployment.deploy_provider ?? "").trim();
   if (provider === "lambda") {
     if (deployment.status === "ready") {
+      const useSimpleagentUi = readTrimmedEnv("ONECLICK_USE_SIMPLEAGENT_UI_ADAPTER") !== "0";
+      if (useSimpleagentUi) {
+        redirect(buildRelativeUrlWithUiParams(`/runtime/${id}/simpleagent-ui`, uiParams));
+      }
       return (
         <ServerlessRuntimeClient
           deploymentId={id}

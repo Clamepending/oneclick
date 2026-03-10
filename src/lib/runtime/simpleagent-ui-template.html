@@ -1,0 +1,2498 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SimpleAgent Chat</title>
+  <style>
+    :root {
+      --bg: #f0f5f6;
+      --surface: #ffffff;
+      --surface-soft: #f6fbfc;
+      --ink: #112431;
+      --ink-soft: #566b78;
+      --line: #cfe0e8;
+      --brand: #0f7f92;
+      --brand-strong: #0b6676;
+      --danger: #a33535;
+      --success: #117a52;
+      --shadow: 0 14px 40px rgba(9, 58, 71, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: "IBM Plex Sans", "Avenir Next", "Trebuchet MS", sans-serif;
+      background:
+        radial-gradient(circle at top right, rgba(15, 127, 146, 0.2), rgba(15, 127, 146, 0) 36%),
+        radial-gradient(circle at bottom left, rgba(14, 143, 104, 0.16), rgba(14, 143, 104, 0) 42%),
+        var(--bg);
+      min-height: 100vh;
+    }
+    .wrap {
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 24px 16px 34px;
+    }
+    .header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+    h1 {
+      margin: 0 0 4px;
+      font-size: 28px;
+      letter-spacing: -0.02em;
+    }
+    .muted {
+      margin: 0;
+      color: var(--ink-soft);
+      font-size: 14px;
+    }
+    .status {
+      margin: 0;
+      padding: 8px 11px;
+      border: 1px solid #bbe2ec;
+      border-radius: 999px;
+      color: #115f6e;
+      background: #e8f8fc;
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .chip-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      border: 1px solid #c6dbe3;
+      background: #f7fbfc;
+      color: #2f4957;
+      padding: 3px 10px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .tab-strip {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .tab-btn {
+      border: 1px solid #bed7df;
+      background: #f7fbfc;
+      color: #2c4a57;
+      border-radius: 999px;
+      padding: 8px 13px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 120ms ease;
+    }
+    .tab-btn.active {
+      border-color: var(--brand);
+      background: var(--brand);
+      color: #fff;
+      box-shadow: 0 8px 20px rgba(15, 127, 146, 0.25);
+    }
+    .tab-panel {
+      display: none;
+      animation: panel-in 160ms ease;
+    }
+    .tab-panel.active { display: block; }
+    @keyframes panel-in {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      padding: 12px;
+    }
+    .section-title {
+      margin: 0 0 8px;
+      color: #32515e;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+      align-items: center;
+    }
+    .row.wrap { flex-wrap: wrap; }
+    .col {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+      min-width: 0;
+    }
+    .label {
+      color: #496372;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    input[type='text'],
+    input[type='password'],
+    textarea,
+    select {
+      width: 100%;
+      border: 1px solid #c2d8e0;
+      border-radius: 10px;
+      background: #fcfeff;
+      color: var(--ink);
+      padding: 9px 10px;
+      font-size: 13px;
+      outline: none;
+    }
+    input[type='checkbox'] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--brand);
+    }
+    textarea {
+      min-height: 170px;
+      resize: vertical;
+      font-family: "IBM Plex Mono", "Menlo", "Consolas", monospace;
+    }
+    button {
+      border: 1px solid var(--brand);
+      border-radius: 10px;
+      background: var(--brand);
+      color: #fff;
+      padding: 8px 11px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 130ms ease;
+    }
+    button:hover { background: var(--brand-strong); border-color: var(--brand-strong); }
+    .btn-secondary {
+      background: #edf5f8;
+      color: #265162;
+      border-color: #bdd6e0;
+    }
+    .btn-secondary:hover {
+      background: #dcecf2;
+      border-color: #aac8d4;
+    }
+    .top-bot-bar {
+      margin-bottom: 14px;
+      padding: 10px 12px;
+    }
+    .bot-toolbar {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .bot-select-col {
+      flex: 1;
+      min-width: 250px;
+      max-width: 520px;
+    }
+    .create-dropdown {
+      position: relative;
+      min-width: 240px;
+    }
+    .create-dropdown summary {
+      list-style: none;
+      border: 1px solid #bed7df;
+      border-radius: 10px;
+      background: #f7fbfc;
+      color: #2c4a57;
+      padding: 9px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .create-dropdown summary::-webkit-details-marker { display: none; }
+    .create-dropdown summary::after {
+      content: "▾";
+      margin-left: auto;
+      color: #5a7481;
+      transition: transform 120ms ease;
+    }
+    .create-dropdown[open] summary::after { transform: rotate(180deg); }
+    .create-dropdown[open] summary {
+      border-color: var(--brand);
+      box-shadow: 0 7px 18px rgba(15, 127, 146, 0.16);
+      background: #f0fafc;
+    }
+    .create-dropdown-menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 15;
+      width: min(360px, 94vw);
+      border: 1px solid #c8dde5;
+      border-radius: 12px;
+      background: #ffffff;
+      box-shadow: 0 16px 40px rgba(8, 48, 61, 0.14);
+      padding: 10px;
+      display: grid;
+      gap: 8px;
+    }
+    .create-dropdown-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .chat-layout {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 12px;
+    }
+    .chat-layout.chat-layout-single {
+      grid-template-columns: 1fr;
+    }
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      min-height: 620px;
+    }
+    .chat-main {
+      display: flex;
+      flex-direction: column;
+      min-height: 620px;
+    }
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      overflow-y: auto;
+      max-height: 230px;
+    }
+    #sessionList.list { max-height: 520px; }
+    .item {
+      border: 1px solid #ccdde3;
+      border-radius: 10px;
+      background: #f9fcfd;
+      color: #1f3a46;
+      text-align: left;
+      padding: 8px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .item.active {
+      border-color: #9ecdd8;
+      background: #e9f7fb;
+      color: #124a5a;
+    }
+    .chat-top {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .chat {
+      flex: 1;
+      min-height: 360px;
+      max-height: 490px;
+      overflow-y: auto;
+      border: 1px solid #c8dce4;
+      border-radius: 12px;
+      background: var(--surface-soft);
+      padding: 11px;
+      margin-bottom: 10px;
+    }
+    .msg {
+      margin-bottom: 8px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.35;
+      font-size: 13px;
+    }
+    .msg.user {
+      background: #e4f4fd;
+      border: 1px solid #bdddf0;
+      color: #164d64;
+    }
+    .msg.assistant {
+      background: #eef8ef;
+      border: 1px solid #cbe4cd;
+      color: #1b4f2e;
+    }
+    .msg.system {
+      background: #f4f5f7;
+      border: 1px solid #dde3e7;
+      color: #485862;
+    }
+    .msg.error {
+      background: #fbeeed;
+      border: 1px solid #efc4c0;
+      color: #8c2626;
+    }
+    .tool-trace-group {
+      margin-bottom: 10px;
+      padding: 8px;
+      border-radius: 11px;
+      border: 1px solid #c8d9e0;
+      background: #f9fcfd;
+    }
+    .tool-trace-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: #42616e;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 6px;
+    }
+    .tool-call {
+      border: 1px solid #d4e2e8;
+      border-radius: 9px;
+      background: #ffffff;
+      margin-bottom: 6px;
+      overflow: hidden;
+    }
+    .tool-call summary {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      list-style: none;
+      padding: 7px 9px;
+      font-size: 12px;
+    }
+    .tool-call summary::-webkit-details-marker { display: none; }
+    .tool-call summary::after {
+      content: "▸";
+      margin-left: auto;
+      color: #68808b;
+      font-size: 12px;
+      transition: transform 130ms ease;
+    }
+    .tool-call[open] summary::after { transform: rotate(90deg); }
+    .tool-call-state {
+      font-size: 10px;
+      font-weight: 700;
+      border-radius: 999px;
+      padding: 2px 7px;
+      border: 1px solid #b6ced8;
+      background: #eef5f8;
+      color: #315461;
+      white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .tool-call-state.ok {
+      border-color: #b8dbc7;
+      background: #edf8f0;
+      color: #1f6a3d;
+    }
+    .tool-call-state.error {
+      border-color: #e3c3c1;
+      background: #fbefef;
+      color: #8b3030;
+    }
+    .tool-call-state.running {
+      border-color: #c6d3ea;
+      background: #eef3fb;
+      color: #244b86;
+    }
+    .tool-call-state.running::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      border: 2px solid #7fa3da;
+      border-top-color: transparent;
+      animation: toolspin 0.8s linear infinite;
+      flex: 0 0 auto;
+    }
+    @keyframes toolspin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    .tool-call-name {
+      font-weight: 700;
+      color: #244754;
+      word-break: break-word;
+    }
+    .tool-call-meta {
+      font-size: 11px;
+      color: #5f7784;
+      margin-left: auto;
+      padding-right: 8px;
+    }
+    .tool-call-payload {
+      margin: 0;
+      padding: 8px 10px;
+      border-top: 1px solid #e0ebef;
+      background: #f8fcfd;
+      color: #2a4956;
+      font-family: "IBM Plex Mono", "Menlo", "Consolas", monospace;
+      font-size: 11px;
+      line-height: 1.35;
+      overflow-x: auto;
+      white-space: pre;
+    }
+    .compose-row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+    }
+    .context-meter-wrap {
+      margin-top: 7px;
+      display: grid;
+      gap: 4px;
+    }
+    .context-meter {
+      width: 100%;
+      height: 4px;
+      border-radius: 999px;
+      background: #dce8ed;
+      overflow: hidden;
+    }
+    .context-meter-bar {
+      width: 0%;
+      height: 100%;
+      border-radius: 999px;
+      background: #6a8693;
+      transition: width 130ms ease;
+    }
+    .context-meter-label {
+      font-size: 11px;
+      color: #647d8a;
+      text-align: right;
+      font-family: "IBM Plex Mono", "Menlo", "Consolas", monospace;
+    }
+    .model-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .model-row .label { white-space: nowrap; }
+    .model-row select {
+      min-width: 220px;
+      max-width: 280px;
+    }
+    .settings-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .memory-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .tool-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .tool-item {
+      border: 1px solid #d3e1e7;
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: #fbfdfe;
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+    }
+    .tool-name {
+      font-size: 13px;
+      font-weight: 700;
+      color: #1f3f4c;
+      margin-bottom: 2px;
+    }
+    .tool-desc {
+      font-size: 12px;
+      color: #516977;
+      line-height: 1.3;
+    }
+    .events-log {
+      width: 100%;
+      min-height: 420px;
+      max-height: 620px;
+      overflow: auto;
+      margin: 0;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid #cadce4;
+      background: #f8fcfd;
+      color: #16313b;
+      font-family: "IBM Plex Mono", "Menlo", "Consolas", monospace;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .meta {
+      margin-top: 10px;
+      color: #58707d;
+      font-size: 12px;
+    }
+    .empty {
+      border: 1px dashed #c9d9df;
+      border-radius: 10px;
+      padding: 10px;
+      background: #f9fcfd;
+      color: #5d7684;
+      font-size: 12px;
+    }
+    @media (max-width: 1040px) {
+      .chat-layout { grid-template-columns: 1fr; }
+      .sidebar,
+      .chat-main { min-height: 0; }
+      .list { max-height: 180px; }
+      #sessionList.list { max-height: 280px; }
+      .bot-select-col,
+      .create-dropdown {
+        min-width: 0;
+        width: 100%;
+        max-width: none;
+      }
+      .create-dropdown-menu {
+        position: static;
+        width: 100%;
+        box-shadow: none;
+        border-style: dashed;
+        margin-top: 8px;
+      }
+      .settings-grid,
+      .memory-grid,
+      .tool-list { grid-template-columns: 1fr; }
+      .model-row select { width: 100%; max-width: none; }
+      .compose-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="header">
+      <div>
+        <h1>SimpleAgent Chat</h1>
+        <p class="muted">Organized UI for <code>/api/chat</code> with tabs for settings, memory, tools, and events.</p>
+      </div>
+      <p id="status" class="status">Loading...</p>
+    </header>
+
+    <div id="chipRow" class="chip-row">
+      <span class="chip" id="activeBotChip">No BOT_ID selected</span>
+      <span class="chip" id="activeSessionChip">No session</span>
+    </div>
+
+    <section id="topBotBar" class="card top-bot-bar">
+      <div class="bot-toolbar">
+        <div class="col bot-select-col">
+          <label for="botSelect" class="label">BOT_ID</label>
+          <select id="botSelect">
+            <option value="">No BOT_IDs yet</option>
+          </select>
+        </div>
+        <details id="createBotDropdown" class="create-dropdown">
+          <summary>Create Bot</summary>
+          <div class="create-dropdown-menu">
+            <input id="newBotName" type="text" placeholder="Bot name (optional)" />
+            <input id="newBotId" type="text" placeholder="bot_id (optional)" />
+            <div class="create-dropdown-actions">
+              <button id="createBotBtn" type="button">Create</button>
+            </div>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <nav class="tab-strip" role="tablist" aria-label="SimpleAgent sections">
+      <button type="button" class="tab-btn active" data-tab-target="chat">Chat</button>
+      <button type="button" class="tab-btn" data-tab-target="settings">Settings</button>
+      <button type="button" class="tab-btn" data-tab-target="memory">Memory</button>
+      <button type="button" class="tab-btn" data-tab-target="tools">Tools</button>
+      <button type="button" class="tab-btn" data-tab-target="events">Events</button>
+    </nav>
+
+    <section class="tab-panel active" data-tab-panel="chat">
+      <div id="chatLayout" class="chat-layout">
+        <aside id="sessionSidebar" class="card sidebar">
+          <div class="panel-head">
+            <h2 class="section-title" style="margin: 0;">Sessions</h2>
+            <div class="row" style="margin: 0;">
+              <button id="newSessionBtn" type="button" class="btn-secondary">New</button>
+              <button id="refreshSessionsBtn" type="button" class="btn-secondary">Refresh</button>
+            </div>
+          </div>
+          <div id="sessionList" class="list"></div>
+        </aside>
+
+        <main class="card chat-main">
+          <div class="chat-top">
+            <p class="section-title" style="margin: 0;">Conversation</p>
+            <div class="model-row">
+              <label for="modelSelect" class="label">Model</label>
+              <select id="modelSelect"></select>
+            </div>
+          </div>
+          <div class="chat" id="chat"></div>
+          <form id="chatForm" class="compose-row">
+            <input id="msgInput" type="text" placeholder="Type a message" required />
+            <button type="submit">Send</button>
+          </form>
+          <div class="context-meter-wrap">
+            <div class="context-meter"><div id="contextMeterBar" class="context-meter-bar"></div></div>
+            <div id="contextMeterLabel" class="context-meter-label">context: -- / --</div>
+          </div>
+        </main>
+      </div>
+    </section>
+
+    <section class="tab-panel" data-tab-panel="settings">
+      <div class="settings-grid">
+        <div class="card">
+          <h2 class="section-title">Model API Keys</h2>
+          <div class="row wrap" id="providerKeyState">
+            <span class="chip" id="chipOpenAI">OpenAI: not set</span>
+            <span class="chip" id="chipAnthropic">Anthropic: not set</span>
+            <span class="chip" id="chipGoogle">Google: not set</span>
+          </div>
+          <div class="row">
+            <input id="openaiApiKeyInput" type="password" placeholder="OpenAI API key (sk-...)" />
+          </div>
+          <div class="row">
+            <input id="anthropicApiKeyInput" type="password" placeholder="Anthropic API key (sk-ant-...)" />
+          </div>
+          <div class="row">
+            <input id="googleApiKeyInput" type="password" placeholder="Google API key (AIza...)" />
+          </div>
+          <div class="row">
+            <button id="saveApiKeysBtn" type="button" class="btn-secondary">Save API Keys</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 class="section-title">Selected Bot Config</h2>
+          <div class="row">
+            <input id="botNameInput" type="text" placeholder="Bot name" />
+            <input id="botHeartbeatInput" type="text" placeholder="Heartbeat interval seconds" />
+          </div>
+          <div class="row">
+            <select id="botModelInput"></select>
+            <input id="botTelegramTokenInput" type="password" placeholder="Telegram bot token (optional)" />
+          </div>
+          <div class="row">
+            <button id="saveBotConfigBtn" type="button">Save Bot Config</button>
+          </div>
+          <p class="meta">BOT_ID is attached to chat and tool flows. Telegram owner is permanently assigned on first incoming Telegram message for each bot token.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" data-tab-panel="memory">
+      <div class="memory-grid">
+        <div class="card">
+          <h2 class="section-title">SOUL.md</h2>
+          <textarea id="soulInput"></textarea>
+          <div class="row" style="margin-top: 8px;">
+            <button id="saveSoulBtn" type="button" class="btn-secondary">Save SOUL.md</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2 class="section-title">USER.md</h2>
+          <textarea id="userInput"></textarea>
+          <div class="row" style="margin-top: 8px;">
+            <button id="saveUserBtn" type="button" class="btn-secondary">Save USER.md</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2 class="section-title">HEARTBEAT.md</h2>
+          <textarea id="heartbeatInput"></textarea>
+          <div class="row" style="margin-top: 8px;">
+            <button id="saveHeartbeatBtn" type="button" class="btn-secondary">Save HEARTBEAT.md</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" data-tab-panel="tools">
+      <div class="card">
+        <h2 class="section-title">Runtime Tool Controls</h2>
+        <div class="row wrap">
+          <label class="row" style="margin: 0;"><input id="shellEnabledInput" type="checkbox" /> <span class="label">Shell enabled</span></label>
+          <label class="row" style="margin: 0;"><input id="webEnabledInput" type="checkbox" /> <span class="label">Web enabled</span></label>
+          <label class="row" style="margin: 0;"><input id="mcpEnabledInput" type="checkbox" /> <span class="label">MCP enabled</span></label>
+        </div>
+        <div class="row">
+          <button id="saveToolsBtn" type="button">Save Tool Settings</button>
+          <button id="refreshToolsBtn" type="button" class="btn-secondary">Refresh</button>
+        </div>
+        <div id="toolList" class="tool-list"></div>
+      </div>
+    </section>
+
+    <section class="tab-panel" data-tab-panel="events">
+      <div class="card">
+        <h2 class="section-title">Debug Event Log</h2>
+        <div class="row wrap">
+          <button id="refreshEventsBtn" type="button">Refresh Events</button>
+          <label class="row" style="margin: 0;"><input id="eventsScopedToBot" type="checkbox" checked /> <span class="label">Only selected BOT_ID</span></label>
+          <label class="row" style="margin: 0;"><input id="eventsAutoRefresh" type="checkbox" /> <span class="label">Auto refresh (5s)</span></label>
+        </div>
+        <pre id="eventsLog" class="events-log">Loading events...</pre>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const MODEL_CATALOG = [
+      "gpt-5.3-codex",
+      "gpt-5-thinking-high",
+      "gpt-5-mini",
+      "gpt-5.2-pro",
+      "claude-opus-4-6",
+      "claude-sonnet-4-6",
+      "claude-haiku-4-5",
+      "gemini-3.1-pro",
+      "gemini-3-flash"
+    ];
+    const PROVIDER_BY_PREFIX = {
+      "gpt-": "openai",
+      "claude-": "anthropic",
+      "gemini-": "google"
+    };
+
+    let selectedBotId = "";
+    let selectedSessionId = "";
+    let providerKeyState = { openai: false, anthropic: false, google: false };
+    let eventsRefreshTimer = null;
+    let contextUsageRefreshTimer = null;
+    let contextUsageRequestSeq = 0;
+    let sessionsRequestSeq = 0;
+    let sessionHistoryRequestSeq = 0;
+    const pendingSessionIds = new Set();
+    let activeToolStream = null;
+    const toolCallNodesByKey = new Map();
+    const urlParams = new URLSearchParams(window.location.search);
+    const uiMode = String(urlParams.get("ui_mode") || "").trim().toLowerCase();
+
+    function isTruthyParam(name) {
+      const value = String(urlParams.get(name) || "").trim().toLowerCase();
+      return value === "1" || value === "true" || value === "yes" || value === "on";
+    }
+
+    const oneclickUiMode = uiMode === "oneclick";
+    let hideBotUi = oneclickUiMode || isTruthyParam("hide_bot_ui") || isTruthyParam("hide_bot_session");
+    let hideSessionUi = oneclickUiMode || isTruthyParam("hide_session_ui") || isTruthyParam("hide_bot_session");
+    let fixedBotModeEnabled = false;
+    let fixedBotId = "";
+
+    const statusEl = document.getElementById("status");
+    const chipRowEl = document.getElementById("chipRow");
+    const topBotBarEl = document.getElementById("topBotBar");
+    const chatLayoutEl = document.getElementById("chatLayout");
+    const sessionSidebarEl = document.getElementById("sessionSidebar");
+    const botSelectEl = document.getElementById("botSelect");
+    const sessionListEl = document.getElementById("sessionList");
+    const chatEl = document.getElementById("chat");
+    const modelSelect = document.getElementById("modelSelect");
+    const activeBotChip = document.getElementById("activeBotChip");
+    const activeSessionChip = document.getElementById("activeSessionChip");
+
+    const newBotNameInput = document.getElementById("newBotName");
+    const newBotIdInput = document.getElementById("newBotId");
+    const createBotDropdown = document.getElementById("createBotDropdown");
+    const createBotBtn = document.getElementById("createBotBtn");
+    const newSessionBtn = document.getElementById("newSessionBtn");
+    const refreshSessionsBtn = document.getElementById("refreshSessionsBtn");
+
+    const chatForm = document.getElementById("chatForm");
+    const msgInput = document.getElementById("msgInput");
+    const chatSubmitBtn = chatForm.querySelector("button[type='submit']");
+    const contextMeterBarEl = document.getElementById("contextMeterBar");
+    const contextMeterLabelEl = document.getElementById("contextMeterLabel");
+
+    const botNameInput = document.getElementById("botNameInput");
+    const botModelInput = document.getElementById("botModelInput");
+    const botTelegramTokenInput = document.getElementById("botTelegramTokenInput");
+    const botHeartbeatInput = document.getElementById("botHeartbeatInput");
+    const saveBotConfigBtn = document.getElementById("saveBotConfigBtn");
+
+    const soulInput = document.getElementById("soulInput");
+    const userInput = document.getElementById("userInput");
+    const heartbeatInput = document.getElementById("heartbeatInput");
+    const saveSoulBtn = document.getElementById("saveSoulBtn");
+    const saveUserBtn = document.getElementById("saveUserBtn");
+    const saveHeartbeatBtn = document.getElementById("saveHeartbeatBtn");
+    const openaiApiKeyInput = document.getElementById("openaiApiKeyInput");
+    const anthropicApiKeyInput = document.getElementById("anthropicApiKeyInput");
+    const googleApiKeyInput = document.getElementById("googleApiKeyInput");
+    const saveApiKeysBtn = document.getElementById("saveApiKeysBtn");
+    const chipOpenAI = document.getElementById("chipOpenAI");
+    const chipAnthropic = document.getElementById("chipAnthropic");
+    const chipGoogle = document.getElementById("chipGoogle");
+    const shellEnabledInput = document.getElementById("shellEnabledInput");
+    const webEnabledInput = document.getElementById("webEnabledInput");
+    const mcpEnabledInput = document.getElementById("mcpEnabledInput");
+    const toolListEl = document.getElementById("toolList");
+    const saveToolsBtn = document.getElementById("saveToolsBtn");
+    const refreshToolsBtn = document.getElementById("refreshToolsBtn");
+    const refreshEventsBtn = document.getElementById("refreshEventsBtn");
+    const eventsScopedToBot = document.getElementById("eventsScopedToBot");
+    const eventsAutoRefresh = document.getElementById("eventsAutoRefresh");
+    const eventsLogEl = document.getElementById("eventsLog");
+    const tabButtons = Array.from(document.querySelectorAll("[data-tab-target]"));
+    const tabPanels = Array.from(document.querySelectorAll("[data-tab-panel]"));
+
+    function setStatus(text) { statusEl.textContent = text; }
+
+    function applyUiMode() {
+      if (hideBotUi && topBotBarEl) {
+        topBotBarEl.style.display = "none";
+      }
+      if (hideSessionUi) {
+        if (sessionSidebarEl) sessionSidebarEl.style.display = "none";
+        if (chatLayoutEl) chatLayoutEl.classList.add("chat-layout-single");
+      }
+      if (hideBotUi && hideSessionUi && chipRowEl) {
+        chipRowEl.style.display = "none";
+      }
+    }
+
+    applyUiMode();
+
+    async function loadUiConfig() {
+      try {
+        const resp = await fetch("/api/ui/config", { cache: "no-store" });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || "failed to load ui config");
+        const fixedMode = data.fixed_bot_mode || {};
+        if (fixedMode && fixedMode.enabled && String(fixedMode.bot_id || "").trim()) {
+          fixedBotModeEnabled = true;
+          fixedBotId = String(fixedMode.bot_id || "").trim();
+          selectedBotId = fixedBotId;
+          hideBotUi = true;
+          if (eventsScopedToBot) {
+            eventsScopedToBot.checked = true;
+            eventsScopedToBot.disabled = true;
+          }
+        }
+        if (data.hide_bot_ui_default) hideBotUi = true;
+        if (data.hide_session_ui_default) hideSessionUi = true;
+        applyUiMode();
+      } catch (err) {
+        addMessage("UI config load error: " + err, "error");
+      }
+    }
+
+    function addMessage(text, cls) {
+      const el = document.createElement("div");
+      el.className = "msg " + cls;
+      el.textContent = text;
+      chatEl.appendChild(el);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    function addToolTrace(toolTrace) {
+      const entries = Array.isArray(toolTrace) ? toolTrace : [];
+      if (!entries.length) return;
+
+      function entryState(entry) {
+        const status = String((entry || {}).status || "").trim().toLowerCase();
+        if (status === "running" || status === "pending" || status === "start") return "running";
+        if (status === "ok" || (entry || {}).ok === true) return "ok";
+        if (status === "error" || (entry || {}).ok === false || String((entry || {}).error || "").trim()) return "error";
+        return "running";
+      }
+
+      function entryKey(entry, idx) {
+        const callId = String((entry || {}).call_id || "").trim();
+        if (callId) return callId;
+        return "tool_" + String(idx + 1) + "_" + toolEntryFingerprint(entry);
+      }
+
+      function renderToolNode(node, entry, fallbackIdx) {
+        const callId = String((entry || {}).call_id || "").trim() || ("tc_" + String(fallbackIdx + 1));
+        const latencyMs = Number((entry || {}).latency_ms || 0);
+        const state = entryState(entry);
+
+        node.state.className = "tool-call-state " + state;
+        node.state.textContent = state === "running" ? "RUNNING" : (state === "ok" ? "OK" : "ERROR");
+        node.name.textContent = String((entry || {}).tool || "tool");
+        node.meta.textContent = state === "running"
+          ? (callId + " \u2022 working...")
+          : (callId + " \u2022 " + String(latencyMs) + "ms");
+
+        node.payload.textContent = JSON.stringify(
+          {
+            status: state,
+            source: String((entry || {}).source || ""),
+            arguments: (entry || {}).arguments || {},
+            result: (entry || {}).result || null,
+            error: (entry || {}).error || null,
+          },
+          null,
+          2
+        );
+      }
+
+      function createToolNode(key) {
+        const group = document.createElement("div");
+        group.className = "tool-trace-group";
+
+        const title = document.createElement("div");
+        title.className = "tool-trace-title";
+        title.textContent = "1 Tool Call";
+        group.appendChild(title);
+
+        const details = document.createElement("details");
+        details.className = "tool-call";
+        details.open = false;
+        details.dataset.callKey = key;
+
+        const summary = document.createElement("summary");
+        const state = document.createElement("span");
+        state.className = "tool-call-state running";
+        state.textContent = "RUNNING";
+
+        const name = document.createElement("span");
+        name.className = "tool-call-name";
+        name.textContent = "tool";
+
+        const meta = document.createElement("span");
+        meta.className = "tool-call-meta";
+        meta.textContent = "working...";
+
+        summary.appendChild(state);
+        summary.appendChild(name);
+        summary.appendChild(meta);
+        details.appendChild(summary);
+
+        const payload = document.createElement("pre");
+        payload.className = "tool-call-payload";
+        payload.textContent = "{}";
+        details.appendChild(payload);
+        group.appendChild(details);
+        chatEl.appendChild(group);
+
+        const node = { key, group, details, state, name, meta, payload };
+        toolCallNodesByKey.set(key, node);
+        return node;
+      }
+
+      for (let i = 0; i < entries.length; i += 1) {
+        const entry = entries[i] || {};
+        const key = entryKey(entry, i);
+        let node = toolCallNodesByKey.get(key);
+        if (!node) {
+          node = createToolNode(key);
+        }
+        renderToolNode(node, entry, i);
+      }
+
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    function clearChat() {
+      chatEl.innerHTML = "";
+      toolCallNodesByKey.clear();
+    }
+
+    function setChips() {
+      activeBotChip.textContent = selectedBotId ? ("BOT_ID: " + selectedBotId) : "No BOT_ID selected";
+      activeSessionChip.textContent = selectedSessionId ? ("Session: " + selectedSessionId) : "No session";
+    }
+
+    function setActiveTab(tabName) {
+      for (const btn of tabButtons) {
+        btn.classList.toggle("active", btn.dataset.tabTarget === tabName);
+      }
+      for (const panel of tabPanels) {
+        panel.classList.toggle("active", panel.dataset.tabPanel === tabName);
+      }
+      if (tabName === "tools") {
+        loadToolsConfig().catch((err) => addMessage("Tools load error: " + err, "error"));
+      }
+      if (tabName === "events") {
+        loadEventsLog().catch((err) => addMessage("Events load error: " + err, "error"));
+      }
+    }
+
+    function clearBotFields() {
+      botNameInput.value = "";
+      botModelInput.innerHTML = "";
+      botTelegramTokenInput.value = "";
+      botHeartbeatInput.value = "";
+      soulInput.value = "";
+      userInput.value = "";
+      heartbeatInput.value = "";
+    }
+
+    function modelProvider(modelId) {
+      const value = String(modelId || "").trim().toLowerCase();
+      for (const [prefix, provider] of Object.entries(PROVIDER_BY_PREFIX)) {
+        if (value.startsWith(prefix)) return provider;
+      }
+      return "";
+    }
+
+    function filteredModelCatalog() {
+      const enabledProviders = Object.keys(providerKeyState).filter((key) => !!providerKeyState[key]);
+      if (!enabledProviders.length) return MODEL_CATALOG.slice();
+      return MODEL_CATALOG.filter((model) => {
+        const provider = modelProvider(model);
+        return provider ? enabledProviders.includes(provider) : true;
+      });
+    }
+
+    function applyProviderKeyState(healthData) {
+      const openaiMasked = String((healthData || {}).openai_api_key || "").trim();
+      const anthropicMasked = String((healthData || {}).anthropic_api_key || "").trim();
+      const googleMasked = String((healthData || {}).google_api_key || "").trim();
+
+      providerKeyState = {
+        openai: !!openaiMasked,
+        anthropic: !!anthropicMasked,
+        google: !!googleMasked,
+      };
+
+      chipOpenAI.textContent = "OpenAI: " + (providerKeyState.openai ? "set" : "not set");
+      chipAnthropic.textContent = "Anthropic: " + (providerKeyState.anthropic ? "set" : "not set");
+      chipGoogle.textContent = "Google: " + (providerKeyState.google ? "set" : "not set");
+
+      openaiApiKeyInput.placeholder = openaiMasked || "OpenAI API key (sk-...)";
+      anthropicApiKeyInput.placeholder = anthropicMasked || "Anthropic API key (sk-ant-...)";
+      googleApiKeyInput.placeholder = googleMasked || "Google API key (AIza...)";
+    }
+
+    async function loadProviderKeyState() {
+      try {
+        const resp = await fetch("/health");
+        const data = await resp.json();
+        if (!resp.ok) {
+          throw new Error(data.error || "failed to load health");
+        }
+        applyProviderKeyState(data);
+      } catch (err) {
+        addMessage("Failed to load API key status: " + err, "error");
+      }
+    }
+
+    function _populateModelSelect(selectEl, allModels, preferredValue) {
+      if (!selectEl) return;
+      selectEl.innerHTML = "";
+      for (const model of allModels) {
+        const o = document.createElement("option");
+        o.value = model;
+        o.textContent = model;
+        selectEl.appendChild(o);
+      }
+      selectEl.value = preferredValue || (allModels[0] || "");
+    }
+
+    function ensureModelOptions(preferredChatModel, preferredBotModel) {
+      const all = Array.from(
+        new Set([preferredChatModel || "", preferredBotModel || "", ...filteredModelCatalog()])
+      ).filter(Boolean);
+      _populateModelSelect(modelSelect, all, preferredChatModel || preferredBotModel || "");
+      _populateModelSelect(botModelInput, all, preferredBotModel || preferredChatModel || "");
+    }
+
+    function formatUpdated(ts) {
+      if (typeof ts !== "number") return "";
+      return new Date(ts * 1000).toLocaleString();
+    }
+
+    function formatTokenCount(n) {
+      const value = Math.max(0, Number(n || 0));
+      if (value >= 1000000) return (value / 1000000).toFixed(2) + "M";
+      if (value >= 1000) return (value / 1000).toFixed(1) + "k";
+      return String(Math.round(value));
+    }
+
+    function setContextMeter(currentTokens, maxTokens) {
+      const current = Math.max(0, Number(currentTokens || 0));
+      const max = Math.max(0, Number(maxTokens || 0));
+      const ratio = max > 0 ? Math.max(0, Math.min(1, current / max)) : 0;
+      contextMeterBarEl.style.width = String((ratio * 100).toFixed(1)) + "%";
+      contextMeterBarEl.style.background =
+        ratio >= 0.9 ? "#a33535" : (ratio >= 0.75 ? "#b16b21" : "#6a8693");
+      contextMeterLabelEl.textContent =
+        "context: " + formatTokenCount(current) + " / " + formatTokenCount(max);
+      contextMeterLabelEl.title = "Estimated prompt context usage for the selected model.";
+    }
+
+    async function refreshContextUsage() {
+      if (!selectedBotId) {
+        setContextMeter(0, 0);
+        contextMeterLabelEl.textContent = "context: -- / --";
+        return;
+      }
+
+      const requestSeq = ++contextUsageRequestSeq;
+      const resp = await fetch("/api/context/usage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bot_id: selectedBotId,
+          session_id: selectedSessionId || "default",
+          model: modelSelect.value || "",
+          draft_message: msgInput.value || "",
+        }),
+      });
+      const data = await resp.json();
+      if (requestSeq !== contextUsageRequestSeq) return;
+      if (!resp.ok) throw new Error(data.error || "failed to load context usage");
+      setContextMeter(data.current_tokens, data.max_tokens);
+    }
+
+    function scheduleContextUsageRefresh(delayMs = 120) {
+      if (contextUsageRefreshTimer) {
+        clearTimeout(contextUsageRefreshTimer);
+        contextUsageRefreshTimer = null;
+      }
+      contextUsageRefreshTimer = setTimeout(() => {
+        refreshContextUsage().catch((err) => {
+          const msg = String(err || "").toLowerCase();
+          if (msg.includes("bot_id is required")) {
+            return;
+          }
+          contextMeterLabelEl.textContent = "context: unavailable";
+        });
+      }, Math.max(0, Number(delayMs || 0)));
+    }
+
+    function toolEntryFingerprint(entry) {
+      const obj = entry || {};
+      return JSON.stringify({
+        call_id: String(obj.call_id || ""),
+        status: String(obj.status || ""),
+        tool: String(obj.tool || ""),
+        source: String(obj.source || ""),
+        arguments: obj.arguments || {},
+        ok: !!obj.ok,
+        result: obj.result || null,
+        error: obj.error || null,
+      });
+    }
+
+    function stopToolProgressStream() {
+      if (!activeToolStream) return;
+      if (activeToolStream.source) {
+        try { activeToolStream.source.close(); } catch (_) {}
+      }
+      activeToolStream = null;
+    }
+
+    function startToolProgressStream(botId, sessionId) {
+      stopToolProgressStream();
+      const stream = {
+        botId: String(botId || ""),
+        sessionId: String(sessionId || ""),
+        turnId: "",
+        seen: new Set(),
+        source: null,
+      };
+      if (!stream.botId || !stream.sessionId || typeof EventSource === "undefined") {
+        activeToolStream = stream;
+        return stream;
+      }
+      const params = new URLSearchParams({
+        bot_id: stream.botId,
+        session_id: stream.sessionId,
+      });
+      const source = new EventSource("/api/events/stream?" + params.toString());
+      stream.source = source;
+      source.addEventListener("tool_call_progress", (evt) => {
+        let payload = {};
+        try {
+          payload = JSON.parse(evt.data || "{}");
+        } catch (_) {
+          payload = {};
+        }
+        const evtTurnId = String((payload || {}).turn_id || "").trim();
+        if (evtTurnId && stream.turnId && evtTurnId !== stream.turnId) return;
+        if (!stream.turnId && evtTurnId) stream.turnId = evtTurnId;
+        const traces = Array.isArray((payload || {}).tool_trace) ? payload.tool_trace : [];
+        for (const entry of traces) {
+          const fp = toolEntryFingerprint(entry);
+          if (stream.seen.has(fp)) continue;
+          stream.seen.add(fp);
+          addToolTrace([entry]);
+        }
+      });
+      source.addEventListener("ping", () => {});
+      source.onerror = () => {};
+      activeToolStream = stream;
+      return stream;
+    }
+
+    async function loadBots(preferredBotId) {
+      const resp = await fetch("/api/bots");
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "failed to list bots");
+
+      let bots = Array.isArray(data.bots) ? data.bots : [];
+      if (fixedBotModeEnabled && fixedBotId) {
+        bots = bots.filter((b) => String((b || {}).bot_id || "") === fixedBotId);
+      }
+      botSelectEl.innerHTML = "";
+      if (!bots.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = fixedBotModeEnabled ? "Configured BOT_ID not found" : "No BOT_IDs yet";
+        botSelectEl.appendChild(option);
+        botSelectEl.disabled = true;
+        selectedBotId = "";
+        selectedSessionId = "";
+        pendingSessionIds.clear();
+        stopToolProgressStream();
+        clearBotFields();
+        setChips();
+        clearChat();
+        sessionListEl.innerHTML = "";
+        setContextMeter(0, 0);
+        contextMeterLabelEl.textContent = "context: -- / --";
+        setStatus(fixedBotModeEnabled ? "Configured BOT_ID is missing." : "No bots yet. Create one to start chatting.");
+        return;
+      }
+      botSelectEl.disabled = fixedBotModeEnabled;
+
+      if (fixedBotModeEnabled && fixedBotId && bots.some((b) => b.bot_id === fixedBotId)) {
+        selectedBotId = fixedBotId;
+      } else if (preferredBotId && bots.some((b) => b.bot_id === preferredBotId)) {
+        selectedBotId = preferredBotId;
+      } else if (!selectedBotId || !bots.some((b) => b.bot_id === selectedBotId)) {
+        selectedBotId = bots[0].bot_id;
+      }
+
+      for (const bot of bots) {
+        const option = document.createElement("option");
+        option.value = String(bot.bot_id || "");
+        option.textContent = String(bot.name || bot.bot_id || "") + " (" + String(bot.bot_id || "") + ")";
+        option.title = "Model: " + (bot.model || "") + (bot.telegram_enabled ? " | Telegram linked" : " | Telegram not linked");
+        botSelectEl.appendChild(option);
+      }
+
+      if (selectedBotId) {
+        botSelectEl.value = selectedBotId;
+      }
+
+      await loadSelectedBot();
+      setStatus("Ready");
+    }
+
+    async function loadSelectedBot() {
+      if (!selectedBotId) {
+        setChips();
+        setContextMeter(0, 0);
+        contextMeterLabelEl.textContent = "context: -- / --";
+        return;
+      }
+      const encodedBotId = encodeURIComponent(selectedBotId);
+      const [botResp, contextResp] = await Promise.all([
+        fetch("/api/bots/" + encodedBotId),
+        fetch("/api/bots/" + encodedBotId + "/context")
+      ]);
+      const botData = await botResp.json();
+      const contextData = await contextResp.json();
+      if (!botResp.ok) throw new Error(botData.error || "failed to load bot");
+      if (!contextResp.ok) throw new Error(contextData.error || "failed to load context");
+
+      const bot = botData.bot || {};
+      botNameInput.value = bot.name || "";
+      botTelegramTokenInput.value = "";
+      botHeartbeatInput.value = String(bot.heartbeat_interval_s || 300);
+
+      ensureModelOptions(bot.model || "", bot.model || "");
+      soulInput.value = (contextData.files || {})["SOUL.md"] || "";
+      userInput.value = (contextData.files || {})["USER.md"] || "";
+      heartbeatInput.value = (contextData.files || {})["HEARTBEAT.md"] || "";
+
+      await loadSessions();
+      setChips();
+      scheduleContextUsageRefresh(40);
+    }
+
+    async function loadSessions(options = {}) {
+      const refreshHistory = !(options && options.refreshHistory === false);
+      if (!selectedBotId) {
+        sessionListEl.innerHTML = "";
+        setChips();
+        setContextMeter(0, 0);
+        contextMeterLabelEl.textContent = "context: -- / --";
+        return;
+      }
+      const requestSeq = ++sessionsRequestSeq;
+      const targetBotId = String(selectedBotId || "");
+      const resp = await fetch("/api/sessions?bot_id=" + encodeURIComponent(targetBotId));
+      const data = await resp.json();
+      if (requestSeq !== sessionsRequestSeq) return;
+      if (String(selectedBotId || "") !== targetBotId) return;
+      if (!resp.ok) throw new Error(data.error || "failed to load sessions");
+      const sessionsRaw = Array.isArray(data.sessions) ? data.sessions : [];
+      const persisted = sessionsRaw.map((s) => ({
+        session_id: String((s || {}).session_id || "").trim(),
+        message_count: Number((s || {}).message_count || 0),
+        updated_at: Number((s || {}).updated_at || 0),
+        pending: false,
+      })).filter((s) => !!s.session_id);
+      const persistedIds = new Set(persisted.map((s) => s.session_id));
+      for (const pendingId of Array.from(pendingSessionIds)) {
+        if (persistedIds.has(pendingId)) pendingSessionIds.delete(pendingId);
+      }
+      if (!persisted.length && !selectedSessionId) {
+        selectedSessionId = "session-" + Date.now();
+        pendingSessionIds.add(selectedSessionId);
+        clearChat();
+        addMessage("Started new session: " + selectedSessionId, "system");
+      }
+
+      const pending = Array.from(pendingSessionIds)
+        .filter((id) => !persistedIds.has(id))
+        .map((id) => ({
+          session_id: id,
+          message_count: 0,
+          updated_at: Date.now() / 1000,
+          pending: true,
+        }))
+        .sort((a, b) => String(b.session_id).localeCompare(String(a.session_id)));
+
+      const allSessions = [...pending, ...persisted];
+      sessionListEl.innerHTML = "";
+      if (!allSessions.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "No sessions yet.";
+        sessionListEl.appendChild(empty);
+        setChips();
+        scheduleContextUsageRefresh(40);
+        return;
+      }
+
+      if (!selectedSessionId || !allSessions.some((s) => s.session_id === selectedSessionId)) {
+        selectedSessionId = allSessions[0].session_id;
+      }
+
+      for (const s of allSessions) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "item" + (s.session_id === selectedSessionId ? " active" : "");
+        const pendingSuffix = s.pending ? " (new)" : "";
+        btn.textContent = s.session_id + pendingSuffix + " (" + Number(s.message_count || 0) + ")";
+        btn.title = formatUpdated(Number(s.updated_at || 0));
+        btn.onclick = async () => {
+          selectedSessionId = s.session_id;
+          await loadSessionHistory();
+          await loadSessions();
+        };
+        sessionListEl.appendChild(btn);
+      }
+
+      if (refreshHistory) {
+        await loadSessionHistory();
+      }
+      setChips();
+      scheduleContextUsageRefresh(40);
+    }
+
+    async function loadSessionHistory() {
+      if (!selectedBotId || !selectedSessionId) {
+        return;
+      }
+      const requestSeq = ++sessionHistoryRequestSeq;
+      const targetBotId = String(selectedBotId || "");
+      const targetSessionId = String(selectedSessionId || "");
+      const resp = await fetch(
+        "/api/sessions/" + encodeURIComponent(targetSessionId) + "?bot_id=" + encodeURIComponent(targetBotId)
+      );
+      const data = await resp.json();
+      if (requestSeq !== sessionHistoryRequestSeq) return;
+      if (String(selectedBotId || "") !== targetBotId) return;
+      if (String(selectedSessionId || "") !== targetSessionId) return;
+      if (!resp.ok) throw new Error(data.error || "failed to load session history");
+
+      const toolTraceQueueByAssistant = new Map();
+      try {
+        const eventsResp = await fetch("/api/events?bot_id=" + encodeURIComponent(targetBotId));
+        const eventsData = await eventsResp.json();
+        if (requestSeq !== sessionHistoryRequestSeq) return;
+        if (String(selectedBotId || "") !== targetBotId) return;
+        if (String(selectedSessionId || "") !== targetSessionId) return;
+        if (eventsResp.ok) {
+          const events = Array.isArray(eventsData.events) ? eventsData.events.slice() : [];
+          events.sort((a, b) => Number((a || {}).received_at || 0) - Number((b || {}).received_at || 0));
+          for (const evt of events) {
+            if (String((evt || {}).session_id || "") !== targetSessionId) continue;
+            if (String((evt || {}).event_type || "").trim() === "tool_call_progress") continue;
+            const traces = Array.isArray(evt.tool_trace) ? evt.tool_trace : [];
+            if (!traces.length) continue;
+            const assistantText = String((evt || {}).assistant_response || "");
+            if (!assistantText) continue;
+            const key = assistantText;
+            if (!toolTraceQueueByAssistant.has(key)) {
+              toolTraceQueueByAssistant.set(key, []);
+            }
+            toolTraceQueueByAssistant.get(key).push(traces);
+          }
+        }
+      } catch (_) {}
+
+      clearChat();
+      const history = Array.isArray(data.history) ? data.history : [];
+      if (!history.length) {
+        addMessage("No messages yet for " + targetSessionId + ".", "system");
+      } else {
+        for (const item of history) {
+          const role = String(item.role || "").trim();
+          const content = String(item.content || "");
+          if (!content) continue;
+          if (role === "user") addMessage("You: " + content, "user");
+          else if (role === "assistant") {
+            addMessage("Assistant: " + content, "assistant");
+            const traceQueue = toolTraceQueueByAssistant.get(content);
+            if (traceQueue && traceQueue.length) {
+              addToolTrace(traceQueue.shift());
+            }
+          }
+          else addMessage(content, "system");
+        }
+      }
+      setChips();
+      scheduleContextUsageRefresh(40);
+    }
+
+    async function saveContextFile(name, value) {
+      if (!selectedBotId) throw new Error("Select a bot first");
+      const resp = await fetch("/api/bots/" + encodeURIComponent(selectedBotId) + "/context/" + encodeURIComponent(name), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: value })
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "failed to save " + name);
+      addMessage("Saved " + name + " for " + selectedBotId, "system");
+      scheduleContextUsageRefresh(40);
+    }
+
+    function renderTools(config) {
+      const tools = Array.isArray((config || {}).mcp_tools) ? config.mcp_tools : [];
+      shellEnabledInput.checked = !!(config || {}).shell_enabled;
+      webEnabledInput.checked = !!(config || {}).web_enabled;
+      mcpEnabledInput.checked = !!(config || {}).mcp_enabled;
+      toolListEl.innerHTML = "";
+
+      if (!tools.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "No MCP tools available.";
+        toolListEl.appendChild(empty);
+        return;
+      }
+
+      tools.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+      for (const tool of tools) {
+        const name = String(tool.name || "").trim();
+        const desc = String(tool.description || "").trim();
+        if (!name) continue;
+
+        const label = document.createElement("label");
+        label.className = "tool-item";
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = !!tool.enabled;
+        checkbox.dataset.toolName = name;
+
+        const textWrap = document.createElement("div");
+        const title = document.createElement("div");
+        title.className = "tool-name";
+        title.textContent = name;
+        const info = document.createElement("div");
+        info.className = "tool-desc";
+        info.textContent = desc || "No description.";
+
+        textWrap.appendChild(title);
+        textWrap.appendChild(info);
+        label.appendChild(checkbox);
+        label.appendChild(textWrap);
+        toolListEl.appendChild(label);
+      }
+    }
+
+    async function loadToolsConfig() {
+      const resp = await fetch("/api/config/tools");
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "failed to load tool config");
+      renderTools(data);
+    }
+
+    async function saveToolsConfig() {
+      const toolMap = {};
+      for (const el of toolListEl.querySelectorAll("input[data-tool-name]")) {
+        toolMap[el.dataset.toolName] = !!el.checked;
+      }
+      const payload = {
+        shell_enabled: !!shellEnabledInput.checked,
+        web_enabled: !!webEnabledInput.checked,
+        mcp_enabled: !!mcpEnabledInput.checked,
+        mcp_tools: toolMap,
+      };
+
+      const resp = await fetch("/api/config/tools", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "failed to update tools");
+      renderTools(data);
+      addMessage("Tool settings saved.", "system");
+    }
+
+    async function loadEventsLog() {
+      let url = "/api/events";
+      if (eventsScopedToBot.checked && selectedBotId) {
+        url += "?bot_id=" + encodeURIComponent(selectedBotId);
+      }
+      const resp = await fetch(url);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || "failed to load events");
+      eventsLogEl.textContent = JSON.stringify(data, null, 2);
+    }
+
+    function syncEventsAutoRefresh() {
+      if (eventsRefreshTimer) {
+        clearInterval(eventsRefreshTimer);
+        eventsRefreshTimer = null;
+      }
+      if (eventsAutoRefresh.checked) {
+        eventsRefreshTimer = setInterval(() => {
+          loadEventsLog().catch((err) => addMessage("Events refresh error: " + err, "error"));
+        }, 5000);
+      }
+    }
+
+    botSelectEl.addEventListener("change", async () => {
+      if (fixedBotModeEnabled) {
+        if (fixedBotId) botSelectEl.value = fixedBotId;
+        setChips();
+        return;
+      }
+      const nextBotId = String(botSelectEl.value || "").trim();
+      if (!nextBotId || nextBotId === selectedBotId) {
+        setChips();
+        return;
+      }
+      selectedBotId = nextBotId;
+      selectedSessionId = "";
+      pendingSessionIds.clear();
+      stopToolProgressStream();
+      try {
+        await loadBots(selectedBotId);
+      } catch (err) {
+        addMessage("Bot selection error: " + err, "error");
+      }
+    });
+
+    createBotBtn.addEventListener("click", async () => {
+      if (fixedBotModeEnabled) {
+        addMessage("Bot creation is disabled for this deployment.", "error");
+        return;
+      }
+      try {
+        const payload = {};
+        const nameValue = (newBotNameInput.value || "").trim();
+        const botIdValue = (newBotIdInput.value || "").trim();
+        if (nameValue) payload.name = nameValue;
+        if (botIdValue) payload.bot_id = botIdValue;
+        const resp = await fetch("/api/bots", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || "failed to create bot");
+        newBotNameInput.value = "";
+        newBotIdInput.value = "";
+        if (createBotDropdown) createBotDropdown.removeAttribute("open");
+        selectedBotId = String((data.bot || {}).bot_id || "");
+        selectedSessionId = "";
+        pendingSessionIds.clear();
+        stopToolProgressStream();
+        addMessage("Created BOT_ID: " + selectedBotId, "system");
+        await loadBots(selectedBotId);
+      } catch (err) {
+        addMessage("Create bot error: " + err, "error");
+      }
+    });
+
+    newSessionBtn.addEventListener("click", async () => {
+      if (!selectedBotId) {
+        addMessage("Create/select a bot first.", "error");
+        return;
+      }
+      selectedSessionId = "session-" + Date.now();
+      pendingSessionIds.add(selectedSessionId);
+      stopToolProgressStream();
+      clearChat();
+      addMessage("Started new session: " + selectedSessionId, "system");
+      await loadSessions({ refreshHistory: false });
+      setChips();
+      scheduleContextUsageRefresh(40);
+    });
+
+    refreshSessionsBtn.addEventListener("click", async () => {
+      try { await loadSessions(); } catch (err) { addMessage("Refresh sessions error: " + err, "error"); }
+    });
+
+    chatForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (chatForm.dataset.busy === "1") return;
+      const text = (msgInput.value || "").trim();
+      if (!text) return;
+      if (!selectedBotId) {
+        addMessage("Create/select a bot first.", "error");
+        return;
+      }
+      if (!selectedSessionId) {
+        selectedSessionId = "session-" + Date.now();
+        pendingSessionIds.add(selectedSessionId);
+      }
+      chatForm.dataset.busy = "1";
+      if (chatSubmitBtn) chatSubmitBtn.disabled = true;
+      const turnBotId = selectedBotId;
+      const turnSessionId = selectedSessionId;
+      // Cancel any in-flight history render so a stale response can't overwrite this turn.
+      sessionHistoryRequestSeq += 1;
+      msgInput.value = "";
+      addMessage("You: " + text, "user");
+      setChips();
+      const progressStream = startToolProgressStream(turnBotId, turnSessionId);
+
+      try {
+        const resp = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            bot_id: turnBotId,
+            session_id: turnSessionId,
+            message: text,
+            model: modelSelect.value || ""
+          })
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          addMessage("Agent error: " + (data.error || JSON.stringify(data)), "error");
+          return;
+        }
+        pendingSessionIds.delete(turnSessionId);
+        const finalTrace = Array.isArray(data.tool_trace) ? data.tool_trace : [];
+        const unseenFinalTrace = finalTrace.filter(
+          (entry) => !(progressStream && progressStream.seen.has(toolEntryFingerprint(entry)))
+        );
+        addToolTrace(unseenFinalTrace);
+        addMessage("Assistant: " + String(data.response || ""), "assistant");
+        await loadSessions({ refreshHistory: false });
+        scheduleContextUsageRefresh(40);
+      } catch (err) {
+        addMessage("Chat request error: " + err, "error");
+        scheduleContextUsageRefresh(40);
+      } finally {
+        stopToolProgressStream();
+        chatForm.dataset.busy = "0";
+        if (chatSubmitBtn) chatSubmitBtn.disabled = false;
+      }
+    });
+
+    saveBotConfigBtn.addEventListener("click", async () => {
+      if (!selectedBotId) {
+        addMessage("Create/select a bot first.", "error");
+        return;
+      }
+      const payload = {
+        name: (botNameInput.value || "").trim(),
+        model: (botModelInput.value || "").trim() || (modelSelect.value || ""),
+        heartbeat_interval_s: Number((botHeartbeatInput.value || "").trim() || "300"),
+      };
+      const tokenVal = (botTelegramTokenInput.value || "").trim();
+      if (tokenVal) payload.telegram_bot_token = tokenVal;
+
+      try {
+        const resp = await fetch("/api/bots/" + encodeURIComponent(selectedBotId) + "/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || "failed to save bot config");
+        botTelegramTokenInput.value = "";
+        addMessage("Saved bot config for " + selectedBotId, "system");
+        await loadBots(selectedBotId);
+      } catch (err) {
+        addMessage("Save bot config error: " + err, "error");
+      }
+    });
+
+    saveApiKeysBtn.addEventListener("click", async () => {
+      const payload = {};
+      const openaiVal = (openaiApiKeyInput.value || "").trim();
+      const anthropicVal = (anthropicApiKeyInput.value || "").trim();
+      const googleVal = (googleApiKeyInput.value || "").trim();
+
+      if (openaiVal) payload.openai_api_key = openaiVal;
+      if (anthropicVal) payload.anthropic_api_key = anthropicVal;
+      if (googleVal) payload.google_api_key = googleVal;
+
+      if (!Object.keys(payload).length) {
+        addMessage("Enter at least one API key before saving.", "error");
+        return;
+      }
+
+      try {
+        const resp = await fetch("/api/config/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || "failed to save API keys");
+
+        openaiApiKeyInput.value = "";
+        anthropicApiKeyInput.value = "";
+        googleApiKeyInput.value = "";
+
+        applyProviderKeyState(data);
+        ensureModelOptions(modelSelect.value || "", botModelInput.value || "");
+        addMessage("Settings updated successfully.", "system");
+      } catch (err) {
+        addMessage("Save API keys error: " + err, "error");
+      }
+    });
+
+    saveToolsBtn.addEventListener("click", async () => {
+      try {
+        await saveToolsConfig();
+      } catch (err) {
+        addMessage("Save tools error: " + err, "error");
+      }
+    });
+
+    refreshToolsBtn.addEventListener("click", async () => {
+      try {
+        await loadToolsConfig();
+      } catch (err) {
+        addMessage("Refresh tools error: " + err, "error");
+      }
+    });
+
+    refreshEventsBtn.addEventListener("click", async () => {
+      try {
+        await loadEventsLog();
+      } catch (err) {
+        addMessage("Refresh events error: " + err, "error");
+      }
+    });
+
+    eventsScopedToBot.addEventListener("change", async () => {
+      try {
+        await loadEventsLog();
+      } catch (err) {
+        addMessage("Events scope error: " + err, "error");
+      }
+    });
+
+    eventsAutoRefresh.addEventListener("change", () => {
+      syncEventsAutoRefresh();
+    });
+
+    msgInput.addEventListener("input", () => {
+      scheduleContextUsageRefresh(120);
+    });
+
+    modelSelect.addEventListener("change", () => {
+      scheduleContextUsageRefresh(40);
+    });
+
+    for (const btn of tabButtons) {
+      btn.addEventListener("click", () => {
+        setActiveTab(btn.dataset.tabTarget || "chat");
+      });
+    }
+
+    saveSoulBtn.addEventListener("click", async () => {
+      try { await saveContextFile("SOUL.md", soulInput.value || ""); } catch (err) { addMessage(String(err), "error"); }
+    });
+    saveUserBtn.addEventListener("click", async () => {
+      try { await saveContextFile("USER.md", userInput.value || ""); } catch (err) { addMessage(String(err), "error"); }
+    });
+    saveHeartbeatBtn.addEventListener("click", async () => {
+      try { await saveContextFile("HEARTBEAT.md", heartbeatInput.value || ""); } catch (err) { addMessage(String(err), "error"); }
+    });
+
+    (async () => {
+      try {
+        await loadUiConfig();
+        await loadProviderKeyState();
+        setStatus("Loading bots...");
+        await loadBots(fixedBotModeEnabled ? fixedBotId : "");
+        await loadToolsConfig();
+        await loadEventsLog();
+        setActiveTab("chat");
+        scheduleContextUsageRefresh(10);
+        setStatus("Ready");
+      } catch (err) {
+        setStatus("Error loading app state");
+        addMessage("Bootstrap error: " + err, "error");
+      }
+    })();
+  </script>
+</body>
+</html>
+"""
+
+    @app.route("/ops", methods=["GET"])
+    def ops_dashboard():
+        return """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SimpleAgent Ops Dashboard</title>
+  <style>
+    :root {
+      --bg: #0c1220;
+      --panel: #161f36;
+      --border: #2a385f;
+      --text: #e9efff;
+      --muted: #a9b6d9;
+      --accent: #2d6cdf;
+      --danger: #8c2f3d;
+    }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at top, #132342, var(--bg) 55%);
+      color: var(--text);
+    }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 16px 14px 26px; }
+    h1 { margin: 0 0 8px; font-size: 24px; }
+    .muted { color: var(--muted); margin: 0 0 12px; font-size: 13px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px;
+    }
+    .panel h3 { margin: 0 0 8px; font-size: 14px; }
+    .row { display: flex; gap: 8px; margin-bottom: 8px; }
+    input, select, textarea {
+      width: 100%;
+      box-sizing: border-box;
+      background: #0f1730;
+      color: var(--text);
+      border: 1px solid #33477d;
+      border-radius: 8px;
+      padding: 8px 9px;
+      font-size: 12px;
+    }
+    textarea { min-height: 68px; font-family: ui-monospace, Menlo, Consolas, monospace; }
+    button {
+      border: 1px solid #3b5eb2;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    button.secondary { background: #22345d; border-color: #36508a; }
+    button.danger { background: var(--danger); border-color: #a84a58; }
+    pre {
+      margin: 10px 0 0;
+      background: #0a1022;
+      border: 1px solid #26355a;
+      border-radius: 10px;
+      padding: 9px;
+      min-height: 280px;
+      max-height: 420px;
+      overflow: auto;
+      font-size: 12px;
+      line-height: 1.35;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .chip {
+      border: 1px solid #3e548f;
+      border-radius: 999px;
+      padding: 2px 9px;
+      font-size: 11px;
+      color: #c9d5ff;
+      background: #1a2850;
+    }
+    @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>SimpleAgent Ops Dashboard</h1>
+    <p class="muted">Queue, dead-letter, autoscale, engagement KPIs, and manual worker processing. Use the chat UI at <a href="/" style="color:#9fc0ff;">/</a> for normal bot interaction.</p>
+
+    <div class="chips">
+      <span class="chip" id="chipMode">service_mode: ?</span>
+      <span class="chip" id="chipGateway">gateway: ?</span>
+      <span class="chip" id="chipExecutor">executor: ?</span>
+      <span class="chip" id="chipDelivery">delivery: ?</span>
+      <span class="chip" id="chipPoller">poller: ?</span>
+    </div>
+
+    <div class="chips">
+      <span class="chip" id="kpiActive">active_24h: ?</span>
+      <span class="chip" id="kpiRetention">retention_7d: ?</span>
+      <span class="chip" id="kpiSuccess">success_window: ?</span>
+      <span class="chip" id="kpiEngagement">engagement_window: ?</span>
+    </div>
+
+    <div class="grid">
+      <section class="panel">
+        <h3>Common Inputs</h3>
+        <div class="row">
+          <input id="botId" type="text" placeholder="bot_id (optional where allowed)" />
+          <select id="queueKind">
+            <option value="both">both</option>
+            <option value="inbound">inbound</option>
+            <option value="outbound">outbound</option>
+          </select>
+          <input id="limit" type="text" value="100" />
+        </div>
+        <div class="row">
+          <textarea id="eventIds" placeholder="event_ids (comma/newline separated)"></textarea>
+        </div>
+        <div class="row">
+          <input id="olderThanS" type="text" placeholder="older_than_s (optional)" />
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#c8d2f0;">
+            <input id="allowAll" type="checkbox" style="width:auto;">allow_all purge
+          </label>
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#c8d2f0;">
+            <input id="resetAttempts" type="checkbox" style="width:auto;">reset_attempts replay
+          </label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h3>Signals</h3>
+        <div class="row">
+          <button id="refreshBtn" type="button">Refresh Health + Queue + Signals</button>
+          <button id="autoscaleBtn" type="button" class="secondary">Get Autoscale Signals</button>
+        </div>
+        <div class="row">
+          <input id="curExecutor" type="text" placeholder="current_executor_workers" />
+          <input id="curDelivery" type="text" placeholder="current_delivery_workers" />
+          <button id="recommendBtn" type="button" class="secondary">Recommendation</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h3>Engagement KPI</h3>
+        <div class="row">
+          <input id="engWindowDays" type="text" value="7" />
+          <input id="engThreshold" type="text" value="3" />
+          <input id="engLimit" type="text" value="50" />
+          <button id="engagementBtn" type="button" class="secondary">Load Engagement</button>
+        </div>
+        <p class="muted">Inputs: window_days, engaged_event_threshold, top-bot limit.</p>
+      </section>
+
+      <section class="panel">
+        <h3>Dead-Letter</h3>
+        <div class="row">
+          <button id="listDeadBtn" type="button">List Dead-Letter</button>
+          <button id="replayBtn" type="button" class="secondary">Replay</button>
+          <button id="purgeBtn" type="button" class="danger">Purge</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h3>Manual Processing (Executor Plane)</h3>
+        <div class="row">
+          <select id="processKind">
+            <option value="both">both</option>
+            <option value="inbound">inbound</option>
+            <option value="outbound">outbound</option>
+          </select>
+          <input id="maxEvents" type="text" value="1" />
+          <button id="processBtn" type="button">Process Once</button>
+        </div>
+      </section>
+    </div>
+
+    <pre id="output">Ready.</pre>
+  </div>
+
+  <script>
+    const out = document.getElementById("output");
+    const chipMode = document.getElementById("chipMode");
+    const chipGateway = document.getElementById("chipGateway");
+    const chipExecutor = document.getElementById("chipExecutor");
+    const chipDelivery = document.getElementById("chipDelivery");
+    const chipPoller = document.getElementById("chipPoller");
+    const kpiActive = document.getElementById("kpiActive");
+    const kpiRetention = document.getElementById("kpiRetention");
+    const kpiSuccess = document.getElementById("kpiSuccess");
+    const kpiEngagement = document.getElementById("kpiEngagement");
+
+    function parseEventIds(text) {
+      return String(text || "")
+        .split(/[\\n,]/g)
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+
+    function maybeInt(v) {
+      const t = String(v || "").trim();
+      if (!t) return null;
+      const n = Number(t);
+      if (!Number.isFinite(n)) return null;
+      return Math.trunc(n);
+    }
+
+    function pct(v) {
+      if (typeof v !== "number" || !Number.isFinite(v)) return "?";
+      return v.toFixed(1) + "%";
+    }
+
+    async function req(path, method = "GET", body = null) {
+      const opts = { method, headers: { "Content-Type": "application/json" } };
+      if (body) opts.body = JSON.stringify(body);
+      const r = await fetch(path, opts);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(JSON.stringify(data));
+      return data;
+    }
+
+    function append(title, data) {
+      const block = "### " + title + "\\n" + JSON.stringify(data, null, 2) + "\\n\\n";
+      out.textContent = block + out.textContent;
+    }
+
+    function commonInputs() {
+      return {
+        botId: (document.getElementById("botId").value || "").trim(),
+        queue: (document.getElementById("queueKind").value || "both").trim(),
+        limit: maybeInt(document.getElementById("limit").value) || 100,
+        eventIds: parseEventIds(document.getElementById("eventIds").value),
+        olderThanS: maybeInt(document.getElementById("olderThanS").value),
+        allowAll: !!document.getElementById("allowAll").checked,
+        resetAttempts: !!document.getElementById("resetAttempts").checked
+      };
+    }
+
+    async function refreshChips() {
+      try {
+        const h = await req("/health");
+        chipMode.textContent = "service_mode: " + String(h.service_mode || "?");
+        const planes = h.planes || {};
+        chipGateway.textContent = "gateway: " + String(!!planes.gateway);
+        chipExecutor.textContent = "executor: " + String(!!planes.executor);
+        chipDelivery.textContent = "delivery: " + String(!!planes.delivery_worker);
+        chipPoller.textContent = "poller: " + String(!!planes.telegram_poller);
+      } catch (err) {
+        append("chip error", { error: String(err) });
+      }
+    }
+
+    function engagementPath() {
+      const w = maybeInt(document.getElementById("engWindowDays").value) || 7;
+      const t = maybeInt(document.getElementById("engThreshold").value) || 3;
+      const l = maybeInt(document.getElementById("engLimit").value) || 50;
+      const q = new URLSearchParams({
+        window_days: String(w),
+        engaged_event_threshold: String(t),
+        limit: String(l)
+      });
+      return "/api/engagement?" + q.toString();
+    }
+
+    async function refreshEngagement(writeOutput) {
+      const data = await req(engagementPath());
+      const e = data.engagement || {};
+      const k = e.kpis || {};
+      const retention = k.retention_7d || {};
+      const success = k.success_rate_window || {};
+      const engagement = k.engagement_rate_window || {};
+
+      kpiActive.textContent = "active_24h: " + String(k.active_agents_24h ?? "?");
+      kpiRetention.textContent =
+        "retention_7d: " + pct(k.retention_7d_pct) +
+        " (" + String(retention.retained_agents ?? "?") + "/" + String(retention.previous_active_agents ?? "?") + ")";
+      kpiSuccess.textContent =
+        "success_window: " + pct(k.success_rate_window_pct) +
+        " (" + String(success.done_events ?? "?") + "/" + String(success.terminal_events ?? "?") + ")";
+      kpiEngagement.textContent =
+        "engagement_window: " + pct(k.engagement_rate_window_pct) +
+        " (" + String(engagement.engaged_agents ?? "?") + "/" + String(engagement.active_agents_window ?? "?") + ")";
+
+      if (writeOutput) {
+        append("engagement", data);
+      }
+      return data;
+    }
+
+    document.getElementById("refreshBtn").addEventListener("click", async () => {
+      try {
+        const [health, stats, metrics, signals] = await Promise.all([
+          req("/health"),
+          req("/api/queue/stats"),
+          req("/api/metrics"),
+          req("/api/autoscale/signals")
+        ]);
+        append("health", health);
+        append("queue_stats", stats);
+        append("metrics", metrics);
+        append("autoscale_signals", signals);
+        await refreshEngagement(true);
+        await refreshChips();
+      } catch (err) {
+        append("refresh error", { error: String(err) });
+      }
+    });
+
+    document.getElementById("autoscaleBtn").addEventListener("click", async () => {
+      try {
+        append("autoscale_signals", await req("/api/autoscale/signals"));
+      } catch (err) {
+        append("autoscale_signals error", { error: String(err) });
+      }
+    });
+
+    document.getElementById("recommendBtn").addEventListener("click", async () => {
+      const curExecutor = maybeInt(document.getElementById("curExecutor").value);
+      const curDelivery = maybeInt(document.getElementById("curDelivery").value);
+      try {
+        append(
+          "autoscale_recommendation",
+          await req("/api/autoscale/recommendation", "POST", {
+            current_executor_workers: curExecutor,
+            current_delivery_workers: curDelivery
+          })
+        );
+      } catch (err) {
+        append("autoscale_recommendation error", { error: String(err) });
+      }
+    });
+
+    document.getElementById("engagementBtn").addEventListener("click", async () => {
+      try {
+        await refreshEngagement(true);
+      } catch (err) {
+        append("engagement error", { error: String(err) });
+      }
+    });
+
+    document.getElementById("listDeadBtn").addEventListener("click", async () => {
+      const c = commonInputs();
+      const q = new URLSearchParams({ queue: c.queue, limit: String(c.limit) });
+      if (c.botId) q.set("bot_id", c.botId);
+      try {
+        append("dead_letter_list", await req("/api/queue/dead-letter?" + q.toString()));
+      } catch (err) {
+        append("dead_letter_list error", { error: String(err) });
+      }
+    });
+
+    document.getElementById("replayBtn").addEventListener("click", async () => {
+      const c = commonInputs();
+      const body = {
+        queue: c.queue,
+        bot_id: c.botId || undefined,
+        event_ids: c.eventIds,
+        limit: c.limit,
+        reset_attempts: c.resetAttempts
+      };
+      try {
+        append("dead_letter_replay", await req("/api/queue/dead-letter/replay", "POST", body));
+      } catch (err) {
+        append("dead_letter_replay error", { error: String(err) });
+      }
+    });
+
+    document.getElementById("purgeBtn").addEventListener("click", async () => {
+      const c = commonInputs();
+      const body = {
+        queue: c.queue,
+        bot_id: c.botId || undefined,
+        event_ids: c.eventIds,
+        limit: c.limit,
+        allow_all: c.allowAll
+      };
+      if (typeof c.olderThanS === "number") body.older_than_s = c.olderThanS;
+      try {
+        append("dead_letter_purge", await req("/api/queue/dead-letter/purge", "POST", body));
+      } catch (err) {
+        append("dead_letter_purge error", { error: String(err) });
+      }
+    });
+
+    document.getElementById("processBtn").addEventListener("click", async () => {
+      const kind = (document.getElementById("processKind").value || "both").trim();
+      const maxEvents = maybeInt(document.getElementById("maxEvents").value) || 1;
+      try {
+        append("queue_process_once", await req("/api/queue/process-once", "POST", { kind, max_events: maxEvents }));
+      } catch (err) {
+        append("queue_process_once error", { error: String(err) });
+      }
+    });
+
+    (async () => {
+      await refreshChips();
+      try {
+        await refreshEngagement(false);
+      } catch (err) {
+        append("engagement bootstrap error", { error: String(err) });
+      }
+    })();
+  </script>
+</body>
+</html>
+"""
+
+    @app.route("/engagement", methods=["GET"])
+    def engagement_dashboard():
+        return """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SimpleAgent Engagement</title>
+  <style>
+    :root {
+      --bg: #0f1222;
+      --panel: #17203a;
+      --line: #304575;
+      --text: #ecf2ff;
+      --muted: #aebce0;
+      --bar: #4f7eff;
+      --bar2: #55c4a8;
+    }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at top, #14284d, var(--bg) 55%);
+      color: var(--text);
+    }
+    .wrap {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 18px 14px 28px;
+    }
+    h1 { margin: 0 0 8px; font-size: 24px; }
+    .muted { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    .chip {
+      border: 1px solid #3b5798;
+      border-radius: 999px;
+      padding: 3px 10px;
+      font-size: 12px;
+      color: #d7e1ff;
+      background: #1b2b59;
+    }
+    .grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 1fr;
+    }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      padding: 10px;
+    }
+    .panel h3 { margin: 0 0 8px; font-size: 14px; }
+    canvas {
+      width: 100%;
+      height: 280px;
+      border: 1px solid #2b3f6d;
+      border-radius: 10px;
+      background: #0e1731;
+      display: block;
+    }
+    @media (max-width: 920px) {
+      canvas { height: 240px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Engagement Graphs</h1>
+    <p class="muted">Auto-refresh every 30 seconds. Data from <code>/api/engagement</code>.</p>
+    <div class="chips">
+      <span class="chip" id="chipActive">active_24h: ?</span>
+      <span class="chip" id="chipRetention">retention_7d: ?</span>
+      <span class="chip" id="chipSuccess">success_7d: ?</span>
+      <span class="chip" id="chipEngagement">engagement_7d: ?</span>
+      <span class="chip" id="chipUpdated">updated: ?</span>
+    </div>
+    <div class="grid">
+      <section class="panel">
+        <h3>Top Bots by Events (7d)</h3>
+        <canvas id="botChart" width="980" height="280"></canvas>
+      </section>
+      <section class="panel">
+        <h3>KPI Rates (7d)</h3>
+        <canvas id="kpiChart" width="980" height="280"></canvas>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const chipActive = document.getElementById("chipActive");
+    const chipRetention = document.getElementById("chipRetention");
+    const chipSuccess = document.getElementById("chipSuccess");
+    const chipEngagement = document.getElementById("chipEngagement");
+    const chipUpdated = document.getElementById("chipUpdated");
+    const botCanvas = document.getElementById("botChart");
+    const kpiCanvas = document.getElementById("kpiChart");
+
+    function pct(v) {
+      if (typeof v !== "number" || !Number.isFinite(v)) return "?";
+      return v.toFixed(1) + "%";
+    }
+
+    function drawBars(canvas, labels, values, opts = {}) {
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      const width = canvas.width;
+      const height = canvas.height;
+      const padLeft = 56;
+      const padRight = 20;
+      const padTop = 20;
+      const padBottom = 42;
+      const plotW = Math.max(10, width - padLeft - padRight);
+      const plotH = Math.max(10, height - padTop - padBottom);
+      const maxV = Math.max(1, ...values.map((v) => Number(v) || 0));
+      const count = Math.max(1, values.length);
+      const stepW = plotW / count;
+      const barW = Math.max(10, stepW * 0.62);
+
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = "#0e1731";
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.strokeStyle = "#2a3f6d";
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i += 1) {
+        const y = padTop + (plotH * i / 4);
+        ctx.beginPath();
+        ctx.moveTo(padLeft, y);
+        ctx.lineTo(width - padRight, y);
+        ctx.stroke();
+      }
+      ctx.beginPath();
+      ctx.moveTo(padLeft, padTop);
+      ctx.lineTo(padLeft, height - padBottom);
+      ctx.lineTo(width - padRight, height - padBottom);
+      ctx.stroke();
+
+      ctx.font = "11px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif";
+      ctx.fillStyle = "#adc0ee";
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      for (let i = 0; i <= 4; i += 1) {
+        const val = Math.round(maxV - (maxV * i / 4));
+        const y = padTop + (plotH * i / 4);
+        ctx.fillText(String(val), padLeft - 8, y);
+      }
+
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      for (let i = 0; i < count; i += 1) {
+        const value = Math.max(0, Number(values[i]) || 0);
+        const x = padLeft + (i * stepW) + ((stepW - barW) / 2);
+        const h = (value / maxV) * plotH;
+        const y = padTop + (plotH - h);
+        ctx.fillStyle = opts.barColor || "#4f7eff";
+        ctx.fillRect(x, y, barW, h);
+        ctx.fillStyle = "#edf3ff";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(String(value), x + (barW / 2), y - 2);
+        ctx.fillStyle = "#c4d2f8";
+        ctx.textBaseline = "top";
+        const label = String(labels[i] || "").slice(0, 16);
+        ctx.fillText(label, x + (barW / 2), height - padBottom + 6);
+      }
+    }
+
+    async function loadEngagement() {
+      const resp = await fetch("/api/engagement?window_days=7&engaged_event_threshold=3&limit=10");
+      const data = await resp.json();
+      if (!resp.ok || data.status !== "ok") throw new Error("failed to load engagement");
+
+      const e = data.engagement || {};
+      const k = e.kpis || {};
+      const retention = k.retention_7d || {};
+      const success = k.success_rate_window || {};
+      const engagement = k.engagement_rate_window || {};
+      const bots = Array.isArray(e.bots) ? e.bots : [];
+
+      chipActive.textContent = "active_24h: " + String(k.active_agents_24h ?? "?");
+      chipRetention.textContent =
+        "retention_7d: " + pct(k.retention_7d_pct) +
+        " (" + String(retention.retained_agents ?? "?") + "/" + String(retention.previous_active_agents ?? "?") + ")";
+      chipSuccess.textContent =
+        "success_7d: " + pct(k.success_rate_window_pct) +
+        " (" + String(success.done_events ?? "?") + "/" + String(success.terminal_events ?? "?") + ")";
+      chipEngagement.textContent =
+        "engagement_7d: " + pct(k.engagement_rate_window_pct) +
+        " (" + String(engagement.engaged_agents ?? "?") + "/" + String(engagement.active_agents_window ?? "?") + ")";
+      chipUpdated.textContent = "updated: " + new Date().toLocaleTimeString();
+
+      const botLabels = bots.map((b) => String(b.bot_name || b.bot_id || "bot"));
+      const botValues = bots.map((b) => Number(b.events_count || 0));
+      drawBars(botCanvas, botLabels.length ? botLabels : ["no_data"], botValues.length ? botValues : [0], { barColor: "#4f7eff" });
+
+      const kpiLabels = ["Retention", "Success", "Engagement"];
+      const kpiValues = [
+        Math.round(Number(k.retention_7d_pct || 0)),
+        Math.round(Number(k.success_rate_window_pct || 0)),
+        Math.round(Number(k.engagement_rate_window_pct || 0)),
+      ];
+      drawBars(kpiCanvas, kpiLabels, kpiValues, { barColor: "#55c4a8" });
+    }
+
+    async function refresh() {
+      try {
+        await loadEngagement();
+      } catch (err) {
+        chipUpdated.textContent = "updated: error";
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 30000);
+  </script>
+</body>
+</html>
