@@ -1037,211 +1037,182 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
           </div>
         </div>
 
-        <div className="row" style={{ gap: 8 }}>
+        <nav className="runtime-tab-strip" aria-label="Runtime sections">
           <button
             type="button"
-            className={`button ${activeTab === "chat" ? "" : "secondary"}`}
+            className={`runtime-tab-btn ${activeTab === "chat" ? "active" : ""}`}
             onClick={() => setActiveTab("chat")}
           >
             Chat
           </button>
           <button
             type="button"
-            className={`button ${activeTab === "memory" ? "" : "secondary"}`}
+            className={`runtime-tab-btn ${activeTab === "memory" ? "active" : ""}`}
             onClick={() => setActiveTab("memory")}
           >
             Memory
           </button>
           <button
             type="button"
-            className={`button ${activeTab === "tools" ? "" : "secondary"}`}
+            className={`runtime-tab-btn ${activeTab === "tools" ? "active" : ""}`}
             onClick={() => setActiveTab("tools")}
           >
             Tools
           </button>
           <button
             type="button"
-            className={`button ${activeTab === "settings" ? "" : "secondary"}`}
+            className={`runtime-tab-btn ${activeTab === "settings" ? "active" : ""}`}
             onClick={() => setActiveTab("settings")}
           >
             Settings
           </button>
           <button
             type="button"
-            className={`button ${activeTab === "debug" ? "" : "secondary"}`}
+            className={`runtime-tab-btn ${activeTab === "debug" ? "active" : ""}`}
             onClick={() => setActiveTab("debug")}
           >
             Debug
           </button>
-        </div>
+        </nav>
 
         {activeTab === "chat" ? (
           <section style={{ display: "grid", gap: 10 }}>
-            <div
-              style={{
-                border: "1px solid var(--border)",
-                borderRadius: 10,
-                background: "var(--surface-strong)",
-                padding: 12,
-                display: "grid",
-                gap: 8,
-              }}
-            >
-              <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-                <p className="muted" style={{ margin: 0 }}>
-                  Sessions
+            <div className="runtime-chat-layout">
+              <aside className="runtime-panel" style={{ display: "grid", gap: 10 }}>
+                <div className="row" style={{ justifyContent: "space-between", alignItems: "center", margin: 0 }}>
+                  <p className="runtime-section-title" style={{ margin: 0 }}>
+                    Sessions
+                  </p>
+                  <div className="row" style={{ margin: 0 }}>
+                    <button
+                      className="button secondary"
+                      type="button"
+                      onClick={() => void loadSessions()}
+                      disabled={sessionsLoading || creatingSession}
+                    >
+                      Refresh
+                    </button>
+                    <button
+                      className="button"
+                      type="button"
+                      onClick={() => void handleCreateSession()}
+                      disabled={creatingSession || sending || clearing}
+                    >
+                      {creatingSession ? "Creating..." : "New"}
+                    </button>
+                  </div>
+                </div>
+
+                {sessionsLoading ? (
+                  <p className="muted" style={{ margin: 0 }}>
+                    Loading sessions...
+                  </p>
+                ) : sessions.length === 0 ? (
+                  <p className="muted" style={{ margin: 0 }}>
+                    No sessions yet.
+                  </p>
+                ) : (
+                  <div className="runtime-list">
+                    {sessions.map((session) => {
+                      const active = session.id === activeSessionId;
+                      return (
+                        <button
+                          key={session.id}
+                          type="button"
+                          className={`runtime-list-item ${active ? "active" : ""}`}
+                          onClick={() => setActiveSessionId(session.id)}
+                        >
+                          <span style={{ textAlign: "left", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {session.name}
+                          </span>
+                          <span className="muted" style={{ fontSize: 12 }}>
+                            {session.messageCount} msg
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+                  Model reply target: a few seconds
                 </p>
-                <div className="row">
+                {sessionsError ? (
+                  <p role="alert" style={{ color: "#ff8e8e", margin: 0 }}>
+                    {sessionsError}
+                  </p>
+                ) : null}
+              </aside>
+
+              <div className="runtime-panel runtime-chat-main">
+                <div className="row" style={{ justifyContent: "space-between", alignItems: "center", margin: 0 }}>
+                  <p className="runtime-section-title" style={{ margin: 0 }}>
+                    Conversation
+                  </p>
                   <button
                     className="button secondary"
                     type="button"
-                    onClick={() => void loadSessions()}
-                    disabled={sessionsLoading || creatingSession}
+                    onClick={() => void handleClearCurrentSession()}
+                    disabled={clearing || sending || !activeSessionId}
                   >
-                    Refresh sessions
+                    {clearing ? "Clearing..." : "Clear session"}
                   </button>
+                </div>
+
+                <div className="runtime-chat-scroll">
+                  {messagesLoading ? (
+                    <p className="muted" style={{ margin: 0 }}>
+                      Loading messages...
+                    </p>
+                  ) : !activeSessionId ? (
+                    <p className="muted" style={{ margin: 0 }}>
+                      Select or create a session to start chatting.
+                    </p>
+                  ) : messages.length === 0 && !sending ? (
+                    <p className="muted" style={{ margin: 0 }}>
+                      No messages yet in this session.
+                    </p>
+                  ) : (
+                    <>
+                      {messages.map((message) => (
+                        <div
+                          key={message.id}
+                          className={`runtime-msg ${message.role === "user" ? "runtime-msg-user" : "runtime-msg-assistant"}`}
+                          style={{ justifySelf: message.role === "user" ? "end" : "start" }}
+                        >
+                          <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{message.content}</p>
+                        </div>
+                      ))}
+                      {sending ? (
+                        <div className="runtime-msg runtime-msg-assistant" style={{ justifySelf: "start" }}>
+                          <p className="muted" style={{ margin: 0 }}>
+                            Typing...
+                          </p>
+                        </div>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+
+                <form onSubmit={handleSubmit} className="runtime-compose-row">
+                  <textarea
+                    className="input"
+                    value={draft}
+                    onChange={(event) => setDraft(event.target.value)}
+                    placeholder="Type your message..."
+                    rows={3}
+                    disabled={sending || clearing || !activeSessionId}
+                  />
                   <button
                     className="button"
-                    type="button"
-                    onClick={() => void handleCreateSession()}
-                    disabled={creatingSession || sending || clearing}
+                    type="submit"
+                    disabled={sending || clearing || !draft.trim() || !activeSessionId}
                   >
-                    {creatingSession ? "Creating..." : "New session"}
+                    {sending ? "Sending..." : "Send"}
                   </button>
-                </div>
+                </form>
               </div>
-
-              {sessionsLoading ? (
-                <p className="muted" style={{ margin: 0 }}>
-                  Loading sessions...
-                </p>
-              ) : sessions.length === 0 ? (
-                <p className="muted" style={{ margin: 0 }}>
-                  No sessions yet.
-                </p>
-              ) : (
-                <div style={{ display: "grid", gap: 6, maxHeight: 200, overflowY: "auto" }}>
-                  {sessions.map((session) => {
-                    const active = session.id === activeSessionId;
-                    return (
-                      <button
-                        key={session.id}
-                        type="button"
-                        className={`button ${active ? "" : "secondary"}`}
-                        onClick={() => setActiveSessionId(session.id)}
-                        style={{
-                          justifyContent: "space-between",
-                          minHeight: 0,
-                          padding: "10px 12px",
-                        }}
-                      >
-                        <span style={{ textAlign: "left" }}>{session.name}</span>
-                        <span style={{ fontSize: 12, opacity: 0.85 }}>
-                          {session.messageCount} msg
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              {sessionsError ? (
-                <p role="alert" style={{ color: "#ff8e8e", margin: 0 }}>
-                  {sessionsError}
-                </p>
-              ) : null}
             </div>
-
-            <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-              <p className="muted" style={{ margin: 0 }}>
-                Model reply target: a few seconds
-              </p>
-              <button
-                className="button secondary"
-                type="button"
-                onClick={() => void handleClearCurrentSession()}
-                disabled={clearing || sending || !activeSessionId}
-              >
-                {clearing ? "Clearing..." : "Clear current session"}
-              </button>
-            </div>
-
-            <div
-              style={{
-                border: "1px solid var(--border)",
-                borderRadius: 10,
-                background: "var(--surface-strong)",
-                maxHeight: "52vh",
-                overflowY: "auto",
-                padding: 12,
-                display: "grid",
-                gap: 10,
-              }}
-            >
-              {messagesLoading ? (
-                <p className="muted" style={{ margin: 0 }}>
-                  Loading messages...
-                </p>
-              ) : !activeSessionId ? (
-                <p className="muted" style={{ margin: 0 }}>
-                  Select or create a session to start chatting.
-                </p>
-              ) : messages.length === 0 && !sending ? (
-                <p className="muted" style={{ margin: 0 }}>
-                  No messages yet in this session.
-                </p>
-              ) : (
-                <>
-                  {messages.map((message) => (
-                    <div
-                      key={message.id}
-                      style={{
-                        justifySelf: message.role === "user" ? "end" : "start",
-                        maxWidth: "88%",
-                        borderRadius: 10,
-                        border: "1px solid var(--border)",
-                        background: message.role === "user" ? "var(--accent-surface)" : "var(--surface)",
-                        padding: "8px 10px",
-                      }}
-                    >
-                      <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{message.content}</p>
-                    </div>
-                  ))}
-                  {sending ? (
-                    <div
-                      style={{
-                        justifySelf: "start",
-                        maxWidth: "88%",
-                        borderRadius: 10,
-                        border: "1px solid var(--border)",
-                        background: "var(--surface)",
-                        padding: "8px 10px",
-                      }}
-                    >
-                      <p className="muted" style={{ margin: 0 }}>
-                        Typing...
-                      </p>
-                    </div>
-                  ) : null}
-                </>
-              )}
-            </div>
-
-            <form onSubmit={handleSubmit} style={{ display: "grid", gap: 8 }}>
-              <textarea
-                className="input"
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                placeholder="Type your message..."
-                rows={4}
-                disabled={sending || clearing || !activeSessionId}
-              />
-              <div className="row" style={{ justifyContent: "flex-end" }}>
-                <button className="button" type="submit" disabled={sending || clearing || !draft.trim() || !activeSessionId}>
-                  {sending ? "Sending..." : "Send"}
-                </button>
-              </div>
-            </form>
 
             {chatError ? (
               <p role="alert" style={{ color: "#ff8e8e", margin: 0 }}>

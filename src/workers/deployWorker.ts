@@ -1456,6 +1456,7 @@ export async function processDeploymentJob(job: DeploymentJob) {
     runtime = await launchUserContainer({
       deploymentId: job.deploymentId,
       userId: job.userId,
+      runtimeMetadata: pinnedRuntimeMetadata,
       runtimeSlugSource,
       host,
       telegramBotToken: selectedChannel === "telegram" || Boolean(deploymentTelegramBotToken) ? telegramBotToken : null,

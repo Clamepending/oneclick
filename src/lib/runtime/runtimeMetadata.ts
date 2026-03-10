@@ -42,7 +42,7 @@ function normalizeReleaseChannel(value: string | null | undefined): RuntimeRelea
 }
 
 function defaultEmbeddedRuntimeVersion() {
-  return readTrimmedEnv("SIMPLE_AGENT_EMBEDDED_RUNTIME_VERSION") || "embedded-v1";
+  return readTrimmedEnv("SIMPLE_AGENT_EMBEDDED_RUNTIME_VERSION") || "embedded-v2";
 }
 
 function defaultVmRuntimeVersion() {
@@ -82,4 +82,3 @@ export function resolveRuntimeMetadataFromRow(row: RuntimeMetadataRow): RuntimeM
     runtimeReleaseChannel: normalizeReleaseChannel(row.runtime_release_channel),
   };
 }
-

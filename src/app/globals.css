@@ -167,3 +167,127 @@ code {
   border-radius: 6px;
   padding: 1px 5px;
 }
+
+.runtime-tab-strip {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.runtime-tab-btn {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 8px 13px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.runtime-tab-btn.active {
+  border-color: var(--border-strong);
+  background: var(--accent-surface);
+  color: var(--text);
+  box-shadow: 0 8px 20px rgba(107, 45, 246, 0.25);
+}
+
+.runtime-chat-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.runtime-panel {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-strong);
+  padding: 12px;
+}
+
+.runtime-chat-main {
+  display: grid;
+  gap: 10px;
+}
+
+.runtime-section-title {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.runtime-list {
+  display: grid;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.runtime-list-item {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.runtime-list-item.active {
+  border-color: var(--border-strong);
+  background: var(--accent-surface);
+}
+
+.runtime-chat-scroll {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 12px;
+  max-height: 56vh;
+  overflow-y: auto;
+  display: grid;
+  gap: 10px;
+}
+
+.runtime-msg {
+  max-width: 88%;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+}
+
+.runtime-msg-user {
+  background: var(--accent-surface);
+}
+
+.runtime-msg-assistant {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.runtime-compose-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.runtime-compose-row .button {
+  align-self: stretch;
+}
+
+@media (max-width: 1040px) {
+  .runtime-chat-layout {
+    grid-template-columns: 1fr;
+  }
+}

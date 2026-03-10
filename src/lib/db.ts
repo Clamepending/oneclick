@@ -406,7 +406,7 @@ export async function ensureSchema() {
      )
      ON CONFLICT (runtime_kind, runtime_version)
      DO NOTHING`,
-    [(process.env.SIMPLE_AGENT_EMBEDDED_RUNTIME_VERSION ?? "embedded-v1").trim() || "embedded-v1"],
+    [(process.env.SIMPLE_AGENT_EMBEDDED_RUNTIME_VERSION ?? "embedded-v2").trim() || "embedded-v2"],
   );
 
   await pool.query(

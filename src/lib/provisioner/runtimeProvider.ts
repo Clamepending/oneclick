@@ -29,6 +29,7 @@ import {
 import {
   resolveDefaultRuntimeMetadata,
   type RuntimeKind,
+  type RuntimeMetadata,
   type RuntimeReleaseChannel,
 } from "@/lib/runtime/runtimeMetadata";
 import {
@@ -59,6 +60,7 @@ import type { Host } from "@/lib/provisioner/hostScheduler";
 type LaunchInput = {
   deploymentId: string;
   userId: string;
+  runtimeMetadata?: RuntimeMetadata | null;
   runtimeSlugSource?: string | null;
   telegramBotToken?: string | null;
   openaiApiKey?: string | null;
@@ -687,9 +689,13 @@ function resolveAppBaseUrl() {
   }
 }
 
+function resolveLaunchRuntimeMetadata(input: LaunchInput) {
+  return input.runtimeMetadata ?? resolveDefaultRuntimeMetadata(normalizeDeploymentFlavor(input.deploymentFlavor));
+}
+
 async function launchViaLambda(input: LaunchInput): Promise<LaunchResult> {
   const deploymentFlavor = normalizeDeploymentFlavor(input.deploymentFlavor);
-  const runtimeMetadata = resolveDefaultRuntimeMetadata(deploymentFlavor);
+  const runtimeMetadata = resolveLaunchRuntimeMetadata(input);
   const baseUrl = resolveAppBaseUrl();
   return {
     runtimeId: runtimeIdFromLambda(input.deploymentId),
@@ -1456,7 +1462,7 @@ async function launchViaSsh(input: LaunchInput): Promise<LaunchResult> {
   }
 
   const deploymentFlavor = normalizeDeploymentFlavor(input.deploymentFlavor);
-  const runtimeMetadata = resolveDefaultRuntimeMetadata(deploymentFlavor);
+  const runtimeMetadata = resolveLaunchRuntimeMetadata(input);
   const isOpenClawRuntime = deploymentFlavor === "deploy_openclaw_free";
   const isSimpleAgentWithVideoMemory = deploymentFlavor === "simple_agent_videomemory_free";
   const isSimpleAgentWithOttoAgentMcp = deploymentFlavor === "ottoagent_free";
@@ -1709,7 +1715,7 @@ async function launchViaEcs(input: LaunchInput): Promise<LaunchResult> {
     ? "DISABLED"
     : "ENABLED";
   const deploymentFlavor = normalizeDeploymentFlavor(input.deploymentFlavor);
-  const runtimeMetadata = resolveDefaultRuntimeMetadata(deploymentFlavor);
+  const runtimeMetadata = resolveLaunchRuntimeMetadata(input);
   const isOpenClawRuntime = deploymentFlavor === "deploy_openclaw_free";
   const isSimpleAgentMicroservicesEcs = deploymentFlavor === "simple_agent_microservices_ecs";
   const isSimpleAgentWithOttoAuthEcs = isOttoAuthEcsFlavor(deploymentFlavor);
