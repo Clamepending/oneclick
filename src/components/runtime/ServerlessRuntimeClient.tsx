@@ -39,7 +39,8 @@ type RuntimeToolTraceEntry = {
   call_id: string;
   tool: string;
   source: "builtin" | "mcp" | "gateway";
-  ok: boolean;
+  status: "running" | "ok" | "error";
+  ok: boolean | null;
   latency_ms: number;
   arguments?: Record<string, unknown> | null;
   result?: unknown;
@@ -136,6 +137,7 @@ type RuntimeChatResponse =
       ok?: boolean;
       error?: string;
       sessionId?: string;
+      turnId?: string;
       userMessage?: ChatMessage;
       assistantMessage?: ChatMessage;
       toolTrace?: RuntimeToolTraceEntry[];
@@ -360,6 +362,87 @@ function formatTokenCount(value: number) {
   return String(Math.round(safe));
 }
 
+function normalizeToolTraceState(entry: Partial<RuntimeToolTraceEntry> | null | undefined): RuntimeToolTraceEntry["status"] {
+  const explicit = String(entry?.status ?? "")
+    .trim()
+    .toLowerCase();
+  if (explicit === "running" || explicit === "ok" || explicit === "error") {
+    return explicit;
+  }
+  if (entry?.ok === true) return "ok";
+  if (entry?.ok === false || String(entry?.error ?? "").trim()) return "error";
+  return "running";
+}
+
+function normalizeToolTraceEntry(raw: unknown, fallbackKey: string): RuntimeToolTraceEntry | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  const sourceRaw = String(value.source ?? "")
+    .trim()
+    .toLowerCase();
+  const source: RuntimeToolTraceEntry["source"] =
+    sourceRaw === "mcp" || sourceRaw === "gateway" ? sourceRaw : "builtin";
+  const status = normalizeToolTraceState({
+    status: String(value.status ?? "") as RuntimeToolTraceEntry["status"],
+    ok: typeof value.ok === "boolean" ? value.ok : null,
+    error: typeof value.error === "string" ? value.error : null,
+  });
+  const ok =
+    status === "running"
+      ? null
+      : status === "ok"
+        ? true
+        : false;
+  return {
+    call_id: String(value.call_id ?? "").trim() || fallbackKey,
+    tool: String(value.tool ?? "tool"),
+    source,
+    status,
+    ok,
+    latency_ms: Math.max(0, Number(value.latency_ms ?? 0) || 0),
+    arguments:
+      value.arguments && typeof value.arguments === "object" && !Array.isArray(value.arguments)
+        ? (value.arguments as Record<string, unknown>)
+        : {},
+    result: value.result ?? null,
+    error: typeof value.error === "string" ? value.error : null,
+  };
+}
+
+function normalizeToolTraceEntries(raw: unknown) {
+  if (!Array.isArray(raw)) return [] as RuntimeToolTraceEntry[];
+  return raw
+    .map((entry, index) => normalizeToolTraceEntry(entry, `tc_${index + 1}`))
+    .filter((entry): entry is RuntimeToolTraceEntry => Boolean(entry));
+}
+
+function mergeToolTraceEntries(
+  existing: RuntimeToolTraceEntry[],
+  incoming: RuntimeToolTraceEntry[],
+) {
+  if (!incoming.length) return existing;
+  const order: string[] = [];
+  const byKey = new Map<string, RuntimeToolTraceEntry>();
+  for (const entry of existing) {
+    const key = entry.call_id.trim();
+    if (!key) continue;
+    order.push(key);
+    byKey.set(key, entry);
+  }
+  for (const entry of incoming) {
+    const key = entry.call_id.trim();
+    if (!key) continue;
+    if (!byKey.has(key)) {
+      order.push(key);
+    }
+    byKey.set(key, {
+      ...(byKey.get(key) ?? entry),
+      ...entry,
+    });
+  }
+  return order.map((key) => byKey.get(key)).filter((entry): entry is RuntimeToolTraceEntry => Boolean(entry));
+}
+
 export function ServerlessRuntimeClient({ deploymentId, botName, initialState }: Props) {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<"chat" | "memory" | "tools" | "settings" | "debug">("chat");
@@ -399,6 +482,8 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
   const [contextUsage, setContextUsage] = useState<RuntimeContextUsage | null>(null);
   const [contextUsageUnavailable, setContextUsageUnavailable] = useState(false);
   const contextUsageRequestSeq = useRef(0);
+  const toolProgressPollSeq = useRef(0);
+  const toolProgressPollTimer = useRef<number | null>(null);
 
   const [memoryDocs, setMemoryDocs] = useState<MemoryDoc[]>([]);
   const [memoryLoading, setMemoryLoading] = useState(true);
@@ -593,6 +678,42 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
     }
   }
 
+  function stopToolProgressPolling() {
+    toolProgressPollSeq.current += 1;
+    if (toolProgressPollTimer.current !== null) {
+      window.clearInterval(toolProgressPollTimer.current);
+      toolProgressPollTimer.current = null;
+    }
+  }
+
+  async function loadToolProgressForTurn(input: { sessionId: string; turnId: string; requestSeq: number }) {
+    if (!input.sessionId || !input.turnId) return;
+    try {
+      const response = await fetch(`/api/runtime/${deploymentId}/events?limit=120`, { cache: "no-store" });
+      const body = await readJson<RuntimeEventsResponse>(response);
+      if (input.requestSeq !== toolProgressPollSeq.current) return;
+      if (!response.ok || !body?.ok || !Array.isArray(body.items)) return;
+
+      const traceEntries: RuntimeToolTraceEntry[] = [];
+      const orderedEvents = [...body.items].sort((a, b) => Number(a.id ?? 0) - Number(b.id ?? 0));
+      for (const item of orderedEvents) {
+        if (String(item?.eventType ?? "").trim() !== "tool_call_progress") continue;
+        if (String(item?.sessionId ?? "").trim() !== input.sessionId) continue;
+        const payload =
+          item?.payload && typeof item.payload === "object"
+            ? (item.payload as Record<string, unknown>)
+            : {};
+        const payloadTurnId = String(payload.turnId ?? "").trim();
+        if (payloadTurnId !== input.turnId) continue;
+        traceEntries.push(...normalizeToolTraceEntries(payload.toolTrace));
+      }
+      if (!traceEntries.length) return;
+      setLatestToolTrace((current) => mergeToolTraceEntries(current, traceEntries));
+    } catch {
+      // Best-effort progress polling; final chat response still contains authoritative trace.
+    }
+  }
+
   async function loadMemoryDocs() {
     setMemoryLoading(true);
     setMemoryError("");
@@ -777,7 +898,18 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
   }, [deploymentId]);
 
   useEffect(() => {
+    return () => {
+      toolProgressPollSeq.current += 1;
+      if (toolProgressPollTimer.current !== null) {
+        window.clearInterval(toolProgressPollTimer.current);
+        toolProgressPollTimer.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (!activeSessionId) {
+      stopToolProgressPolling();
       setMessages([]);
       setMessagesLoading(false);
       setLatestToolTrace([]);
@@ -785,6 +917,7 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
       setContextUsageUnavailable(false);
       return;
     }
+    stopToolProgressPolling();
     setLatestToolTrace([]);
     void loadMessages(activeSessionId);
   }, [deploymentId, activeSessionId]);
@@ -802,23 +935,47 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
     const nextMessage = draft.trim();
     if (!nextMessage || sending || !activeSessionId) return;
 
+    const turnSessionId = activeSessionId;
+    const turnId = `turn_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    stopToolProgressPolling();
+    setLatestToolTrace([]);
+
     setSending(true);
     setChatError("");
+    const pollRequestSeq = ++toolProgressPollSeq.current;
+    const poll = () =>
+      void loadToolProgressForTurn({
+        sessionId: turnSessionId,
+        turnId,
+        requestSeq: pollRequestSeq,
+      });
+    poll();
+    toolProgressPollTimer.current = window.setInterval(poll, 450);
+
     try {
       const response = await fetch(`/api/runtime/${deploymentId}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: nextMessage, sessionId: activeSessionId }),
+        body: JSON.stringify({ message: nextMessage, sessionId: turnSessionId, turnId }),
       });
       const body = await readJson<RuntimeChatResponse>(response);
       if (!response.ok || !body?.ok || !body.userMessage || !body.assistantMessage) {
         throw new Error(body?.error || "Failed to send message.");
       }
-      if (body.sessionId && body.sessionId !== activeSessionId) {
+      const resolvedSessionId = body.sessionId ?? turnSessionId;
+      const resolvedTurnId = String(body.turnId ?? turnId).trim() || turnId;
+      if (body.sessionId && body.sessionId !== turnSessionId) {
         setActiveSessionId(body.sessionId);
       }
       setMessages((current) => [...current, body.userMessage as ChatMessage, body.assistantMessage as ChatMessage]);
-      setLatestToolTrace(Array.isArray(body.toolTrace) ? body.toolTrace : []);
+      await loadToolProgressForTurn({
+        sessionId: resolvedSessionId,
+        turnId: resolvedTurnId,
+        requestSeq: pollRequestSeq,
+      });
+      setLatestToolTrace((current) =>
+        mergeToolTraceEntries(current, normalizeToolTraceEntries(body.toolTrace)),
+      );
       if (body.contextUsage) {
         setContextUsage({
           estimated: Boolean(body.contextUsage.estimated),
@@ -836,7 +993,7 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
       }
       setSessions((current) =>
         current.map((session) =>
-          session.id === (body.sessionId ?? activeSessionId)
+          session.id === resolvedSessionId
             ? {
                 ...session,
                 updatedAt: new Date().toISOString(),
@@ -851,6 +1008,7 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
     } catch (error) {
       setChatError(error instanceof Error ? error.message : "Failed to send message.");
     } finally {
+      stopToolProgressPolling();
       setSending(false);
     }
   }
@@ -865,6 +1023,7 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
     setCreatingSession(true);
     setChatError("");
     try {
+      stopToolProgressPolling();
       const response = await fetch(`/api/runtime/${deploymentId}/sessions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -896,6 +1055,7 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
     setClearing(true);
     setChatError("");
     try {
+      stopToolProgressPolling();
       const response = await fetch(
         `/api/runtime/${deploymentId}/messages?sessionId=${encodeURIComponent(activeSessionId)}`,
         { method: "DELETE" },
@@ -1365,24 +1525,28 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
                   <div className="runtime-tool-trace-group">
                     <div className="runtime-tool-trace-title">Tool Calls</div>
                     {latestToolTrace.map((entry, index) => {
+                      const state = normalizeToolTraceState(entry);
                       const payload = {
-                        arguments: entry.arguments ?? {},
+                        status: state,
                         result: entry.result ?? null,
+                        arguments: entry.arguments ?? {},
                         error: entry.error ?? null,
                       };
                       return (
                         <details
                           key={`${entry.call_id || "call"}-${entry.tool}-${entry.latency_ms}-${index}`}
                           className="runtime-tool-call"
-                          open={index === latestToolTrace.length - 1}
+                          open={state === "running" || index === latestToolTrace.length - 1}
                         >
                           <summary>
-                            <span className={`runtime-tool-call-state ${entry.ok ? "ok" : "error"}`}>
-                              {entry.ok ? "OK" : "ERROR"}
+                            <span className={`runtime-tool-call-state ${state}`}>
+                              {state === "running" ? "CALLED" : state === "ok" ? "COMPLETED" : "ERROR"}
                             </span>
                             <span className="runtime-tool-call-name">{entry.tool}</span>
                             <span className="runtime-tool-call-meta">
-                              {entry.source} · {Math.max(0, Number(entry.latency_ms || 0))}ms
+                              {state === "running"
+                                ? `${entry.source} · calling...`
+                                : `${entry.source} · ${Math.max(0, Number(entry.latency_ms || 0))}ms`}
                             </span>
                           </summary>
                           <pre className="runtime-tool-call-payload">{JSON.stringify(payload, null, 2)}</pre>

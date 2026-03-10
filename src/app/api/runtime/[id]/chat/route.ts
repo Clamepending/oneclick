@@ -10,6 +10,7 @@ import { resolveRuntimeMetadataFromRow } from "@/lib/runtime/runtimeMetadata";
 const payloadSchema = z.object({
   message: z.string().trim().min(1).max(8000),
   sessionId: z.string().trim().min(1).max(120).optional(),
+  turnId: z.string().trim().min(1).max(120).optional(),
 });
 
 type DeploymentRow = {
@@ -98,6 +99,9 @@ export async function POST(
   if (!sessionResolution.found || !sessionResolution.session) {
     return NextResponse.json({ ok: false, error: "Session not found" }, { status: 404 });
   }
+  const turnId =
+    parsedBody.data.turnId?.trim() ||
+    `turn_${Date.now()}_${sessionResolution.session.id}`;
 
   try {
     const result = await runRuntimeTurn({
@@ -116,6 +120,22 @@ export async function POST(
         openrouter_api_key: row.openrouter_api_key,
         subsidy_proxy_token: row.subsidy_proxy_token,
       },
+      onToolTrace: async (entry) => {
+        try {
+          await createRuntimeEventLog({
+            deploymentId: id,
+            source: "runtime_chat",
+            eventType: "tool_call_progress",
+            status: "processed",
+            sessionId: sessionResolution.session.id,
+            payload: {
+              sessionId: sessionResolution.session.id,
+              turnId,
+              toolTrace: [entry],
+            },
+          });
+        } catch {}
+      },
     });
     await createRuntimeEventLog({
       deploymentId: id,
@@ -125,6 +145,7 @@ export async function POST(
       sessionId: sessionResolution.session.id,
       payload: {
         sessionId: sessionResolution.session.id,
+        turnId,
         message: parsedBody.data.message,
       },
       result: {
@@ -132,7 +153,7 @@ export async function POST(
         assistantMessageId: result.assistantMessage.id,
       },
     });
-    return NextResponse.json({ ok: true, ...result });
+    return NextResponse.json({ ok: true, turnId, ...result });
   } catch (error) {
     const message =
       error instanceof RuntimeRouterError
@@ -149,6 +170,7 @@ export async function POST(
       error: message,
       payload: {
         sessionId: sessionResolution.session.id,
+        turnId,
         message: parsedBody.data.message,
       },
     });

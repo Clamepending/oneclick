@@ -47,12 +47,15 @@ export type ServerlessToolTraceEntry = {
   call_id: string;
   tool: string;
   source: "builtin" | "mcp" | "gateway";
-  ok: boolean;
+  status: "running" | "ok" | "error";
+  ok: boolean | null;
   latency_ms: number;
   arguments?: Record<string, unknown> | null;
   result?: unknown;
   error?: string | null;
 };
+
+export type ServerlessToolTraceCallback = (entry: ServerlessToolTraceEntry) => void | Promise<void>;
 
 export type ServerlessContextUsage = {
   estimated: true;
@@ -432,6 +435,7 @@ export async function runServerlessChatTurn(input: {
   userMessage: string;
   requestOrigin: string;
   modelConfig: ServerlessRuntimeModelConfig;
+  onToolTrace?: ServerlessToolTraceCallback;
 }) {
   const existingUserCount = await pool.query<{ count: string }>(
     `SELECT COUNT(*)::text AS count
@@ -582,9 +586,28 @@ export async function runServerlessChatTurn(input: {
       break;
     }
 
-    let toolResult: ServerlessRuntimeToolResult;
     const callId = `tc_${step + 1}`;
+    const toolSource = resolveToolSource(toolCall.name);
     const toolStartedAt = Date.now();
+    const runningEntry: ServerlessToolTraceEntry = {
+      call_id: callId,
+      tool: toolCall.name,
+      source: toolSource,
+      status: "running",
+      ok: null,
+      latency_ms: 0,
+      arguments: toolCall.arguments,
+      result: null,
+      error: null,
+    };
+    toolTrace.push(runningEntry);
+    if (input.onToolTrace) {
+      try {
+        await input.onToolTrace(runningEntry);
+      } catch {}
+    }
+
+    let toolResult: ServerlessRuntimeToolResult;
     if (!availableToolNames.has(toolCall.name)) {
       toolResult = {
         ok: false,
@@ -608,16 +631,23 @@ export async function runServerlessChatTurn(input: {
         };
       }
     }
-    toolTrace.push({
+    const completedEntry: ServerlessToolTraceEntry = {
       call_id: callId,
       tool: toolCall.name,
-      source: resolveToolSource(toolCall.name),
+      source: toolSource,
+      status: toolResult.ok ? "ok" : "error",
       ok: Boolean(toolResult.ok),
       latency_ms: Date.now() - toolStartedAt,
       arguments: toolCall.arguments,
       result: toolResult.ok ? (toolResult.result ?? null) : null,
       error: toolResult.ok ? null : toolResult.error ?? "tool call failed",
-    });
+    };
+    toolTrace.push(completedEntry);
+    if (input.onToolTrace) {
+      try {
+        await input.onToolTrace(completedEntry);
+      } catch {}
+    }
 
     workingMessages = [
       ...workingMessages,

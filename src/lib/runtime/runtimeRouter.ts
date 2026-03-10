@@ -3,7 +3,7 @@ import {
   runSimpleagentEmbeddedTurn,
   SIMPLEAGENT_EMBEDDED_RUNTIME_KIND,
 } from "@/lib/runtime/adapters/simpleagentEmbeddedAdapter";
-import type { ServerlessRuntimeModelConfig } from "@/lib/runtime/serverlessChatEngine";
+import type { ServerlessRuntimeModelConfig, ServerlessToolTraceCallback } from "@/lib/runtime/serverlessChatEngine";
 import type { RuntimeMetadata } from "@/lib/runtime/runtimeMetadata";
 
 export class RuntimeRouterError extends Error {
@@ -24,6 +24,7 @@ export type RuntimeRouterTurnInput = {
   requestOrigin: string;
   modelConfig: ServerlessRuntimeModelConfig;
   runtimeMetadata: RuntimeMetadata;
+  onToolTrace?: ServerlessToolTraceCallback;
 };
 
 function ensureContractCompatibility(input: {
@@ -71,6 +72,7 @@ export async function runRuntimeTurn(input: RuntimeRouterTurnInput) {
     userMessage: input.userMessage,
     requestOrigin: input.requestOrigin,
     modelConfig: input.modelConfig,
+    onToolTrace: input.onToolTrace,
   });
 
   return {
@@ -85,4 +87,3 @@ export async function runRuntimeTurn(input: RuntimeRouterTurnInput) {
     ...turn,
   };
 }
-

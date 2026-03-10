@@ -2,6 +2,7 @@ import {
   getServerlessEmbeddedCapabilities,
   runServerlessChatTurn,
   type ServerlessRuntimeModelConfig,
+  type ServerlessToolTraceCallback,
 } from "@/lib/runtime/serverlessChatEngine";
 import type { RuntimeMetadata } from "@/lib/runtime/runtimeMetadata";
 
@@ -13,6 +14,7 @@ export type SimpleagentEmbeddedTurnInput = {
   userMessage: string;
   requestOrigin: string;
   modelConfig: ServerlessRuntimeModelConfig;
+  onToolTrace?: ServerlessToolTraceCallback;
 };
 
 export async function runSimpleagentEmbeddedTurn(input: SimpleagentEmbeddedTurnInput) {
@@ -22,6 +24,7 @@ export async function runSimpleagentEmbeddedTurn(input: SimpleagentEmbeddedTurnI
     userMessage: input.userMessage,
     requestOrigin: input.requestOrigin,
     modelConfig: input.modelConfig,
+    onToolTrace: input.onToolTrace,
   });
 }
 

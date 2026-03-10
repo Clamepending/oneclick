@@ -382,6 +382,12 @@ code {
   color: #8de2b7;
 }
 
+.runtime-tool-call-state.running {
+  border-color: #5a6a8d;
+  background: rgba(90, 106, 141, 0.24);
+  color: #c3d4ff;
+}
+
 .runtime-tool-call-state.error {
   border-color: #904044;
   background: rgba(144, 64, 68, 0.2);
