@@ -1612,6 +1612,34 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
                           </p>
                         </div>
                       ) : null}
+                      {latestToolTrace.length ? (
+                        <div className="runtime-tool-trace-group">
+                          <div className="runtime-tool-trace-title">Tool Calls</div>
+                          {latestToolTrace.map((entry, index) => {
+                            const state = normalizeToolTraceState(entry);
+                            const payload = buildToolTracePayload(entry, state);
+                            return (
+                              <details
+                                key={`${entry.call_id || "call"}-${entry.tool}-${index}`}
+                                className="runtime-tool-call"
+                              >
+                                <summary>
+                                  <span className={`runtime-tool-call-state ${state}`}>
+                                    {state === "running" ? "CALLED" : state === "ok" ? "COMPLETED" : "ERROR"}
+                                  </span>
+                                  <span className="runtime-tool-call-name">{entry.tool}</span>
+                                  <span className="runtime-tool-call-meta">
+                                    {state === "running"
+                                      ? `${entry.source} · calling...`
+                                      : `${entry.source} · ${Math.max(0, Number(entry.latency_ms || 0))}ms`}
+                                  </span>
+                                </summary>
+                                <pre className="runtime-tool-call-payload">{JSON.stringify(payload, null, 2)}</pre>
+                              </details>
+                            );
+                          })}
+                        </div>
+                      ) : null}
                     </>
                   )}
                 </div>
@@ -1649,34 +1677,6 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
                   </div>
                 </div>
 
-                {latestToolTrace.length ? (
-                  <div className="runtime-tool-trace-group">
-                    <div className="runtime-tool-trace-title">Tool Calls</div>
-                    {latestToolTrace.map((entry, index) => {
-                      const state = normalizeToolTraceState(entry);
-                      const payload = buildToolTracePayload(entry, state);
-                      return (
-                        <details
-                          key={`${entry.call_id || "call"}-${entry.tool}-${index}`}
-                          className="runtime-tool-call"
-                        >
-                          <summary>
-                            <span className={`runtime-tool-call-state ${state}`}>
-                              {state === "running" ? "CALLED" : state === "ok" ? "COMPLETED" : "ERROR"}
-                            </span>
-                            <span className="runtime-tool-call-name">{entry.tool}</span>
-                            <span className="runtime-tool-call-meta">
-                              {state === "running"
-                                ? `${entry.source} · calling...`
-                                : `${entry.source} · ${Math.max(0, Number(entry.latency_ms || 0))}ms`}
-                            </span>
-                          </summary>
-                          <pre className="runtime-tool-call-payload">{JSON.stringify(payload, null, 2)}</pre>
-                        </details>
-                      );
-                    })}
-                  </div>
-                ) : null}
               </div>
             </div>
 
