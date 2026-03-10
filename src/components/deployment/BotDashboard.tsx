@@ -86,6 +86,13 @@ export function BotDashboard({ deployments }: Props) {
 
   const selectedGroup = groups.find((group) => group.name === selectedBotName) ?? null;
   const latestDeployment = selectedGroup?.deployments[0] ?? null;
+  const latestOpenUiUrl = latestDeployment
+    ? buildSimpleAgentOpenUiUrl({
+        botDashboardUrl: latestDeployment.botDashboardUrl,
+        readyUrl: latestDeployment.readyUrl,
+        fallbackRuntimePath: `/runtime/${latestDeployment.id}`,
+      })
+    : null;
 
   if (!groups.length) {
     return (
@@ -189,10 +196,10 @@ export function BotDashboard({ deployments }: Props) {
                 Latest update: <code>{new Date(latestDeployment.updatedAt).toLocaleString()}</code>
               </p>
             ) : null}
-            {latestDeployment?.botDashboardUrl && latestDeployment.status === "ready" ? (
+            {latestDeployment && latestDeployment.status === "ready" && latestOpenUiUrl ? (
               <p style={{ margin: 0 }}>
-                <Link className="button secondary" href={latestDeployment.botDashboardUrl}>
-                  Open bot page
+                <Link className="button secondary" href={latestOpenUiUrl} target="_blank" rel="noreferrer">
+                  Open UI
                 </Link>
               </p>
             ) : null}

@@ -269,12 +269,13 @@ export default async function RuntimePage({
   if (!deployment) {
     return renderPlaceholder(id, "Deployment not found.");
   }
+  const simpleagentUiSupported = normalizeDeploymentFlavor(deployment.deployment_flavor) !== "deploy_openclaw_free";
 
   const provider = (deployment.deploy_provider ?? "").trim();
   if (provider === "lambda") {
     if (deployment.status === "ready") {
       const useSimpleagentUi = readTrimmedEnv("ONECLICK_USE_SIMPLEAGENT_UI_ADAPTER") !== "0";
-      if (useSimpleagentUi) {
+      if (useSimpleagentUi && simpleagentUiSupported) {
         redirect(buildRelativeUrlWithUiParams(`/runtime/${id}/simpleagent-ui`, uiParams));
       }
       return (
@@ -306,6 +307,10 @@ export default async function RuntimePage({
       return renderPlaceholder(id, deployment.error || "This deployment is no longer active.");
     }
     return renderPlaceholder(id, "Serverless runtime is still preparing. Try again in a moment.");
+  }
+
+  if (deployment.status === "ready" && simpleagentUiSupported) {
+    redirect(buildRelativeUrlWithUiParams(`/runtime/${id}/simpleagent-ui`, uiParams));
   }
 
   const readyUrl = deployment.ready_url?.trim();

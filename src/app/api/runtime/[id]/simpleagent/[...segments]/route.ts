@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
+import { normalizeDeploymentFlavor } from "@/lib/plans";
 import { listRuntimeEventLogs } from "@/lib/runtime/runtimeEventLog";
 import { resolveServerlessBotId } from "@/lib/runtime/ottoauthAccounts";
-import { requireOwnedServerlessDeployment } from "../../shared";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +22,7 @@ type DeploymentRow = {
   telegram_bot_token: string | null;
   status: string;
   deploy_provider: string | null;
+  deployment_flavor: string | null;
   runtime_id: string | null;
   ready_url: string | null;
   updated_at: string;
@@ -133,6 +134,109 @@ function pickToolTrace(payload: Record<string, unknown>) {
   return [];
 }
 
+function isServerlessProvider(value: string | null | undefined) {
+  return String(value ?? "").trim().toLowerCase() === "lambda";
+}
+
+function supportsSimpleagentUiAdapter(value: string | null | undefined) {
+  return normalizeDeploymentFlavor(value) !== "deploy_openclaw_free";
+}
+
+function mergeQueryParams(base: URL, incoming: URLSearchParams) {
+  for (const [key, value] of incoming.entries()) {
+    if (!key.trim()) continue;
+    base.searchParams.set(key, value);
+  }
+}
+
+function copyProxyResponseHeaders(upstream: Response) {
+  const headers = new Headers();
+  const passthrough = [
+    "content-type",
+    "cache-control",
+    "pragma",
+    "expires",
+    "etag",
+    "last-modified",
+    "x-accel-buffering",
+  ];
+  for (const key of passthrough) {
+    const value = upstream.headers.get(key);
+    if (value) headers.set(key, value);
+  }
+  if (String(upstream.headers.get("content-type") ?? "").toLowerCase().includes("text/event-stream")) {
+    headers.set("connection", "keep-alive");
+    headers.set("cache-control", headers.get("cache-control") || "no-cache");
+  }
+  return headers;
+}
+
+async function proxyHostedSimpleagentRequest(input: {
+  request: Request;
+  deployment: DeploymentRow;
+  segments: string[];
+}) {
+  if (!supportsSimpleagentUiAdapter(input.deployment.deployment_flavor)) {
+    return NextResponse.json(
+      { status: "error", error: "SimpleAgent UI adapter is not supported for this deployment flavor." },
+      { status: 400 },
+    );
+  }
+
+  const readyUrl = String(input.deployment.ready_url ?? "").trim();
+  if (!readyUrl) {
+    return NextResponse.json({ status: "error", error: "Runtime URL is not configured." }, { status: 409 });
+  }
+
+  let target: URL;
+  try {
+    target = new URL(readyUrl);
+  } catch {
+    return NextResponse.json({ status: "error", error: "Runtime URL is invalid." }, { status: 502 });
+  }
+
+  const pathSuffix = input.segments.map((segment) => encodeURIComponent(segment)).join("/");
+  target.pathname = pathSuffix ? `/${pathSuffix}` : "/";
+  mergeQueryParams(target, new URL(input.request.url).searchParams);
+
+  const method = input.request.method.toUpperCase();
+  const headers = new Headers();
+  const accept = input.request.headers.get("accept");
+  const contentType = input.request.headers.get("content-type");
+  if (accept) headers.set("accept", accept);
+  if (contentType) headers.set("content-type", contentType);
+
+  let body: ArrayBuffer | undefined;
+  if (method !== "GET" && method !== "HEAD") {
+    body = await input.request.arrayBuffer();
+  }
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(target.toString(), {
+      method,
+      headers,
+      body,
+      cache: "no-store",
+      redirect: "follow",
+      signal: AbortSignal.timeout(60_000),
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        status: "error",
+        error: error instanceof Error ? error.message : "Failed to reach runtime.",
+      },
+      { status: 502 },
+    );
+  }
+
+  return new NextResponse(upstream.body, {
+    status: upstream.status,
+    headers: copyProxyResponseHeaders(upstream),
+  });
+}
+
 async function authorizeRequest(context: RouteContext): Promise<AuthorizedContext | NextResponse> {
   const session = await auth();
   const userId = session?.user?.email?.trim();
@@ -143,11 +247,6 @@ async function authorizeRequest(context: RouteContext): Promise<AuthorizedContex
   const { id } = await context.params;
   await ensureSchema();
 
-  const access = await requireOwnedServerlessDeployment({ deploymentId: id, userId });
-  if (!access.ok) {
-    return NextResponse.json({ status: "error", error: access.error }, { status: access.status });
-  }
-
   const deploymentResult = await pool.query<DeploymentRow>(
     `SELECT id,
             bot_name,
@@ -156,6 +255,7 @@ async function authorizeRequest(context: RouteContext): Promise<AuthorizedContex
             telegram_bot_token,
             status,
             deploy_provider,
+            deployment_flavor,
             runtime_id,
             ready_url,
             updated_at,
@@ -164,8 +264,9 @@ async function authorizeRequest(context: RouteContext): Promise<AuthorizedContex
             openrouter_api_key
      FROM deployments
      WHERE id = $1
+       AND user_id = $2
      LIMIT 1`,
-    [id],
+    [id, userId],
   );
   const deployment = deploymentResult.rows[0];
   if (!deployment) {
@@ -273,6 +374,9 @@ async function handleGet(request: Request, context: RouteContext) {
   const segments = Array.isArray(params.segments) ? params.segments : [];
   const deploymentId = authResult.deploymentId;
   const deployment = authResult.deployment;
+  if (!isServerlessProvider(deployment.deploy_provider)) {
+    return proxyHostedSimpleagentRequest({ request, deployment, segments });
+  }
   const bot = buildSimpleBot(deployment);
 
   const query = new URL(request.url).searchParams;
@@ -709,6 +813,9 @@ async function handlePost(request: Request, context: RouteContext) {
   const segments = Array.isArray(params.segments) ? params.segments : [];
   const deploymentId = authResult.deploymentId;
   const deployment = authResult.deployment;
+  if (!isServerlessProvider(deployment.deploy_provider)) {
+    return proxyHostedSimpleagentRequest({ request, deployment, segments });
+  }
   const bot = buildSimpleBot(deployment);
 
   if (segments.length === 2 && segments[0] === "api" && segments[1] === "bots") {
@@ -1042,7 +1149,11 @@ async function handleDelete(request: Request, context: RouteContext) {
   const params = await context.params;
   const segments = Array.isArray(params.segments) ? params.segments : [];
   const deploymentId = authResult.deploymentId;
-  const bot = buildSimpleBot(authResult.deployment);
+  const deployment = authResult.deployment;
+  if (!isServerlessProvider(deployment.deploy_provider)) {
+    return proxyHostedSimpleagentRequest({ request, deployment, segments });
+  }
+  const bot = buildSimpleBot(deployment);
   const query = new URL(request.url).searchParams;
 
   if (segments.length === 3 && segments[0] === "api" && segments[1] === "sessions") {

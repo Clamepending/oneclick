@@ -1490,11 +1490,14 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
             >
               {statusMeta.label}
             </span>
-            {deployment?.readyUrl ? (
-              <a className="button secondary" href={deployment.readyUrl} target="_blank" rel="noreferrer">
-                Open runtime page
-              </a>
-            ) : null}
+            <a
+              className="button secondary"
+              href={`/runtime/${encodeURIComponent(deploymentId)}/simpleagent-ui?ui_mode=oneclick&hide_bot_session=1`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open UI
+            </a>
           </div>
         </div>
 
