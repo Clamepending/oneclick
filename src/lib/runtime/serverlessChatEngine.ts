@@ -89,9 +89,10 @@ function buildToolInstructionBlock(tools: ServerlessRuntimeTool[]) {
     "Tool usage is enabled.",
     "When you need a tool, output exactly one tool call and no extra text:",
     "- For current time: <tool:current_time>{\"timezone\":\"UTC\"}</tool:current_time>",
-    "- For web search: <tool:web_search>{\"query\":\"latest NASA news\"}</tool:web_search>",
-    "- For web fetch: <tool:web_fetch>{\"url\":\"https://example.com\"}</tool:web_fetch>",
+    "- For web search: <tool:web_search>latest NASA news</tool:web_search>",
+    "- For web fetch: <tool:web_fetch>https://example.com/page</tool:web_fetch>",
     "- For OttoAuth tools: <tool:mcp name=\"tool_name\">{\"arg\":\"value\"}</tool:mcp>",
+    "- Do not wrap tool lines in markdown.",
     "- Do not ask the user for OttoAuth username/private_key. Bot credentials are injected automatically.",
     "After receiving TOOL_RESULT, respond normally to the user.",
     "Available tools:",
@@ -193,17 +194,19 @@ function parseJsonObjectOrDefault(value: string) {
   return {} as Record<string, unknown>;
 }
 
+function extractDirectToolTag(text: string) {
+  const closedMatch = text.match(/<tool:([A-Za-z0-9_.-]+)>\s*([\s\S]*?)\s*<\/tool:\1>/i);
+  if (closedMatch) return closedMatch;
+  return text.match(/<tool:([A-Za-z0-9_.-]+)>\s*([\s\S]*)$/i);
+}
+
 function normalizeDirectToolArguments(input: { name: string; rawArgs: string }) {
-  const parsed = parseJsonObjectOrNull(input.rawArgs);
-  if (parsed) return parsed;
   const rawTrimmed = input.rawArgs.trim();
-  if (!rawTrimmed) return {} as Record<string, unknown>;
-  if (input.name === "web_search") {
-    return { query: rawTrimmed } as Record<string, unknown>;
+  if (input.name === "web_search" || input.name === "web_fetch" || input.name === "shell") {
+    return { value: rawTrimmed } as Record<string, unknown>;
   }
-  if (input.name === "web_fetch") {
-    return { url: rawTrimmed } as Record<string, unknown>;
-  }
+  const parsed = parseJsonObjectOrNull(rawTrimmed);
+  if (parsed) return parsed;
   return {} as Record<string, unknown>;
 }
 
@@ -218,10 +221,10 @@ function extractToolCall(text: string, availableToolNames: Set<string>) {
     } satisfies ParsedToolCall;
   }
 
-  const directMatch = text.match(/<tool:([A-Za-z0-9_.-]+)>\s*([\s\S]*?)\s*<\/tool:\1>/i);
+  const directMatch = extractDirectToolTag(text);
   if (!directMatch) return null;
 
-  const rawName = directMatch[1]?.trim() || "";
+  const rawName = directMatch[1]?.trim().toLowerCase() || "";
   if (!rawName || rawName === "mcp") return null;
   const name = rawName === "time_now" ? "current_time" : rawName;
   const argumentsValue = normalizeDirectToolArguments({

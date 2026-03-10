@@ -431,6 +431,55 @@ function normalizeHttpMethod(value: unknown) {
   return "GET";
 }
 
+function parseJsonObjectFromText(value: string) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return parsed as ToolJson;
+  } catch {
+    return null;
+  }
+}
+
+function readFirstString(args: ToolJson, keys: string[]) {
+  for (const key of keys) {
+    const value = args[key];
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+  return "";
+}
+
+function resolveWebSearchQuery(args: ToolJson) {
+  const value = readFirstString(args, ["value"]);
+  if (value) {
+    const parsedValue = parseJsonObjectFromText(value);
+    if (parsedValue) {
+      const payloadQuery = readFirstString(parsedValue, ["query", "q", "text", "value"]);
+      if (payloadQuery) return payloadQuery;
+    }
+    return value;
+  }
+  return readFirstString(args, ["query", "q", "text"]);
+}
+
+function resolveWebFetchUrl(args: ToolJson) {
+  const value = readFirstString(args, ["value"]);
+  if (value) {
+    const parsedValue = parseJsonObjectFromText(value);
+    if (parsedValue) {
+      const payloadUrl = readFirstString(parsedValue, ["url", "link", "value"]);
+      if (payloadUrl) return payloadUrl;
+    }
+    return value;
+  }
+  return readFirstString(args, ["url", "link"]);
+}
+
 function truncateText(value: string, maxChars: number) {
   const text = String(value ?? "");
   if (text.length <= maxChars) return text;
@@ -709,7 +758,7 @@ export async function executeServerlessRuntimeToolCall(input: {
   }
 
   if (name === "web_search") {
-    const query = String(args.query ?? args.q ?? args.text ?? "").trim();
+    const query = resolveWebSearchQuery(args);
     const maxResults = Number(args.max_results ?? args.maxResults ?? 5);
     if (!query) return { ok: false, tool: name, error: "Missing required argument: query" };
     try {
@@ -721,7 +770,7 @@ export async function executeServerlessRuntimeToolCall(input: {
   }
 
   if (name === "web_fetch") {
-    const url = String(args.url ?? args.link ?? "").trim();
+    const url = resolveWebFetchUrl(args);
     if (!url) return { ok: false, tool: name, error: "Missing required argument: url" };
     try {
       const result = await runWebFetch(url);
