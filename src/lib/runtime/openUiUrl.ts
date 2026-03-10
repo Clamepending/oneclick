@@ -36,9 +36,10 @@ function withOneclickUiParams(rawUrl: string) {
 
 export function buildSimpleAgentOpenUiUrl(input: OpenUiInput) {
   const source =
+    String(input.fallbackRuntimePath || "").trim() ||
     normalizeExternalDashboardUrl(input.botDashboardUrl) ||
     String(input.readyUrl || "").trim() ||
-    String(input.fallbackRuntimePath || "").trim();
+    "";
   if (!source) return null;
   return withOneclickUiParams(source);
 }

@@ -2,6 +2,7 @@ import { DescribeTasksCommand, ECSClient, ListTasksCommand } from "@aws-sdk/clie
 import { DescribeNetworkInterfacesCommand, EC2Client } from "@aws-sdk/client-ec2";
 import net from "node:net";
 import { redirect } from "next/navigation";
+import { auth } from "@/lib/auth";
 import { ensureSchema, pool } from "@/lib/db";
 import { getRuntimePort } from "@/lib/provisioner/openclawBundle";
 import { probeRuntimeHttp } from "@/lib/runtimeHealth";
@@ -177,13 +178,54 @@ function mergeResolvedRuntimeUrl(resolvedBaseUrl: string, storedReadyUrl: string
   }
 }
 
+function firstSearchParam(value: string | string[] | undefined) {
+  if (Array.isArray(value)) return String(value[0] || "").trim();
+  return String(value || "").trim();
+}
+
+function collectRuntimeUiParams(
+  searchParams: Record<string, string | string[] | undefined>,
+) {
+  const allowed = ["ui_mode", "hide_bot_session", "hide_bot_ui", "hide_session_ui"];
+  const next = new URLSearchParams();
+  for (const key of allowed) {
+    const value = firstSearchParam(searchParams[key]);
+    if (!value) continue;
+    next.set(key, value);
+  }
+  return next;
+}
+
+function withRuntimeUiParams(urlValue: string, uiParams: URLSearchParams) {
+  if (!uiParams.toString()) return urlValue;
+  const parsed = new URL(urlValue);
+  for (const [key, value] of uiParams.entries()) {
+    parsed.searchParams.set(key, value);
+  }
+  return parsed.toString();
+}
+
 async function isRuntimeControlUiReachable(readyUrl: string) {
   const result = await probeRuntimeHttp(readyUrl, 3000);
   return result.ok;
 }
 
-export default async function RuntimePage({ params }: { params: Promise<{ id: string }> }) {
+export default async function RuntimePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>> | Record<string, string | string[] | undefined>;
+}) {
   const { id } = await params;
+  const session = await auth();
+  const userId = session?.user?.email?.trim();
+  if (!userId) {
+    return renderPlaceholder(id, "Sign in required.");
+  }
+  const resolvedSearchParams = (await searchParams) ?? {};
+  const uiParams = collectRuntimeUiParams(resolvedSearchParams);
+
   await ensureSchema();
 
   const result = await pool.query<{
@@ -208,8 +250,9 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
             created_at, updated_at
      FROM deployments
      WHERE id = $1
+       AND user_id = $2
      LIMIT 1`,
-    [id],
+    [id, userId],
   );
 
   const deployment = result.rows[0];
@@ -277,7 +320,7 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
       const provider = (deployment.deploy_provider ?? "").trim();
       const reachable = await isRuntimeControlUiReachable(parsedReadyUrl.toString());
       if (reachable) {
-        redirect(parsedReadyUrl.toString());
+        redirect(withRuntimeUiParams(parsedReadyUrl.toString(), uiParams));
       }
       if (provider !== "ecs") {
         return renderRuntimeUnavailable(
@@ -303,7 +346,7 @@ export default async function RuntimePage({ params }: { params: Promise<{ id: st
       return renderPlaceholder(id, message);
     }
     if (resolved) {
-      redirect(mergeResolvedRuntimeUrl(resolved, deployment.ready_url));
+      redirect(withRuntimeUiParams(mergeResolvedRuntimeUrl(resolved, deployment.ready_url), uiParams));
     }
     return renderPlaceholder(
       id,
