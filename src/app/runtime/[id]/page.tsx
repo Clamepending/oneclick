@@ -215,7 +215,7 @@ export default async function RuntimePage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams?: Promise<Record<string, string | string[] | undefined>> | Record<string, string | string[] | undefined>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id } = await params;
   const session = await auth();
@@ -223,7 +223,7 @@ export default async function RuntimePage({
   if (!userId) {
     return renderPlaceholder(id, "Sign in required.");
   }
-  const resolvedSearchParams = (await searchParams) ?? {};
+  const resolvedSearchParams = (searchParams ? await searchParams : {}) ?? {};
   const uiParams = collectRuntimeUiParams(resolvedSearchParams);
 
   await ensureSchema();
