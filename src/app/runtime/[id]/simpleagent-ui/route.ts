@@ -14,6 +14,31 @@ type DeploymentRow = {
   ready_url: string | null;
 };
 
+function isTruthyParam(value: string | null) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+function resolveHostedSimpleagentUiUrl(input: {
+  readyUrl: string;
+  query: URLSearchParams;
+}) {
+  const target = new URL(input.readyUrl);
+  const uiMode = String(input.query.get("ui_mode") || "oneclick").trim() || "oneclick";
+  const hideBotSession =
+    isTruthyParam(input.query.get("hide_bot_session")) ||
+    uiMode.toLowerCase() === "oneclick" ||
+    uiMode.toLowerCase() === "serverless";
+  const hideBotUi = isTruthyParam(input.query.get("hide_bot_ui")) || hideBotSession;
+  const hideSessionUi = isTruthyParam(input.query.get("hide_session_ui")) || hideBotSession;
+
+  target.searchParams.set("ui_mode", uiMode);
+  if (hideBotSession) target.searchParams.set("hide_bot_session", "1");
+  if (hideBotUi) target.searchParams.set("hide_bot_ui", "1");
+  if (hideSessionUi) target.searchParams.set("hide_session_ui", "1");
+  return target.toString();
+}
+
 export async function GET(
   request: Request,
   context: { params: Promise<{ id: string }> },
@@ -47,11 +72,22 @@ export async function GET(
     return NextResponse.json({ ok: false, error: "SimpleAgent UI is not available for this deployment flavor." }, { status: 400 });
   }
   const isServerless = (row.deploy_provider ?? "").trim().toLowerCase() === "lambda";
-  if (!isServerless && !String(row.ready_url ?? "").trim()) {
-    return NextResponse.json({ ok: false, error: "Runtime URL is not configured yet." }, { status: 409 });
-  }
 
   const query = new URL(request.url).searchParams;
+  if (!isServerless) {
+    const readyUrl = String(row.ready_url ?? "").trim();
+    if (!readyUrl) {
+      return NextResponse.json({ ok: false, error: "Runtime URL is not configured yet." }, { status: 409 });
+    }
+    let targetUrl = "";
+    try {
+      targetUrl = resolveHostedSimpleagentUiUrl({ readyUrl, query });
+    } catch {
+      return NextResponse.json({ ok: false, error: "Runtime URL is invalid." }, { status: 502 });
+    }
+    return NextResponse.redirect(targetUrl, { status: 307 });
+  }
+
   const html = await renderSimpleagentUiHtml({
     deploymentId: id,
     forceOneclickMode: true,
