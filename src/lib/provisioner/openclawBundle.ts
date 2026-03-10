@@ -67,7 +67,10 @@ export function shouldAllowInsecureControlUi() {
 }
 
 export function getSimpleAgentImage() {
-  return readEnv("SIMPLE_AGENT_IMAGE") || "oneclick/simpleagent:main";
+  return (
+    readEnv("SIMPLE_AGENT_IMAGE") ||
+    "951831705476.dkr.ecr.us-east-1.amazonaws.com/oneclick-simpleagent@sha256:f82f69af62f7ec4bc223b99b1450acdc3de462d7dff83da0952892a05ff51918"
+  );
 }
 
 export function getSimpleAgentPort() {
