@@ -3,10 +3,6 @@ import path from "node:path";
 
 let cachedTemplate: string | null = null;
 
-function escapeInlineScript(value: string) {
-  return value.replace(/<\//g, "<\\/");
-}
-
 async function loadTemplate() {
   if (cachedTemplate !== null) return cachedTemplate;
   const templatePath = path.join(process.cwd(), "src", "lib", "runtime", "simpleagent-ui-template.html");
@@ -96,7 +92,7 @@ export async function renderSimpleagentUiHtml(input: {
 </script>`;
 
   if (template.includes("</head>")) {
-    return template.replace("</head>", `${escapeInlineScript(bootstrap)}\n</head>`);
+    return template.replace("</head>", `${bootstrap}\n</head>`);
   }
-  return `${escapeInlineScript(bootstrap)}\n${template}`;
+  return `${bootstrap}\n${template}`;
 }
