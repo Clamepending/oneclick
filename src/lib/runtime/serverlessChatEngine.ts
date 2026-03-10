@@ -89,6 +89,8 @@ function buildToolInstructionBlock(tools: ServerlessRuntimeTool[]) {
     "Tool usage is enabled.",
     "When you need a tool, output exactly one tool call and no extra text:",
     "- For current time: <tool:current_time>{\"timezone\":\"UTC\"}</tool:current_time>",
+    "- For web search: <tool:web_search>{\"query\":\"latest NASA news\"}</tool:web_search>",
+    "- For web fetch: <tool:web_fetch>{\"url\":\"https://example.com\"}</tool:web_fetch>",
     "- For OttoAuth tools: <tool:mcp name=\"tool_name\">{\"arg\":\"value\"}</tool:mcp>",
     "- Do not ask the user for OttoAuth username/private_key. Bot credentials are injected automatically.",
     "After receiving TOOL_RESULT, respond normally to the user.",
@@ -171,18 +173,38 @@ type ParsedToolCall = {
   arguments: Record<string, unknown>;
 };
 
-function parseJsonObjectOrDefault(value: string) {
+function parseJsonObjectOrNull(value: string) {
   const trimmed = value.trim();
-  if (!trimmed) return {} as Record<string, unknown>;
+  if (!trimmed) return null;
   try {
     const parsed = JSON.parse(trimmed) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return {} as Record<string, unknown>;
+      return null;
     }
     return parsed as Record<string, unknown>;
   } catch {
-    return {} as Record<string, unknown>;
+    return null;
   }
+}
+
+function parseJsonObjectOrDefault(value: string) {
+  const parsed = parseJsonObjectOrNull(value);
+  if (parsed) return parsed;
+  return {} as Record<string, unknown>;
+}
+
+function normalizeDirectToolArguments(input: { name: string; rawArgs: string }) {
+  const parsed = parseJsonObjectOrNull(input.rawArgs);
+  if (parsed) return parsed;
+  const rawTrimmed = input.rawArgs.trim();
+  if (!rawTrimmed) return {} as Record<string, unknown>;
+  if (input.name === "web_search") {
+    return { query: rawTrimmed } as Record<string, unknown>;
+  }
+  if (input.name === "web_fetch") {
+    return { url: rawTrimmed } as Record<string, unknown>;
+  }
+  return {} as Record<string, unknown>;
 }
 
 function extractToolCall(text: string, availableToolNames: Set<string>) {
@@ -202,15 +224,19 @@ function extractToolCall(text: string, availableToolNames: Set<string>) {
   const rawName = directMatch[1]?.trim() || "";
   if (!rawName || rawName === "mcp") return null;
   const name = rawName === "time_now" ? "current_time" : rawName;
+  const argumentsValue = normalizeDirectToolArguments({
+    name,
+    rawArgs: directMatch[2] ?? "",
+  });
   if (!availableToolNames.has(name)) {
     return {
       name,
-      arguments: parseJsonObjectOrDefault(directMatch[2] ?? ""),
+      arguments: argumentsValue,
     } satisfies ParsedToolCall;
   }
   return {
     name,
-    arguments: parseJsonObjectOrDefault(directMatch[2] ?? ""),
+    arguments: argumentsValue,
   } satisfies ParsedToolCall;
 }
 
@@ -304,7 +330,7 @@ async function loadServerlessPromptContext(input: { deploymentId: string; sessio
      LIMIT 12`,
     [input.deploymentId],
   );
-  const toolsCatalog = await listServerlessRuntimeTools();
+  const toolsCatalog = await listServerlessRuntimeTools({ deploymentId: input.deploymentId });
   const availableTools = toolsCatalog.tools.filter((tool) => tool.available);
   const systemPrompt = resolveSystemPrompt(memoryDocs.rows, availableTools);
   return {

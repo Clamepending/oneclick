@@ -59,6 +59,7 @@ export async function ensureSchema() {
       runtime_version TEXT,
       runtime_contract_version TEXT,
       runtime_release_channel TEXT,
+      runtime_tool_policy JSONB NOT NULL DEFAULT '{}'::jsonb,
       ready_url TEXT,
       error TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -83,6 +84,7 @@ export async function ensureSchema() {
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS runtime_version TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS runtime_contract_version TEXT;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS runtime_release_channel TEXT;`);
+  await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS runtime_tool_policy JSONB NOT NULL DEFAULT '{}'::jsonb;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS plan_tier TEXT NOT NULL DEFAULT 'free';`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMPTZ;`);
   await pool.query(`ALTER TABLE deployments ADD COLUMN IF NOT EXISTS trial_expires_at TIMESTAMPTZ;`);

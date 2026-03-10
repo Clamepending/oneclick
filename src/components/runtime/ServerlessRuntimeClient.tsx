@@ -35,6 +35,13 @@ type RuntimeTool = {
   availabilityReason: string | null;
 };
 
+type RuntimeToolsConfig = {
+  webEnabled: boolean;
+  mcpEnabled: boolean;
+  shellEnabled: boolean;
+  mcpTools: Record<string, boolean>;
+};
+
 type RuntimeToolTraceEntry = {
   call_id: string;
   tool: string;
@@ -183,6 +190,12 @@ type RuntimeToolsResponse =
       ok?: boolean;
       error?: string;
       tools?: RuntimeTool[];
+      config?: {
+        webEnabled?: boolean;
+        mcpEnabled?: boolean;
+        shellEnabled?: boolean;
+        mcpTools?: Record<string, boolean>;
+      };
       ottoauth?: {
         enabled?: boolean;
         baseUrl?: string;
@@ -362,6 +375,15 @@ function formatTokenCount(value: number) {
   return String(Math.round(safe));
 }
 
+function defaultToolsConfig(): RuntimeToolsConfig {
+  return {
+    webEnabled: true,
+    mcpEnabled: true,
+    shellEnabled: false,
+    mcpTools: {},
+  };
+}
+
 function normalizeToolTraceState(entry: Partial<RuntimeToolTraceEntry> | null | undefined): RuntimeToolTraceEntry["status"] {
   const explicit = String(entry?.status ?? "")
     .trim()
@@ -497,6 +519,9 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
   const [tools, setTools] = useState<RuntimeTool[]>([]);
   const [toolsLoading, setToolsLoading] = useState(true);
   const [toolsError, setToolsError] = useState("");
+  const [toolsMessage, setToolsMessage] = useState("");
+  const [toolsSaving, setToolsSaving] = useState(false);
+  const [toolsConfig, setToolsConfig] = useState<RuntimeToolsConfig>(() => defaultToolsConfig());
   const [ottoauthStatus, setOttoauthStatus] = useState<{
     enabled: boolean;
     baseUrl: string;
@@ -745,22 +770,105 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
   async function loadTools() {
     setToolsLoading(true);
     setToolsError("");
+    setToolsMessage("");
     try {
       const response = await fetch(`/api/runtime/${deploymentId}/tools`, { cache: "no-store" });
       const body = await readJson<RuntimeToolsResponse>(response);
       if (!response.ok || !body?.ok || !Array.isArray(body.tools)) {
         throw new Error(body?.error || "Failed to load tools.");
       }
-      setTools(body.tools);
+      const toolsList = body.tools as RuntimeTool[];
+      setTools(toolsList);
       setOttoauthStatus({
         enabled: Boolean(body.ottoauth?.enabled),
         baseUrl: String(body.ottoauth?.baseUrl ?? ""),
         tokenConfigured: Boolean(body.ottoauth?.tokenConfigured),
       });
+      setToolsConfig((current) => {
+        const mcpToolNames = toolsList
+          .filter((tool) => tool.source === "ottoauth-mcp")
+          .map((tool) => tool.name)
+          .filter((name) => Boolean(name.trim()));
+        const configuredMcpMap = body.config?.mcpTools ?? {};
+        const mcpToolsMap: Record<string, boolean> = {};
+        for (const toolName of mcpToolNames) {
+          if (typeof configuredMcpMap[toolName] === "boolean") {
+            mcpToolsMap[toolName] = Boolean(configuredMcpMap[toolName]);
+          } else if (typeof current.mcpTools[toolName] === "boolean") {
+            mcpToolsMap[toolName] = Boolean(current.mcpTools[toolName]);
+          } else {
+            mcpToolsMap[toolName] = true;
+          }
+        }
+        return {
+          webEnabled: body.config?.webEnabled ?? current.webEnabled,
+          mcpEnabled: body.config?.mcpEnabled ?? current.mcpEnabled,
+          shellEnabled: body.config?.shellEnabled ?? current.shellEnabled,
+          mcpTools: mcpToolsMap,
+        };
+      });
     } catch (error) {
       setToolsError(error instanceof Error ? error.message : "Failed to load tools.");
     } finally {
       setToolsLoading(false);
+    }
+  }
+
+  async function handleSaveToolsConfig() {
+    if (toolsSaving || toolsLoading) return;
+    setToolsSaving(true);
+    setToolsError("");
+    setToolsMessage("");
+    try {
+      const response = await fetch(`/api/runtime/${deploymentId}/tools`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          webEnabled: toolsConfig.webEnabled,
+          mcpEnabled: toolsConfig.mcpEnabled,
+          shellEnabled: toolsConfig.shellEnabled,
+          mcpTools: toolsConfig.mcpTools,
+        }),
+      });
+      const body = await readJson<RuntimeToolsResponse>(response);
+      if (!response.ok || !body?.ok || !Array.isArray(body.tools)) {
+        throw new Error(body?.error || "Failed to save tool settings.");
+      }
+      const toolsList = body.tools as RuntimeTool[];
+      setTools(toolsList);
+      setOttoauthStatus({
+        enabled: Boolean(body.ottoauth?.enabled),
+        baseUrl: String(body.ottoauth?.baseUrl ?? ""),
+        tokenConfigured: Boolean(body.ottoauth?.tokenConfigured),
+      });
+      setToolsConfig((current) => {
+        const mcpToolNames = toolsList
+          .filter((tool) => tool.source === "ottoauth-mcp")
+          .map((tool) => tool.name)
+          .filter((name) => Boolean(name.trim()));
+        const configuredMcpMap = body.config?.mcpTools ?? {};
+        const mcpToolsMap: Record<string, boolean> = {};
+        for (const toolName of mcpToolNames) {
+          if (typeof configuredMcpMap[toolName] === "boolean") {
+            mcpToolsMap[toolName] = Boolean(configuredMcpMap[toolName]);
+          } else if (typeof current.mcpTools[toolName] === "boolean") {
+            mcpToolsMap[toolName] = Boolean(current.mcpTools[toolName]);
+          } else {
+            mcpToolsMap[toolName] = true;
+          }
+        }
+        return {
+          webEnabled: body.config?.webEnabled ?? current.webEnabled,
+          mcpEnabled: body.config?.mcpEnabled ?? current.mcpEnabled,
+          shellEnabled: body.config?.shellEnabled ?? current.shellEnabled,
+          mcpTools: mcpToolsMap,
+        };
+      });
+      setToolsMessage("Tool settings saved.");
+    } catch (error) {
+      setToolsError(error instanceof Error ? error.message : "Failed to save tool settings.");
+    } finally {
+      setToolsSaving(false);
     }
   }
 
@@ -1679,9 +1787,24 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
               <p className="muted" style={{ margin: 0 }}>
                 Tools available to the serverless agent
               </p>
-              <button className="button secondary" type="button" onClick={() => void loadTools()} disabled={toolsLoading}>
-                {toolsLoading ? "Refreshing..." : "Refresh tools"}
-              </button>
+              <div className="row">
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={() => void loadTools()}
+                  disabled={toolsLoading || toolsSaving}
+                >
+                  {toolsLoading ? "Refreshing..." : "Refresh tools"}
+                </button>
+                <button
+                  className="button"
+                  type="button"
+                  onClick={() => void handleSaveToolsConfig()}
+                  disabled={toolsLoading || toolsSaving}
+                >
+                  {toolsSaving ? "Saving..." : "Save tool settings"}
+                </button>
+              </div>
             </div>
 
             {ottoauthStatus ? (
@@ -1706,6 +1829,81 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
                 </p>
               </div>
             ) : null}
+
+            <div
+              style={{
+                border: "1px solid var(--border)",
+                borderRadius: 10,
+                background: "var(--surface-strong)",
+                padding: 10,
+                display: "grid",
+                gap: 8,
+              }}
+            >
+              <label className="muted" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={toolsConfig.webEnabled}
+                  onChange={(event) =>
+                    setToolsConfig((current) => ({
+                      ...current,
+                      webEnabled: event.target.checked,
+                    }))
+                  }
+                  disabled={toolsLoading || toolsSaving}
+                />
+                <span>Enable web tools (`web_search`, `web_fetch`)</span>
+              </label>
+              <label className="muted" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={toolsConfig.mcpEnabled}
+                  onChange={(event) =>
+                    setToolsConfig((current) => ({
+                      ...current,
+                      mcpEnabled: event.target.checked,
+                    }))
+                  }
+                  disabled={toolsLoading || toolsSaving}
+                />
+                <span>Enable OttoAuth MCP tools</span>
+              </label>
+              <label className="muted" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="checkbox" checked={toolsConfig.shellEnabled} disabled />
+                <span>Shell tool support (not available on this serverless runtime yet)</span>
+              </label>
+
+              <div style={{ display: "grid", gap: 6 }}>
+                <p className="muted" style={{ margin: 0 }}>
+                  MCP tool toggles
+                </p>
+                {tools
+                  .filter((tool) => tool.source === "ottoauth-mcp")
+                  .map((tool) => (
+                    <label
+                      key={`mcp-toggle-${tool.name}`}
+                      className="muted"
+                      style={{ display: "flex", alignItems: "center", gap: 8 }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={toolsConfig.mcpTools[tool.name] !== false}
+                        onChange={(event) =>
+                          setToolsConfig((current) => ({
+                            ...current,
+                            mcpTools: {
+                              ...current.mcpTools,
+                              [tool.name]: event.target.checked,
+                            },
+                          }))
+                        }
+                        disabled={toolsLoading || toolsSaving}
+                      />
+                      <span>{tool.name}</span>
+                    </label>
+                  ))}
+              </div>
+            </div>
 
             {toolsLoading ? (
               <p className="muted" style={{ margin: 0 }}>
@@ -1748,6 +1946,7 @@ export function ServerlessRuntimeClient({ deploymentId, botName, initialState }:
               </div>
             )}
 
+            {toolsMessage ? <p className="muted" style={{ margin: 0 }}>{toolsMessage}</p> : null}
             {toolsError ? (
               <p role="alert" style={{ color: "#ff8e8e", margin: 0 }}>
                 {toolsError}
