@@ -3,6 +3,20 @@ import path from "node:path";
 
 let cachedTemplate: string | null = null;
 
+function rewriteTemplateEndpoints(template: string, runtimePrefix: string) {
+  let next = template;
+  const replacements: Array<[string, string]> = [
+    ['"/api/', `"${runtimePrefix}/api/`],
+    ["'/api/", `'${runtimePrefix}/api/`],
+    ['"/health"', `"${runtimePrefix}/health"`],
+    ["'/health'", `'${runtimePrefix}/health'`],
+  ];
+  for (const [from, to] of replacements) {
+    next = next.replaceAll(from, to);
+  }
+  return next;
+}
+
 async function loadTemplate() {
   if (cachedTemplate !== null) return cachedTemplate;
   const templatePath = path.join(process.cwd(), "src", "lib", "runtime", "simpleagent-ui-template.html");
@@ -56,6 +70,13 @@ export async function renderSimpleagentUiHtml(input: {
     if (typeof input === "string" || input instanceof URL) {
       return nativeFetch(rewriteUrl(String(input)), init);
     }
+    if (typeof Request === "function" && input instanceof Request) {
+      const rewrittenUrl = rewriteUrl(input.url);
+      if (rewrittenUrl === input.url) {
+        return nativeFetch(input, init);
+      }
+      return nativeFetch(new Request(rewrittenUrl, input), init);
+    }
     return nativeFetch(input, init);
   };
 
@@ -91,8 +112,10 @@ export async function renderSimpleagentUiHtml(input: {
 })();
 </script>`;
 
-  if (template.includes("</head>")) {
-    return template.replace("</head>", `${bootstrap}\n</head>`);
+  const adaptedTemplate = rewriteTemplateEndpoints(template, runtimePrefix);
+
+  if (adaptedTemplate.includes("</head>")) {
+    return adaptedTemplate.replace("</head>", `${bootstrap}\n</head>`);
   }
-  return `${bootstrap}\n${template}`;
+  return `${bootstrap}\n${adaptedTemplate}`;
 }
